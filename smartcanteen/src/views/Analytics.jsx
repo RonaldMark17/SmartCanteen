@@ -121,26 +121,24 @@ function AnalyticsSkeleton() {
         <Skeleton className="h-10 w-28 rounded-lg" />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.95fr)]">
-        <div className="flex h-[350px] flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <Skeleton className="mb-4 h-5 w-56" />
-          <Skeleton className="min-h-0 flex-1 rounded-2xl" />
-        </div>
-
-        <div className="space-y-6">
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <Skeleton className="mb-6 h-5 w-60" />
-            <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8 xl:grid-cols-6 2xl:grid-cols-8">
-              {Array.from({ length: 24 }, (_, index) => (
-                <Skeleton key={index} className="h-16 rounded-lg" />
-              ))}
-            </div>
-          </div>
-
-          <div className="flex h-[320px] flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <Skeleton className="mb-4 h-5 w-44" />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {Array.from({ length: 2 }, (_, index) => (
+          <div
+            key={index}
+            className="flex h-[350px] flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+          >
+            <Skeleton className="mb-4 h-5 w-48" />
             <Skeleton className="min-h-0 flex-1 rounded-2xl" />
           </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-6 pb-8 shadow-sm">
+        <Skeleton className="mb-6 h-5 w-60" />
+        <div className="grid grid-cols-4 gap-2 pb-2 md:grid-cols-8 lg:grid-cols-12">
+          {Array.from({ length: 24 }, (_, index) => (
+            <Skeleton key={index} className="h-16 rounded-lg" />
+          ))}
         </div>
       </div>
     </div>
@@ -297,7 +295,7 @@ export default function Analytics() {
 
       
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.95fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="flex h-[350px] flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h3 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
             <ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" /> School-Day Revenue Trend
@@ -318,77 +316,75 @@ export default function Analytics() {
           </div>
         </div>
 
-        <div className="space-y-6">
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="mb-6 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
-              <ClockIcon className="h-5 w-5 text-slate-400" /> School-Day Sales Heatmap by Hour
-            </h3>
-
-            {hasHeatmapData ? null : (
-              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
-                No hourly sales activity found yet. The grid is showing empty hours.
-              </div>
+        <div className="flex h-[350px] flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
+            <TrophyIcon className="h-5 w-5 text-amber-500" /> Top-Selling Products
+          </h3>
+          <div className="min-h-0 flex-1">
+            {hasTopData ? (
+              <Bar
+                data={barChartData}
+                options={{
+                  indexAxis: 'y',
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                }}
+              />
+            ) : (
+              <EmptyPanel message="No product sales data available yet." />
             )}
-
-            <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8 xl:grid-cols-6 2xl:grid-cols-8">
-              {data.heatmap.map((item) => {
-                const intensity = Math.round((item.sales / maxHeatmapSales) * 9);
-                const label =
-                  item.hour === 0
-                    ? '12am'
-                    : item.hour < 12
-                      ? `${item.hour}am`
-                      : item.hour === 12
-                        ? '12pm'
-                        : `${item.hour - 12}pm`;
-
-                const intensityClasses = [
-                  'border border-slate-200 bg-slate-50 text-slate-500',
-                  'bg-fuchsia-50 text-fuchsia-800',
-                  'bg-fuchsia-100 text-fuchsia-900',
-                  'bg-fuchsia-200 text-fuchsia-900',
-                  'bg-fuchsia-300 text-fuchsia-900',
-                  'bg-fuchsia-500 text-white',
-                  'bg-fuchsia-600 text-white',
-                  'bg-fuchsia-700 text-white',
-                  'bg-fuchsia-800 text-white',
-                  'bg-fuchsia-900 text-white',
-                ];
-
-                return (
-                  <div
-                    key={item.hour}
-                    className={`cursor-default rounded-lg p-2 text-center transition-transform hover:scale-105 ${intensityClasses[intensity]}`}
-                    title={`${label}: PHP ${item.sales}`}
-                  >
-                    <div className="mb-1 text-xs font-bold">{label}</div>
-                    <div className="text-[10px] font-medium opacity-90">PHP {item.sales}</div>
-                  </div>
-                );
-              })}
-            </div>
           </div>
+        </div>
+      </div>
 
-          <div className="flex h-[320px] flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
-              <TrophyIcon className="h-5 w-5 text-amber-500" /> Top-Selling Products
-            </h3>
-            <div className="min-h-0 flex-1">
-              {hasTopData ? (
-                <Bar
-                  data={barChartData}
-                  options={{
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                  }}
-                />
-              ) : (
-                <EmptyPanel message="No product sales data available yet." />
-              )}
-            </div>
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h3 className="mb-6 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
+          <ClockIcon className="h-5 w-5 text-slate-400" /> School-Day Sales Heatmap by Hour
+        </h3>
+
+        {hasHeatmapData ? null : (
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+            No hourly sales activity found yet. The grid is showing empty hours.
           </div>
+        )}
+
+        <div className="grid grid-cols-4 gap-2 md:grid-cols-8 lg:grid-cols-12">
+          {data.heatmap.map((item) => {
+            const intensity = Math.round((item.sales / maxHeatmapSales) * 9);
+            const label =
+              item.hour === 0
+                ? '12am'
+                : item.hour < 12
+                  ? `${item.hour}am`
+                  : item.hour === 12
+                    ? '12pm'
+                    : `${item.hour - 12}pm`;
+
+            const intensityClasses = [
+              'border border-slate-200 bg-slate-50 text-slate-500',
+              'bg-fuchsia-50 text-fuchsia-800',
+              'bg-fuchsia-100 text-fuchsia-900',
+              'bg-fuchsia-200 text-fuchsia-900',
+              'bg-fuchsia-300 text-fuchsia-900',
+              'bg-fuchsia-500 text-white',
+              'bg-fuchsia-600 text-white',
+              'bg-fuchsia-700 text-white',
+              'bg-fuchsia-800 text-white',
+              'bg-fuchsia-900 text-white',
+            ];
+
+            return (
+              <div
+                key={item.hour}
+                className={`cursor-default rounded-lg p-2 text-center transition-transform hover:scale-105 ${intensityClasses[intensity]}`}
+                title={`${label}: PHP ${item.sales}`}
+              >
+                <div className="mb-1 text-xs font-bold">{label}</div>
+                <div className="text-[10px] font-medium opacity-90">PHP {item.sales}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
