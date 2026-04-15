@@ -143,6 +143,32 @@ const SAMPLE_ALGORITHM_METRICS = {
   'Random Forest': { accuracy: '90.7%', rmse: '4.92', mape: '9.3%', r2: '0.84' },
   LSTM: { accuracy: '88.9%', rmse: '5.34', mape: '11.1%', r2: '0.78' },
 };
+const DEFAULT_FEATURE_SUMMARY = {
+  modelFeatureGroups: [
+    'recent sales lags',
+    'weekday pattern',
+    'price signals',
+    'time-of-day mix',
+    'weather history',
+    'school event history',
+    'category demand',
+    'canteen demand',
+  ],
+  heuristicFeatureGroups: [
+    'historical averages',
+    'weekday baseline',
+    'weather adjustment',
+    'event adjustment',
+  ],
+  historicalDrivers: {
+    weatherDays: 0,
+    eventDays: 0,
+    startDate: '',
+    endDate: '',
+    weatherSources: [],
+    eventSources: [],
+  },
+};
 const SAMPLE_FORECAST_BLUEPRINTS = [
   {
     product_id: 'sample-1',
@@ -317,6 +343,10 @@ function normalizePrediction(prediction, index) {
     confidence: normalizeConfidence(prediction?.confidence),
     prediction_source: prediction?.prediction_source || 'heuristic',
     last_sold_on: prediction?.last_sold_on || null,
+    active_feature_groups: Array.isArray(prediction?.active_feature_groups)
+      ? prediction.active_feature_groups.map((entry) => String(entry))
+      : [],
+    fallback_reason: prediction?.fallback_reason || '',
     recommendation_type: type,
     stock_gap: stockGap,
     overstock_units: overstockUnits,
@@ -334,6 +364,55 @@ function normalizeMetrics(metrics) {
     mape: metrics?.mape || DEFAULT_METRICS.mape,
     r2: metrics?.r2 || metrics?.r_squared || DEFAULT_METRICS.r2,
   };
+}
+
+function normalizeFeatureSummary(summary) {
+  return {
+    modelFeatureGroups: Array.isArray(summary?.model_feature_groups)
+      ? summary.model_feature_groups.map((entry) => String(entry))
+      : DEFAULT_FEATURE_SUMMARY.modelFeatureGroups,
+    heuristicFeatureGroups: Array.isArray(summary?.heuristic_feature_groups)
+      ? summary.heuristic_feature_groups.map((entry) => String(entry))
+      : DEFAULT_FEATURE_SUMMARY.heuristicFeatureGroups,
+    historicalDrivers: {
+      weatherDays: Number(
+        summary?.historical_drivers?.weather_days ??
+          DEFAULT_FEATURE_SUMMARY.historicalDrivers.weatherDays
+      ),
+      eventDays: Number(
+        summary?.historical_drivers?.event_days ??
+          DEFAULT_FEATURE_SUMMARY.historicalDrivers.eventDays
+      ),
+      startDate:
+        summary?.historical_drivers?.start_date ||
+        DEFAULT_FEATURE_SUMMARY.historicalDrivers.startDate,
+      endDate:
+        summary?.historical_drivers?.end_date ||
+        DEFAULT_FEATURE_SUMMARY.historicalDrivers.endDate,
+      weatherSources: Array.isArray(summary?.historical_drivers?.weather_sources)
+        ? summary.historical_drivers.weather_sources.map((entry) => String(entry))
+        : DEFAULT_FEATURE_SUMMARY.historicalDrivers.weatherSources,
+      eventSources: Array.isArray(summary?.historical_drivers?.event_sources)
+        ? summary.historical_drivers.event_sources.map((entry) => String(entry))
+        : DEFAULT_FEATURE_SUMMARY.historicalDrivers.eventSources,
+    },
+  };
+}
+
+function formatPredictionSourceLabel(source) {
+  if (source === 'ml+heuristic') return 'ML + heuristic blend';
+  if (source === 'category-assisted') return 'Category-assisted fallback';
+  if (source === 'catalog-fallback') return 'Catalog fallback';
+  if (source === 'sample') return 'Sample forecast';
+  return 'Heuristic fallback';
+}
+
+function getPredictionSourceClasses(source) {
+  if (source === 'ml+heuristic') return 'bg-sky-100 text-sky-700';
+  if (source === 'category-assisted') return 'bg-teal-100 text-teal-700';
+  if (source === 'catalog-fallback') return 'bg-violet-100 text-violet-700';
+  if (source === 'sample') return 'bg-indigo-100 text-indigo-700';
+  return 'bg-slate-200 text-slate-700';
 }
 
 function formatWeatherFetchedAt(value) {
@@ -579,6 +658,7 @@ function normalizeForecastResponse(response) {
 
   return {
     metrics: normalizeMetrics(response?.metrics),
+    featureSummary: normalizeFeatureSummary(response?.feature_summary),
     predictions,
     weeklyTrend: normalizeTrend(response?.weekly_sales_trend),
     summary,
@@ -801,13 +881,43 @@ function normalizeCatalogProducts(products) {
   }));
 }
 
-function buildCatalogFallbackPrediction(product, index, weather, event) {
+function getCatalogFallbackMessaging(dataSource) {
+  const source = String(dataSource || '').toLowerCase();
+
+  if (source.includes('sample')) {
+    return {
+      fallbackReason:
+        'This product is using catalog-based sample coverage because sample mode does not include a dedicated forecast row for it.',
+      recommendation:
+        'This product used a stock-based catalog estimate while sample mode is active.',
+    };
+  }
+
+  if (!source || source === 'catalog-fallback' || source === 'error') {
+    return {
+      fallbackReason:
+        'Live forecasting was unavailable, so this product is using a catalog-based fallback estimate.',
+      recommendation:
+        'This product used a stock-based catalog estimate because live forecasting was unavailable.',
+    };
+  }
+
+  return {
+    fallbackReason:
+      'This product is using a catalog-based fallback estimate because the detailed live forecast row was missing.',
+    recommendation:
+      'This product used a stock-based catalog estimate because a detailed live forecast row was missing.',
+  };
+}
+
+function buildCatalogFallbackPrediction(product, index, weather, event, { dataSource = 'catalog-fallback' } = {}) {
   const modifier = getScenarioModifier(weather, event);
   const baselineDemand =
     product.min_stock > 0
       ? Math.max(1, Math.round(product.min_stock * 0.8))
       : Math.max(1, Math.round(Math.max(product.stock, 1) * 0.35));
   const predictedQuantity = Math.max(0, Math.round(baselineDemand * modifier));
+  const messaging = getCatalogFallbackMessaging(dataSource);
 
   return normalizePrediction(
     {
@@ -822,9 +932,10 @@ function buildCatalogFallbackPrediction(product, index, weather, event) {
       estimated_revenue: Number((predictedQuantity * product.price).toFixed(2)),
       confidence: 'low',
       prediction_source: 'catalog-fallback',
+      active_feature_groups: DEFAULT_FEATURE_SUMMARY.heuristicFeatureGroups,
+      fallback_reason: messaging.fallbackReason,
       last_sold_on: null,
-      recommendation:
-        'This product used a stock-based fallback forecast because the live prediction row was unavailable.',
+      recommendation: messaging.recommendation,
     },
     index
   );
@@ -838,7 +949,11 @@ function ensureForecastCoverage(baseForecast, catalogProducts, weather, event) {
   const existingIds = new Set(baseForecast.predictions.map((item) => String(item.product_id)));
   const missingPredictions = catalogProducts
     .filter((product) => !existingIds.has(String(product.id)))
-    .map((product, index) => buildCatalogFallbackPrediction(product, index, weather, event));
+    .map((product, index) =>
+      buildCatalogFallbackPrediction(product, index, weather, event, {
+        dataSource: baseForecast.dataSource,
+      })
+    );
 
   if (missingPredictions.length === 0) {
     return { ...baseForecast, missingPredictionCount: 0 };
@@ -870,12 +985,15 @@ function ensureForecastCoverage(baseForecast, catalogProducts, weather, event) {
 
 function buildCatalogOnlyForecast(catalogProducts, weather, event) {
   const predictions = catalogProducts.map((product, index) =>
-    buildCatalogFallbackPrediction(product, index, weather, event)
+    buildCatalogFallbackPrediction(product, index, weather, event, {
+      dataSource: 'catalog-fallback',
+    })
   );
   const summary = deriveSummary(predictions);
 
   return {
     metrics: DEFAULT_METRICS,
+    featureSummary: DEFAULT_FEATURE_SUMMARY,
     predictions,
     weeklyTrend: normalizeTrend([]),
     summary,
@@ -916,6 +1034,8 @@ function buildSampleForecast(weather, event, algorithm) {
       estimated_revenue: Number((item.unit_price * predictedQuantity).toFixed(2)),
       confidence: item.confidence,
       prediction_source: 'sample',
+      active_feature_groups: DEFAULT_FEATURE_SUMMARY.modelFeatureGroups,
+      fallback_reason: '',
       recommendation_type: item.recommendation_type,
       stock_gap: stockGap,
       overstock_units: Math.max(0, item.current_stock - predictedQuantity - stockGap),
@@ -935,6 +1055,7 @@ function buildSampleForecast(weather, event, algorithm) {
 
   return {
     metrics: SAMPLE_ALGORITHM_METRICS[algorithm] || SAMPLE_ALGORITHM_METRICS.XGBoost,
+    featureSummary: DEFAULT_FEATURE_SUMMARY,
     predictions,
     weeklyTrend,
     summary,
@@ -1276,6 +1397,7 @@ export default function Predictions() {
   const [weatherForecastError, setWeatherForecastError] = useState('');
   const [forecast, setForecast] = useState(() => ({
     metrics: DEFAULT_METRICS,
+    featureSummary: DEFAULT_FEATURE_SUMMARY,
     predictions: [],
     weeklyTrend: normalizeTrend([]),
     summary: deriveSummary([]),
@@ -1623,6 +1745,8 @@ export default function Predictions() {
       'Confidence',
       'Recommendation',
       'Prediction Source',
+      'Fallback Reason',
+      'Active Feature Groups',
       'Last Sold On',
     ];
 
@@ -1638,6 +1762,8 @@ export default function Predictions() {
       item.confidence,
       item.recommendation,
       item.prediction_source,
+      item.fallback_reason,
+      item.active_feature_groups.join(' | '),
       item.last_sold_on || '',
     ]);
 
@@ -2175,6 +2301,65 @@ export default function Predictions() {
                   </div>
                 </div>
               </div>
+
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                <div className="flex items-center gap-2 font-black text-slate-900">
+                  <BoltIcon className="h-5 w-5 text-slate-400" />
+                  Active forecast inputs
+                </div>
+                <div className="mt-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
+                  ML feature groups
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {forecast.featureSummary.modelFeatureGroups.map((group) => (
+                    <span
+                      key={`ml-${group}`}
+                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-sky-700"
+                    >
+                      {group}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-4 text-xs font-semibold uppercase tracking-widest text-slate-500">
+                  Heuristic fallback groups
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {forecast.featureSummary.heuristicFeatureGroups.map((group) => (
+                    <span
+                      key={`heuristic-${group}`}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-widest text-slate-700"
+                    >
+                      {group}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                  <div className="rounded-xl bg-white px-3 py-2">
+                    <div className="text-slate-500">Weather history rows</div>
+                    <div className="mt-1 text-sm font-black text-slate-900">
+                      {formatCount(forecast.featureSummary.historicalDrivers.weatherDays)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-white px-3 py-2">
+                    <div className="text-slate-500">School-event rows</div>
+                    <div className="mt-1 text-sm font-black text-slate-900">
+                      {formatCount(forecast.featureSummary.historicalDrivers.eventDays)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-white px-3 py-2 col-span-2">
+                    <div className="text-slate-500">Driver history range</div>
+                    <div className="mt-1 text-sm font-black text-slate-900">
+                      {forecast.featureSummary.historicalDrivers.startDate
+                        ? `${formatShortDate(forecast.featureSummary.historicalDrivers.startDate)} to ${formatShortDate(
+                            forecast.featureSummary.historicalDrivers.endDate
+                          )}`
+                        : 'Not available'}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </>
@@ -2319,8 +2504,28 @@ export default function Predictions() {
                           <span>Category: {item.category}</span>
                           <span>Last sold: {formatShortDate(item.last_sold_on)}</span>
                           <span>Observed days: {formatCount(item.days_observed)}</span>
-                          <span>Source: {item.prediction_source}</span>
+                          <span>Source: {formatPredictionSourceLabel(item.prediction_source)}</span>
                         </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span
+                            className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${getPredictionSourceClasses(item.prediction_source)}`}
+                          >
+                            {formatPredictionSourceLabel(item.prediction_source)}
+                          </span>
+                          {item.active_feature_groups.map((group) => (
+                            <span
+                              key={`${item.product_id}-${group}`}
+                              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-widest text-slate-600"
+                            >
+                              {group}
+                            </span>
+                          ))}
+                        </div>
+                        {item.fallback_reason && (
+                          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                            {item.fallback_reason}
+                          </div>
+                        )}
                         <p className="mt-3 max-w-3xl text-sm text-slate-700">{item.recommendation}</p>
                       </div>
 

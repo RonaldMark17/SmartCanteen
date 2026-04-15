@@ -20,7 +20,15 @@ import backend.auth as auth
 import backend.analytics_helpers as analytics_helpers
 import backend.ml_predictor as ml_predictor
 from backend.database import engine, get_db, Base
-from backend.time_utils import normalize_client_timestamp
+from backend.time_utils import (
+    build_ph_date_range_bounds,
+    build_recent_ph_day_keys,
+    get_ph_day_bounds_utc_naive,
+    get_ph_recent_cutoff_utc_naive,
+    get_ph_today,
+    normalize_client_timestamp,
+    to_ph_time,
+)
 
 from sqlalchemy.orm import joinedload
 
@@ -378,9 +386,7 @@ def list_transactions(
     # Apply Date Filtering if dates are provided
     if start_date and end_date:
         try:
-            start = datetime.strptime(start_date, "%Y-%m-%d")
-            # End of day filter (23:59:59)
-            end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            start, end = build_ph_date_range_bounds(start_date, end_date)
             query = query.filter(models.Transaction.created_at.between(start, end))
         except ValueError:
             pass # Ignore invalid date formats
@@ -439,10 +445,10 @@ def summary(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start, today_end = get_ph_day_bounds_utc_naive(get_ph_today())
 
     today_txns   = db.query(models.Transaction).filter(
-        models.Transaction.created_at >= today_start).all()
+        models.Transaction.created_at.between(today_start, today_end)).all()
     all_txns     = db.query(models.Transaction).all()
     low_stock_ct = db.query(models.Product).filter(
         models.Product.is_active == True,
@@ -465,20 +471,19 @@ def daily_sales(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = get_ph_recent_cutoff_utc_naive(days)
     txns   = db.query(models.Transaction).filter(
         models.Transaction.created_at >= cutoff).all()
 
     bucket: dict = {}
     for t in txns:
-        k = t.created_at.date().isoformat()
+        k = to_ph_time(t.created_at).date().isoformat()
         bucket.setdefault(k, {"date": k, "revenue": 0.0, "transactions": 0})
         bucket[k]["revenue"]      += t.total
         bucket[k]["transactions"] += 1
 
     result = []
-    for i in range(days - 1, -1, -1):
-        d = (datetime.utcnow() - timedelta(days=i)).date().isoformat()
+    for d in build_recent_ph_day_keys(days):
         entry = bucket.get(d, {"date": d, "revenue": 0.0, "transactions": 0})
         entry["revenue"] = round(entry["revenue"], 2)
         result.append(entry)
@@ -519,7 +524,8 @@ def predict_tomorrow(
         result = ml_predictor.predict_tomorrow_sales(db, algorithm, weather, event)
 
         return {
-            "metrics": result.get("metrics", {}),  # ✅ safe
+            "metrics": result.get("metrics", {}),
+            "feature_summary": result.get("feature_summary", {}),
             "predictions": result.get("predictions", []),  # ✅ safe
             "weekly_sales_trend": result.get("weekly_sales_trend", []),
             "summary": result.get("summary", {}),
@@ -531,6 +537,7 @@ def predict_tomorrow(
     except Exception as e:
         return {
             "metrics": {},
+            "feature_summary": {},
             "predictions": [],
             "weekly_sales_trend": [],
             "summary": {

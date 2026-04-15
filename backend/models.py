@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime,
+    Column, Integer, String, Float, Date, DateTime,
     Boolean, ForeignKey, Text
 )
 from sqlalchemy.orm import relationship
@@ -80,3 +80,30 @@ class AuditLog(Base):
     timestamp  = Column(DateTime, default=utc_now_naive)
 
     user = relationship("User", back_populates="audit_logs")
+
+
+class WeatherHistory(Base):
+    __tablename__ = "weather_history"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    date          = Column(Date, unique=True, index=True, nullable=False)
+    weather       = Column(String, nullable=False, default="clear")
+    temperature_c = Column(Float, nullable=False, default=30.0)
+    humidity_pct  = Column(Float, nullable=False, default=70.0)
+    rainfall_mm   = Column(Float, nullable=False, default=0.0)
+    source        = Column(String, nullable=False, default="bootstrap")
+    created_at    = Column(DateTime, default=utc_now_naive)
+    updated_at    = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class SchoolEventHistory(Base):
+    __tablename__ = "school_event_history"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    date          = Column(Date, unique=True, index=True, nullable=False)
+    event_type    = Column(String, nullable=False, default="none")
+    label         = Column(String, nullable=True)
+    is_school_day = Column(Boolean, nullable=False, default=True)
+    source        = Column(String, nullable=False, default="bootstrap")
+    created_at    = Column(DateTime, default=utc_now_naive)
+    updated_at    = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)

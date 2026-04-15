@@ -1,14 +1,22 @@
 """Prediction helpers for SmartCanteen."""
 
+import copy
+import json
+import os
+from datetime import datetime, timedelta
 from typing import Dict, List
+from urllib.error import URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 try:
@@ -17,7 +25,7 @@ except ImportError:  # pragma: no cover - optional dependency
     xgb = None
 
 from . import models
-from .time_utils import get_ph_recent_cutoff_utc_naive, get_ph_tomorrow, to_ph_time
+from .time_utils import get_ph_recent_cutoff_utc_naive, get_ph_today, get_ph_tomorrow, to_ph_time
 
 
 DEFAULT_METRICS = {
@@ -50,23 +58,122 @@ CATEGORY_FACTORS = {
     },
 }
 
+WEATHER_TYPES = ["clear", "cloudy", "rainy"]
+EVENT_TYPES = ["none", "intramurals", "exams", "halfday", "holiday"]
+OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+DEFAULT_WEATHER_LAT = float(os.getenv("FORECAST_WEATHER_LAT", "14.5995"))
+DEFAULT_WEATHER_LON = float(os.getenv("FORECAST_WEATHER_LON", "120.9842"))
+MODEL_FEATURE_GROUPS = [
+    "recent sales lags",
+    "weekday pattern",
+    "price signals",
+    "time-of-day mix",
+    "weather history",
+    "school event history",
+    "category demand",
+    "canteen demand",
+]
+HEURISTIC_FEATURE_GROUPS = [
+    "historical averages",
+    "weekday baseline",
+    "weather adjustment",
+    "event adjustment",
+]
+PREDICTION_CACHE_TTL_SECONDS = 180
+_PREDICTION_RESULT_CACHE: Dict[tuple, Dict] = {}
+
 FORECAST_FEATURE_COLUMNS = [
     "days_idx",
     "day_of_week",
     "is_weekend",
     "day_of_week_sin",
     "day_of_week_cos",
+    "avg_price",
+    "price_vs_median",
+    "price_delta_1",
     "lag_1",
     "lag_2",
     "lag_3",
     "lag_7",
+    "breakfast_lag_1",
+    "lunch_lag_1",
+    "afternoon_lag_1",
+    "breakfast_share_7",
+    "lunch_share_7",
+    "afternoon_share_7",
     "rolling_mean_3",
     "rolling_mean_7",
     "rolling_max_7",
     "weekday_history_mean",
+    "weekday_recent_mean_4",
+    "weekday_nonzero_mean",
     "days_since_last_sale",
+    "recent_sales_streak",
     "recent_nonzero_ratio_14",
+    "category_lag_1",
+    "category_rolling_mean_7",
+    "category_weekday_mean",
+    "global_lag_1",
+    "global_rolling_mean_7",
+    "global_weekday_mean",
+    "category_share_7",
+    "weather_clear",
+    "weather_cloudy",
+    "weather_rainy",
+    "temperature_c",
+    "humidity_pct",
+    "rainfall_mm",
+    "is_school_day",
+    "event_none",
+    "event_intramurals",
+    "event_exams",
+    "event_halfday",
+    "event_holiday",
 ]
+
+
+def _prune_prediction_cache(now_utc: datetime) -> None:
+    expired_keys = [
+        cache_key
+        for cache_key, entry in _PREDICTION_RESULT_CACHE.items()
+        if entry.get("expires_at") and entry["expires_at"] <= now_utc
+    ]
+    for cache_key in expired_keys:
+        _PREDICTION_RESULT_CACHE.pop(cache_key, None)
+
+
+def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event: str) -> tuple:
+    tx_count, tx_max = db.query(
+        func.count(models.Transaction.id),
+        func.max(models.Transaction.created_at),
+    ).one()
+    product_count, product_updated_max = db.query(
+        func.count(models.Product.id),
+        func.max(models.Product.updated_at),
+    ).filter(models.Product.is_active == True).one()
+    weather_count, weather_updated_max = db.query(
+        func.count(models.WeatherHistory.id),
+        func.max(models.WeatherHistory.updated_at),
+    ).one()
+    event_count, event_updated_max = db.query(
+        func.count(models.SchoolEventHistory.id),
+        func.max(models.SchoolEventHistory.updated_at),
+    ).one()
+
+    return (
+        get_ph_today().isoformat(),
+        algorithm,
+        weather,
+        event,
+        int(tx_count or 0),
+        tx_max.isoformat() if tx_max else "",
+        int(product_count or 0),
+        product_updated_max.isoformat() if product_updated_max else "",
+        int(weather_count or 0),
+        weather_updated_max.isoformat() if weather_updated_max else "",
+        int(event_count or 0),
+        event_updated_max.isoformat() if event_updated_max else "",
+    )
 
 
 def _empty_weekly_trend() -> List[Dict]:
@@ -86,6 +193,411 @@ def _build_algorithm_metrics(selected_algorithm: str, selected_metrics: Dict) ->
     return comparison
 
 
+def _resolve_time_slot(hour: int) -> str:
+    if hour < 10:
+        return "breakfast"
+    if hour < 14:
+        return "lunch"
+    return "afternoon"
+
+
+def _date_ordinal_seed(day_value) -> int:
+    return (day_value.toordinal() * 37 + 17) % 100
+
+
+def _build_bootstrap_weather(day_value) -> Dict:
+    seed = _date_ordinal_seed(day_value)
+    rainy_season = day_value.month in {6, 7, 8, 9, 10, 11}
+
+    if rainy_season:
+        if seed < 42:
+            weather = "rainy"
+        elif seed < 72:
+            weather = "cloudy"
+        else:
+            weather = "clear"
+    else:
+        if seed < 18:
+            weather = "rainy"
+        elif seed < 48:
+            weather = "cloudy"
+        else:
+            weather = "clear"
+
+    temperature_c = 31.5 if weather == "clear" else 29.5 if weather == "cloudy" else 27.4
+    humidity_pct = 67.0 if weather == "clear" else 78.0 if weather == "cloudy" else 88.0
+    rainfall_mm = 0.0 if weather == "clear" else round(0.8 + (seed % 5) * 0.4, 2) if weather == "cloudy" else round(8.0 + (seed % 9) * 1.8, 2)
+
+    month_adjustment = 1.2 if day_value.month in {4, 5} else -0.8 if day_value.month in {12, 1} else 0.0
+    temperature_c = round(temperature_c + month_adjustment, 1)
+    humidity_pct = round(min(96.0, max(55.0, humidity_pct + (2 if rainy_season else -2))), 1)
+
+    return {
+        "weather": weather,
+        "temperature_c": temperature_c,
+        "humidity_pct": humidity_pct,
+        "rainfall_mm": rainfall_mm,
+        "source": "bootstrap",
+    }
+
+
+def _build_bootstrap_school_event(day_value) -> Dict:
+    if day_value.weekday() >= 5:
+        return {
+            "event_type": "holiday",
+            "label": "Weekend",
+            "is_school_day": False,
+            "source": "bootstrap",
+        }
+
+    week_of_month = ((day_value.day - 1) // 7) + 1
+
+    if (day_value.month, week_of_month) in {(10, 2), (3, 3)}:
+        return {
+            "event_type": "exams",
+            "label": "Exam Week",
+            "is_school_day": True,
+            "source": "bootstrap",
+        }
+
+    if day_value.month == 11 and week_of_month == 3:
+        return {
+            "event_type": "intramurals",
+            "label": "Intramurals",
+            "is_school_day": True,
+            "source": "bootstrap",
+        }
+
+    if (day_value.month, day_value.day) in {(12, 19), (3, 27)}:
+        return {
+            "event_type": "halfday",
+            "label": "Half Day",
+            "is_school_day": True,
+            "source": "bootstrap",
+        }
+
+    if (day_value.month == 12 and day_value.day >= 22) or (day_value.month == 1 and day_value.day <= 3):
+        return {
+            "event_type": "holiday",
+            "label": "School Break",
+            "is_school_day": False,
+            "source": "bootstrap",
+        }
+
+    return {
+        "event_type": "none",
+        "label": "Regular School Day",
+        "is_school_day": True,
+        "source": "bootstrap",
+    }
+
+
+def _map_weather_code_to_type(weather_code: float | int | None, precipitation_sum: float) -> str:
+    if weather_code is None:
+        return "rainy" if precipitation_sum >= 2.0 else "clear"
+
+    code = int(weather_code)
+    if code in {0, 1}:
+        return "clear"
+    if code in {2, 3, 45, 48}:
+        return "cloudy"
+    if precipitation_sum > 0:
+        return "rainy"
+    return "cloudy"
+
+
+def _default_humidity_for_weather(weather: str) -> float:
+    if weather == "rainy":
+        return 88.0
+    if weather == "cloudy":
+        return 78.0
+    return 67.0
+
+
+def _fetch_open_meteo_archive(start_date, end_date) -> Dict:
+    if start_date > end_date:
+        return {}
+
+    query = urlencode(
+        {
+            "latitude": DEFAULT_WEATHER_LAT,
+            "longitude": DEFAULT_WEATHER_LON,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "daily": "weather_code,temperature_2m_mean,precipitation_sum",
+            "timezone": "Asia/Manila",
+        }
+    )
+    request_url = f"{OPEN_METEO_ARCHIVE_URL}?{query}"
+
+    try:
+        with urlopen(request_url, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (URLError, TimeoutError, json.JSONDecodeError, ValueError):
+        return {}
+
+    daily = payload.get("daily") or {}
+    dates = daily.get("time") or []
+    weather_codes = daily.get("weather_code") or []
+    temperatures = daily.get("temperature_2m_mean") or []
+    precipitation_values = daily.get("precipitation_sum") or []
+
+    weather_by_date = {}
+    for index, date_value in enumerate(dates):
+        try:
+            parsed_date = pd.to_datetime(date_value).date()
+        except Exception:
+            continue
+
+        precipitation_sum = float(precipitation_values[index] or 0.0) if index < len(precipitation_values) else 0.0
+        weather_code = weather_codes[index] if index < len(weather_codes) else None
+        weather = _map_weather_code_to_type(weather_code, precipitation_sum)
+        temperature_c = float(temperatures[index] or 0.0) if index < len(temperatures) else 0.0
+
+        weather_by_date[parsed_date] = {
+            "weather": weather,
+            "temperature_c": round(temperature_c or (31.5 if weather == "clear" else 29.5 if weather == "cloudy" else 27.4), 1),
+            "humidity_pct": _default_humidity_for_weather(weather),
+            "rainfall_mm": round(max(0.0, precipitation_sum), 2),
+            "source": "open-meteo",
+        }
+
+    return weather_by_date
+
+
+def _fetch_open_meteo_archive_range(start_date, end_date) -> Dict:
+    weather_by_date = {}
+    cursor = start_date
+
+    while cursor <= end_date:
+        chunk_end = min(cursor + timedelta(days=30), end_date)
+        weather_by_date.update(_fetch_open_meteo_archive(cursor, chunk_end))
+        cursor = chunk_end + timedelta(days=1)
+
+    return weather_by_date
+
+
+def _refresh_weather_history_from_archive(
+    db: Session,
+    weather_rows: List[models.WeatherHistory],
+    start_date,
+    end_date,
+) -> None:
+    historical_end_date = min(end_date, get_ph_today())
+    if start_date > historical_end_date:
+        return
+
+    weather_by_date = {row.date: row for row in weather_rows}
+    dates_to_refresh = [
+        day_value
+        for day_value in pd.date_range(start=start_date, end=historical_end_date, freq="D").date
+        if day_value not in weather_by_date or (weather_by_date[day_value].source or "bootstrap") == "bootstrap"
+    ]
+    if not dates_to_refresh:
+        return
+
+    refresh_start = min(dates_to_refresh)
+    refresh_end = max(dates_to_refresh)
+    archive_weather = _fetch_open_meteo_archive_range(refresh_start, refresh_end)
+    if not archive_weather:
+        return
+
+    updated = False
+    for day_value in dates_to_refresh:
+        archive_row = archive_weather.get(day_value)
+        if not archive_row:
+            continue
+
+        existing = weather_by_date.get(day_value)
+        if existing is None:
+            existing = models.WeatherHistory(date=day_value)
+            db.add(existing)
+            weather_by_date[day_value] = existing
+
+        existing.weather = archive_row["weather"]
+        existing.temperature_c = archive_row["temperature_c"]
+        existing.humidity_pct = archive_row["humidity_pct"]
+        existing.rainfall_mm = archive_row["rainfall_mm"]
+        existing.source = archive_row["source"]
+        updated = True
+
+    if updated:
+        db.commit()
+
+
+def _ensure_driver_history(db: Session, sales_df: pd.DataFrame) -> Dict:
+    if sales_df.empty:
+        start_date = get_ph_today() - timedelta(days=180)
+        end_date = get_ph_tomorrow()
+    else:
+        start_date = min(sales_df["date"]).to_pydatetime().date() if isinstance(min(sales_df["date"]), pd.Timestamp) else min(sales_df["date"])
+        end_date = max(max(sales_df["date"]), get_ph_tomorrow())
+
+    weather_rows = (
+        db.query(models.WeatherHistory)
+        .filter(models.WeatherHistory.date >= start_date, models.WeatherHistory.date <= end_date)
+        .all()
+    )
+    event_rows = (
+        db.query(models.SchoolEventHistory)
+        .filter(models.SchoolEventHistory.date >= start_date, models.SchoolEventHistory.date <= end_date)
+        .all()
+    )
+
+    weather_by_date = {row.date: row for row in weather_rows}
+    event_by_date = {row.date: row for row in event_rows}
+
+    inserted = False
+    total_days = (end_date - start_date).days + 1
+    for offset in range(total_days):
+        day_value = start_date + timedelta(days=offset)
+        if day_value not in weather_by_date:
+            db.add(models.WeatherHistory(date=day_value, **_build_bootstrap_weather(day_value)))
+            inserted = True
+        if day_value not in event_by_date:
+            db.add(models.SchoolEventHistory(date=day_value, **_build_bootstrap_school_event(day_value)))
+            inserted = True
+
+    if inserted:
+        db.commit()
+
+    weather_rows = (
+        db.query(models.WeatherHistory)
+        .filter(models.WeatherHistory.date >= start_date, models.WeatherHistory.date <= end_date)
+        .all()
+    )
+    _refresh_weather_history_from_archive(db, weather_rows, start_date, end_date)
+
+    return {"start_date": start_date, "end_date": end_date}
+
+
+def _fetch_driver_daily_frame(db: Session, start_date, end_date) -> pd.DataFrame:
+    weather_rows = (
+        db.query(models.WeatherHistory)
+        .filter(models.WeatherHistory.date >= start_date, models.WeatherHistory.date <= end_date)
+        .all()
+    )
+    event_rows = (
+        db.query(models.SchoolEventHistory)
+        .filter(models.SchoolEventHistory.date >= start_date, models.SchoolEventHistory.date <= end_date)
+        .all()
+    )
+
+    date_range = pd.date_range(start=start_date, end=end_date, freq="D")
+    driver_df = pd.DataFrame({"date": date_range})
+    driver_df["date_key"] = driver_df["date"].dt.date
+
+    weather_df = pd.DataFrame(
+        [
+            {
+                "date_key": row.date,
+                "weather": row.weather,
+                "temperature_c": float(row.temperature_c or 0),
+                "humidity_pct": float(row.humidity_pct or 0),
+                "rainfall_mm": float(row.rainfall_mm or 0),
+                "weather_source": row.source or "unknown",
+            }
+            for row in weather_rows
+        ]
+    )
+    if weather_df.empty:
+        weather_df = pd.DataFrame(columns=["date_key", "weather", "temperature_c", "humidity_pct", "rainfall_mm", "weather_source"])
+
+    event_df = pd.DataFrame(
+        [
+            {
+                "date_key": row.date,
+                "event_type": row.event_type,
+                "event_label": row.label or row.event_type,
+                "is_school_day": bool(row.is_school_day),
+                "event_source": row.source or "unknown",
+            }
+            for row in event_rows
+        ]
+    )
+    if event_df.empty:
+        event_df = pd.DataFrame(columns=["date_key", "event_type", "event_label", "is_school_day", "event_source"])
+
+    driver_df = driver_df.merge(weather_df, on="date_key", how="left").merge(event_df, on="date_key", how="left")
+    driver_df["weather"] = driver_df["weather"].fillna("clear")
+    driver_df["temperature_c"] = driver_df["temperature_c"].fillna(30.0)
+    driver_df["humidity_pct"] = driver_df["humidity_pct"].fillna(70.0)
+    driver_df["rainfall_mm"] = driver_df["rainfall_mm"].fillna(0.0)
+    driver_df["event_type"] = driver_df["event_type"].fillna("none")
+    driver_df["event_label"] = driver_df["event_label"].fillna("Regular School Day")
+    driver_df["is_school_day"] = driver_df["is_school_day"].fillna(True).astype(int)
+    driver_df["weather_source"] = driver_df["weather_source"].fillna("bootstrap")
+    driver_df["event_source"] = driver_df["event_source"].fillna("bootstrap")
+
+    for weather_type in WEATHER_TYPES:
+        driver_df[f"weather_{weather_type}"] = (driver_df["weather"] == weather_type).astype(int)
+
+    for event_type in EVENT_TYPES:
+        driver_df[f"event_{event_type}"] = (driver_df["event_type"] == event_type).astype(int)
+
+    return driver_df.drop(columns=["date_key"])
+
+
+def _build_tomorrow_driver_row(driver_daily: pd.DataFrame, tomorrow_value, weather: str, event: str) -> Dict:
+    tomorrow_match = driver_daily.loc[pd.to_datetime(driver_daily["date"]).dt.date == tomorrow_value]
+    base = tomorrow_match.iloc[-1].to_dict() if not tomorrow_match.empty else {
+        "date": pd.Timestamp(tomorrow_value),
+        "temperature_c": 30.0,
+        "humidity_pct": 70.0,
+        "rainfall_mm": 0.0,
+        "is_school_day": int(tomorrow_value.weekday() < 5),
+        "event_label": "Regular School Day",
+        "weather_source": "bootstrap",
+        "event_source": "bootstrap",
+    }
+
+    base["weather"] = weather if weather in WEATHER_TYPES else "clear"
+    base["event_type"] = event if event in EVENT_TYPES else "none"
+
+    if base["weather"] == "rainy" and float(base.get("rainfall_mm", 0) or 0) <= 0:
+        base["rainfall_mm"] = 9.0
+    if base["weather"] == "clear" and float(base.get("rainfall_mm", 0) or 0) > 1.5:
+        base["rainfall_mm"] = 0.0
+
+    base["is_school_day"] = 0 if base["event_type"] == "holiday" else int(base.get("is_school_day", 1))
+    base["event_label"] = {
+        "intramurals": "Intramurals",
+        "exams": "Exam Week",
+        "halfday": "Half Day",
+        "holiday": "Holiday",
+        "none": "Regular School Day",
+    }.get(base["event_type"], "Regular School Day")
+
+    for weather_type in WEATHER_TYPES:
+        base[f"weather_{weather_type}"] = int(base["weather"] == weather_type)
+    for event_type in EVENT_TYPES:
+        base[f"event_{event_type}"] = int(base["event_type"] == event_type)
+
+    return base
+
+
+def _build_feature_summary(driver_daily: pd.DataFrame, driver_range: Dict) -> Dict:
+    historical_driver_daily = driver_daily.loc[pd.to_datetime(driver_daily["date"]).dt.date <= get_ph_today()].copy()
+    weather_sources = sorted(
+        set(str(value) for value in historical_driver_daily.get("weather_source", pd.Series(dtype=str)).dropna().tolist())
+    )
+    event_sources = sorted(
+        set(str(value) for value in historical_driver_daily.get("event_source", pd.Series(dtype=str)).dropna().tolist())
+    )
+    return {
+        "model_feature_groups": MODEL_FEATURE_GROUPS,
+        "heuristic_feature_groups": HEURISTIC_FEATURE_GROUPS,
+        "historical_drivers": {
+            "weather_days": int(len(historical_driver_daily)),
+            "event_days": int(len(historical_driver_daily)),
+            "start_date": driver_range["start_date"].isoformat(),
+            "end_date": min(driver_range["end_date"], get_ph_today()).isoformat(),
+            "weather_sources": weather_sources or ["bootstrap"],
+            "event_sources": event_sources or ["bootstrap"],
+        },
+    }
+
+
 def _fetch_sales_df(db: Session, days_back: int = 90) -> pd.DataFrame:
     cutoff = get_ph_recent_cutoff_utc_naive(days_back)
     transactions = (
@@ -97,17 +609,25 @@ def _fetch_sales_df(db: Session, days_back: int = 90) -> pd.DataFrame:
     rows = []
     for transaction in transactions:
         created_at = to_ph_time(transaction.created_at)
+        time_slot = _resolve_time_slot(created_at.hour)
         for item in transaction.items or []:
             product = item.product
+            quantity = int(item.quantity or 0)
+            price = float(item.unit_price or 0)
+            if quantity <= 0 or price < 0:
+                continue
             rows.append(
                 {
                     "date": created_at.date(),
                     "product_id": item.product_id,
                     "product_name": product.name if product else "Unknown",
                     "category": (product.category if product and product.category else "General").lower(),
-                    "quantity": int(item.quantity or 0),
-                    "price": float(item.unit_price or 0),
+                    "quantity": quantity,
+                    "price": price,
                     "day_of_week": created_at.weekday(),
+                    "breakfast_qty": quantity if time_slot == "breakfast" else 0,
+                    "lunch_qty": quantity if time_slot == "lunch" else 0,
+                    "afternoon_qty": quantity if time_slot == "afternoon" else 0,
                 }
             )
 
@@ -123,6 +643,9 @@ def _fetch_sales_df(db: Session, days_back: int = 90) -> pd.DataFrame:
             "quantity",
             "price",
             "day_of_week",
+            "breakfast_qty",
+            "lunch_qty",
+            "afternoon_qty",
         ]
     )
 
@@ -131,9 +654,9 @@ def _build_model(algorithm: str):
     if algorithm == "XGBoost" and xgb is not None:
         return xgb.XGBRegressor(
             objective="reg:squarederror",
-            n_estimators=180,
-            max_depth=4,
-            learning_rate=0.05,
+            n_estimators=90,
+            max_depth=3,
+            learning_rate=0.07,
             subsample=0.9,
             colsample_bytree=0.9,
             random_state=42,
@@ -151,7 +674,7 @@ def _build_model(algorithm: str):
             ),
         )
     return RandomForestRegressor(
-        n_estimators=200,
+        n_estimators=120,
         max_depth=8,
         min_samples_leaf=2,
         random_state=42,
@@ -181,11 +704,28 @@ def _safe_mape(y_true, y_pred) -> float | None:
 
 def _build_daily_sales(product_df: pd.DataFrame, series_end_date=None) -> pd.DataFrame:
     if product_df.empty:
-        return pd.DataFrame(columns=["date", "quantity", "day_of_week"])
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "quantity",
+                "day_of_week",
+                "avg_price",
+                "breakfast_qty",
+                "lunch_qty",
+                "afternoon_qty",
+            ]
+        )
 
     daily = (
         product_df.groupby("date")
-        .agg(quantity=("quantity", "sum"), day_of_week=("day_of_week", "first"))
+        .agg(
+            quantity=("quantity", "sum"),
+            day_of_week=("day_of_week", "first"),
+            avg_price=("price", "mean"),
+            breakfast_qty=("breakfast_qty", "sum"),
+            lunch_qty=("lunch_qty", "sum"),
+            afternoon_qty=("afternoon_qty", "sum"),
+        )
         .reset_index()
         .sort_values("date")
     )
@@ -193,20 +733,88 @@ def _build_daily_sales(product_df: pd.DataFrame, series_end_date=None) -> pd.Dat
     start_date = daily["date"].min()
     end_date = pd.to_datetime(series_end_date) if series_end_date is not None else daily["date"].max()
     full_range = pd.date_range(start=start_date, end=end_date, freq="D")
+    default_price = float(product_df["price"].median()) if not product_df["price"].empty else 0.0
 
     daily = (
         daily.set_index("date")
-        .reindex(full_range, fill_value=0)
+        .reindex(full_range)
         .rename_axis("date")
         .reset_index()
     )
     daily["day_of_week"] = daily["date"].dt.weekday
-    daily["quantity"] = daily["quantity"].astype(float)
+    daily["quantity"] = daily["quantity"].fillna(0).clip(lower=0).astype(float)
+    daily["breakfast_qty"] = daily["breakfast_qty"].fillna(0).clip(lower=0).astype(float)
+    daily["lunch_qty"] = daily["lunch_qty"].fillna(0).clip(lower=0).astype(float)
+    daily["afternoon_qty"] = daily["afternoon_qty"].fillna(0).clip(lower=0).astype(float)
+    daily["avg_price"] = daily["avg_price"].fillna(default_price).clip(lower=0).astype(float)
+
+    nonzero_quantities = daily.loc[daily["quantity"] > 0, "quantity"]
+    if len(nonzero_quantities) >= 12:
+        upper_bound = float(nonzero_quantities.quantile(0.99))
+        if upper_bound > 0:
+            daily["quantity"] = daily["quantity"].clip(upper=upper_bound)
+            slot_total = daily["breakfast_qty"] + daily["lunch_qty"] + daily["afternoon_qty"]
+            slot_scale = np.where(slot_total > 0, daily["quantity"] / np.maximum(slot_total, 1.0), 0.0)
+            daily["breakfast_qty"] = daily["breakfast_qty"] * np.where(slot_total > 0, slot_scale, 1.0)
+            daily["lunch_qty"] = daily["lunch_qty"] * np.where(slot_total > 0, slot_scale, 1.0)
+            daily["afternoon_qty"] = daily["afternoon_qty"] * np.where(slot_total > 0, slot_scale, 1.0)
     daily["date"] = daily["date"].dt.date
     return daily
 
 
-def _build_feature_frame(daily: pd.DataFrame) -> pd.DataFrame:
+def _build_context_daily_lookup(df: pd.DataFrame, series_end_date=None) -> Dict:
+    if df.empty:
+        return {"global": pd.DataFrame(columns=["date", "quantity", "day_of_week"]), "by_category": {}}
+
+    categories = {
+        str(category).lower(): _build_daily_sales(
+            df[df["category"] == category].copy(),
+            series_end_date=series_end_date,
+        )
+        for category in df["category"].dropna().unique().tolist()
+    }
+
+    return {
+        "global": _build_daily_sales(df.copy(), series_end_date=series_end_date),
+        "by_category": categories,
+    }
+
+
+def _attach_context_features(frame: pd.DataFrame, prefix: str, context_daily: pd.DataFrame | None) -> pd.DataFrame:
+    if context_daily is None or context_daily.empty:
+        frame[f"{prefix}_lag_1"] = 0.0
+        frame[f"{prefix}_rolling_mean_7"] = 0.0
+        frame[f"{prefix}_weekday_mean"] = 0.0
+        return frame
+
+    context = context_daily[["date", "quantity", "day_of_week"]].copy()
+    context["date"] = pd.to_datetime(context["date"])
+    context = context.rename(columns={"quantity": f"{prefix}_quantity"})
+
+    frame = frame.merge(
+        context[["date", f"{prefix}_quantity"]],
+        on="date",
+        how="left",
+    )
+    shifted = frame[f"{prefix}_quantity"].shift(1)
+    frame[f"{prefix}_lag_1"] = shifted
+    frame[f"{prefix}_rolling_mean_7"] = shifted.rolling(7, min_periods=1).mean()
+    frame[f"{prefix}_weekday_sum"] = frame.groupby("day_of_week")[f"{prefix}_quantity"].cumsum() - frame[f"{prefix}_quantity"]
+    frame[f"{prefix}_weekday_count"] = frame.groupby("day_of_week").cumcount()
+    frame[f"{prefix}_weekday_mean"] = np.where(
+        frame[f"{prefix}_weekday_count"] > 0,
+        frame[f"{prefix}_weekday_sum"] / frame[f"{prefix}_weekday_count"],
+        np.nan,
+    )
+    return frame
+
+
+def _build_feature_frame(
+    daily: pd.DataFrame,
+    category_daily: pd.DataFrame | None = None,
+    global_daily: pd.DataFrame | None = None,
+    driver_daily: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     if len(daily) < 2:
         return pd.DataFrame(columns=["series_index", "quantity", *FORECAST_FEATURE_COLUMNS])
 
@@ -217,12 +825,23 @@ def _build_feature_frame(daily: pd.DataFrame) -> pd.DataFrame:
     frame["is_weekend"] = (frame["day_of_week"] >= 5).astype(int)
     frame["day_of_week_sin"] = np.sin((2 * np.pi * frame["day_of_week"]) / 7)
     frame["day_of_week_cos"] = np.cos((2 * np.pi * frame["day_of_week"]) / 7)
+    median_price = float(frame["avg_price"].replace(0, np.nan).median()) if not frame["avg_price"].empty else 0.0
+    if not np.isfinite(median_price):
+        median_price = 0.0
+    frame["price_vs_median"] = frame["avg_price"] / max(median_price, 1.0)
+    frame["price_delta_1"] = frame["avg_price"] - frame["avg_price"].shift(1).fillna(frame["avg_price"])
 
     shifted_quantity = frame["quantity"].shift(1)
+    shifted_breakfast = frame["breakfast_qty"].shift(1)
+    shifted_lunch = frame["lunch_qty"].shift(1)
+    shifted_afternoon = frame["afternoon_qty"].shift(1)
     frame["lag_1"] = shifted_quantity
     frame["lag_2"] = frame["quantity"].shift(2)
     frame["lag_3"] = frame["quantity"].shift(3)
     frame["lag_7"] = frame["quantity"].shift(7)
+    frame["breakfast_lag_1"] = shifted_breakfast
+    frame["lunch_lag_1"] = shifted_lunch
+    frame["afternoon_lag_1"] = shifted_afternoon
     frame["rolling_mean_3"] = shifted_quantity.rolling(3, min_periods=1).mean()
     frame["rolling_mean_7"] = shifted_quantity.rolling(7, min_periods=1).mean()
     frame["rolling_max_7"] = shifted_quantity.rolling(7, min_periods=1).max()
@@ -230,6 +849,13 @@ def _build_feature_frame(daily: pd.DataFrame) -> pd.DataFrame:
         lambda values: float(np.count_nonzero(values)) / max(len(values), 1),
         raw=True,
     )
+    breakfast_sum_7 = shifted_breakfast.rolling(7, min_periods=1).sum()
+    lunch_sum_7 = shifted_lunch.rolling(7, min_periods=1).sum()
+    afternoon_sum_7 = shifted_afternoon.rolling(7, min_periods=1).sum()
+    slot_sum_7 = breakfast_sum_7 + lunch_sum_7 + afternoon_sum_7
+    frame["breakfast_share_7"] = breakfast_sum_7 / np.maximum(slot_sum_7, 1.0)
+    frame["lunch_share_7"] = lunch_sum_7 / np.maximum(slot_sum_7, 1.0)
+    frame["afternoon_share_7"] = afternoon_sum_7 / np.maximum(slot_sum_7, 1.0)
 
     frame["weekday_history_sum"] = frame.groupby("day_of_week")["quantity"].cumsum() - frame["quantity"]
     frame["weekday_history_count"] = frame.groupby("day_of_week").cumcount()
@@ -238,25 +864,87 @@ def _build_feature_frame(daily: pd.DataFrame) -> pd.DataFrame:
         frame["weekday_history_sum"] / frame["weekday_history_count"],
         np.nan,
     )
+    frame["weekday_recent_mean_4"] = shifted_quantity.groupby(frame["day_of_week"]).transform(
+        lambda series: series.rolling(4, min_periods=1).mean()
+    )
+    frame["weekday_nonzero_mean"] = shifted_quantity.mask(shifted_quantity <= 0).groupby(frame["day_of_week"]).transform(
+        lambda series: series.expanding(min_periods=1).mean()
+    )
 
     last_sale_index = None
     gaps = []
+    streaks = []
+    running_streak = 0
     for idx, quantity in enumerate(frame["quantity"].tolist()):
         if last_sale_index is None:
             gaps.append(float(idx + 1))
         else:
             gaps.append(float(idx - last_sale_index))
+
+        streaks.append(float(running_streak))
         if quantity > 0:
             last_sale_index = idx
+            running_streak += 1
+        else:
+            running_streak = 0
     frame["days_since_last_sale"] = pd.Series(gaps).shift(1)
+    frame["recent_sales_streak"] = pd.Series(streaks).shift(1)
+
+    frame = _attach_context_features(frame, "category", category_daily)
+    frame = _attach_context_features(frame, "global", global_daily)
+    frame["category_share_7"] = frame["rolling_mean_7"] / np.maximum(frame["category_rolling_mean_7"], 1.0)
+
+    if driver_daily is not None and not driver_daily.empty:
+        drivers = driver_daily.copy()
+        drivers["date"] = pd.to_datetime(drivers["date"])
+        driver_columns = ["date"] + [
+            "weather_clear",
+            "weather_cloudy",
+            "weather_rainy",
+            "temperature_c",
+            "humidity_pct",
+            "rainfall_mm",
+            "is_school_day",
+            "event_none",
+            "event_intramurals",
+            "event_exams",
+            "event_halfday",
+            "event_holiday",
+        ]
+        frame = frame.merge(drivers[driver_columns], on="date", how="left")
+    else:
+        for column in [
+            "weather_clear",
+            "weather_cloudy",
+            "weather_rainy",
+            "temperature_c",
+            "humidity_pct",
+            "rainfall_mm",
+            "is_school_day",
+            "event_none",
+            "event_intramurals",
+            "event_exams",
+            "event_halfday",
+            "event_holiday",
+        ]:
+            frame[column] = 0.0
 
     frame[FORECAST_FEATURE_COLUMNS] = frame[FORECAST_FEATURE_COLUMNS].fillna(0.0)
     return frame.iloc[1:].copy()
 
 
-def _build_future_features(daily: pd.DataFrame, tomorrow_weekday: int) -> np.ndarray:
+def _build_future_features(
+    daily: pd.DataFrame,
+    tomorrow_weekday: int,
+    category_daily: pd.DataFrame | None = None,
+    global_daily: pd.DataFrame | None = None,
+    tomorrow_driver: Dict | None = None,
+) -> np.ndarray:
     history = daily.copy().reset_index(drop=True)
     quantities = history["quantity"].astype(float).to_numpy()
+    breakfast_quantities = history["breakfast_qty"].astype(float).to_numpy()
+    lunch_quantities = history["lunch_qty"].astype(float).to_numpy()
+    afternoon_quantities = history["afternoon_qty"].astype(float).to_numpy()
     recent_3 = quantities[-3:]
     recent_7 = quantities[-7:]
     weekday_history = history.loc[history["day_of_week"] == tomorrow_weekday, "quantity"].astype(float)
@@ -270,6 +958,49 @@ def _build_future_features(daily: pd.DataFrame, tomorrow_weekday: int) -> np.nda
         days_since_last_sale = 0.0
         recent_nonzero_ratio_14 = 0.0
         overall_weekday_mean = 0.0
+        weekday_recent_mean_4 = 0.0
+        weekday_nonzero_mean = 0.0
+
+    same_weekday_history = weekday_history.tail(4)
+    weekday_recent_mean_4 = float(same_weekday_history.mean()) if not same_weekday_history.empty else overall_weekday_mean
+    weekday_nonzero_history = weekday_history[weekday_history > 0]
+    weekday_nonzero_mean = float(weekday_nonzero_history.mean()) if not weekday_nonzero_history.empty else overall_weekday_mean
+
+    recent_sales_streak = 0.0
+    for quantity in quantities[::-1]:
+        if quantity > 0:
+            recent_sales_streak += 1.0
+        else:
+            break
+
+    def _context_summary(context_daily: pd.DataFrame | None) -> tuple[float, float, float]:
+        if context_daily is None or context_daily.empty:
+            return 0.0, 0.0, 0.0
+
+        context = context_daily.copy().reset_index(drop=True)
+        context_quantities = context["quantity"].astype(float).to_numpy()
+        context_weekday_history = context.loc[
+            context["day_of_week"] == tomorrow_weekday,
+            "quantity",
+        ].astype(float)
+        return (
+            float(context_quantities[-1]) if len(context_quantities) >= 1 else 0.0,
+            float(np.mean(context_quantities[-7:])) if len(context_quantities) else 0.0,
+            float(context_weekday_history.mean()) if not context_weekday_history.empty else 0.0,
+        )
+
+    category_lag_1, category_rolling_mean_7, category_weekday_mean = _context_summary(category_daily)
+    global_lag_1, global_rolling_mean_7, global_weekday_mean = _context_summary(global_daily)
+    breakfast_sum_7 = float(np.sum(breakfast_quantities[-7:])) if len(breakfast_quantities) else 0.0
+    lunch_sum_7 = float(np.sum(lunch_quantities[-7:])) if len(lunch_quantities) else 0.0
+    afternoon_sum_7 = float(np.sum(afternoon_quantities[-7:])) if len(afternoon_quantities) else 0.0
+    slot_sum_7 = breakfast_sum_7 + lunch_sum_7 + afternoon_sum_7
+    median_price = float(history["avg_price"].replace(0, np.nan).median()) if not history["avg_price"].empty else 0.0
+    if not np.isfinite(median_price):
+        median_price = 0.0
+    current_price = float(history["avg_price"].iloc[-1]) if not history["avg_price"].empty else 0.0
+    previous_price = float(history["avg_price"].iloc[-2]) if len(history["avg_price"]) >= 2 else current_price
+    tomorrow_driver = tomorrow_driver or {}
 
     feature_row = {
         "days_idx": float(len(history)),
@@ -277,16 +1008,47 @@ def _build_future_features(daily: pd.DataFrame, tomorrow_weekday: int) -> np.nda
         "is_weekend": float(int(tomorrow_weekday >= 5)),
         "day_of_week_sin": float(np.sin((2 * np.pi * tomorrow_weekday) / 7)),
         "day_of_week_cos": float(np.cos((2 * np.pi * tomorrow_weekday) / 7)),
+        "avg_price": current_price,
+        "price_vs_median": current_price / max(median_price, 1.0),
+        "price_delta_1": current_price - previous_price,
         "lag_1": float(quantities[-1]) if len(quantities) >= 1 else 0.0,
         "lag_2": float(quantities[-2]) if len(quantities) >= 2 else 0.0,
         "lag_3": float(quantities[-3]) if len(quantities) >= 3 else 0.0,
         "lag_7": float(quantities[-7]) if len(quantities) >= 7 else 0.0,
+        "breakfast_lag_1": float(breakfast_quantities[-1]) if len(breakfast_quantities) >= 1 else 0.0,
+        "lunch_lag_1": float(lunch_quantities[-1]) if len(lunch_quantities) >= 1 else 0.0,
+        "afternoon_lag_1": float(afternoon_quantities[-1]) if len(afternoon_quantities) >= 1 else 0.0,
+        "breakfast_share_7": breakfast_sum_7 / max(slot_sum_7, 1.0),
+        "lunch_share_7": lunch_sum_7 / max(slot_sum_7, 1.0),
+        "afternoon_share_7": afternoon_sum_7 / max(slot_sum_7, 1.0),
         "rolling_mean_3": float(np.mean(recent_3)) if len(recent_3) else 0.0,
         "rolling_mean_7": float(np.mean(recent_7)) if len(recent_7) else 0.0,
         "rolling_max_7": float(np.max(recent_7)) if len(recent_7) else 0.0,
         "weekday_history_mean": overall_weekday_mean,
+        "weekday_recent_mean_4": weekday_recent_mean_4,
+        "weekday_nonzero_mean": weekday_nonzero_mean,
         "days_since_last_sale": days_since_last_sale,
+        "recent_sales_streak": recent_sales_streak,
         "recent_nonzero_ratio_14": recent_nonzero_ratio_14,
+        "category_lag_1": category_lag_1,
+        "category_rolling_mean_7": category_rolling_mean_7,
+        "category_weekday_mean": category_weekday_mean,
+        "global_lag_1": global_lag_1,
+        "global_rolling_mean_7": global_rolling_mean_7,
+        "global_weekday_mean": global_weekday_mean,
+        "category_share_7": float(np.mean(recent_7)) / max(category_rolling_mean_7, 1.0) if len(recent_7) else 0.0,
+        "weather_clear": float(tomorrow_driver.get("weather_clear", 0)),
+        "weather_cloudy": float(tomorrow_driver.get("weather_cloudy", 0)),
+        "weather_rainy": float(tomorrow_driver.get("weather_rainy", 0)),
+        "temperature_c": float(tomorrow_driver.get("temperature_c", 30.0)),
+        "humidity_pct": float(tomorrow_driver.get("humidity_pct", 70.0)),
+        "rainfall_mm": float(tomorrow_driver.get("rainfall_mm", 0.0)),
+        "is_school_day": float(tomorrow_driver.get("is_school_day", 1)),
+        "event_none": float(tomorrow_driver.get("event_none", 1)),
+        "event_intramurals": float(tomorrow_driver.get("event_intramurals", 0)),
+        "event_exams": float(tomorrow_driver.get("event_exams", 0)),
+        "event_halfday": float(tomorrow_driver.get("event_halfday", 0)),
+        "event_holiday": float(tomorrow_driver.get("event_holiday", 0)),
     }
     return np.array([[feature_row[column] for column in FORECAST_FEATURE_COLUMNS]], dtype=float)
 
@@ -303,6 +1065,177 @@ def _choose_blend_weight(history_points: int, model_mape: float | None, heuristi
     return float(min(0.8, max(0.2, base_weight)))
 
 
+def _select_blend_weight(
+    y_true,
+    y_pred_model,
+    y_pred_heuristic,
+    history_points: int,
+    model_mape: float | None,
+    heuristic_mape: float | None,
+) -> float:
+    candidate_weights = [0.0, 0.2, 0.35, 0.5, 0.65, 0.8, 1.0]
+    preferred_weight = _choose_blend_weight(history_points, model_mape, heuristic_mape)
+    best_weight = preferred_weight
+    best_score = None
+
+    for weight in candidate_weights:
+        blended = [
+            (model_value * weight) + (heuristic_value * (1 - weight))
+            for model_value, heuristic_value in zip(y_pred_model, y_pred_heuristic)
+        ]
+        blended_mape = _safe_mape(y_true, blended)
+        if blended_mape is None:
+            continue
+
+        score = blended_mape + (abs(weight - preferred_weight) * 0.5)
+        if best_score is None or score < best_score:
+            best_score = score
+            best_weight = weight
+
+    return float(best_weight)
+
+
+def _get_history_health(daily: pd.DataFrame) -> Dict:
+    if daily.empty:
+        return {
+            "days_observed": 0,
+            "nonzero_days": 0,
+            "total_units": 0.0,
+            "recent_nonzero_days": 0,
+        }
+
+    return {
+        "days_observed": int(len(daily)),
+        "nonzero_days": int((daily["quantity"] > 0).sum()),
+        "total_units": float(daily["quantity"].sum()),
+        "recent_nonzero_days": int((daily["quantity"].tail(60) > 0).sum()),
+    }
+
+
+def _is_model_ready(daily: pd.DataFrame) -> bool:
+    health = _get_history_health(daily)
+    if health["days_observed"] < 14:
+        return False
+
+    return (
+        health["nonzero_days"] >= 4
+        and health["total_units"] >= 6
+        and health["recent_nonzero_days"] >= 2
+    )
+
+
+def _build_history_gap_reason(daily: pd.DataFrame) -> str:
+    health = _get_history_health(daily)
+    gaps = []
+
+    if health["days_observed"] < 14:
+        gaps.append(f"only {health['days_observed']} days of history")
+    if health["nonzero_days"] < 4:
+        gaps.append(f"{health['nonzero_days']} non-zero selling days")
+    if health["total_units"] < 6:
+        gaps.append(f"{int(health['total_units'])} total units sold")
+    if health["recent_nonzero_days"] < 2:
+        gaps.append(f"{health['recent_nonzero_days']} recent selling days in the last 60 days")
+
+    if not gaps:
+        return "Used fallback because this product's sales pattern is still too sparse for reliable ML training."
+
+    return f"Used fallback because this product only has {'; '.join(gaps)}."
+
+
+def _is_sparse_category_ready(daily: pd.DataFrame, category_daily: pd.DataFrame | None, global_daily: pd.DataFrame | None) -> bool:
+    health = _get_history_health(daily)
+    if health["days_observed"] < 7:
+        return False
+
+    category_has_signal = category_daily is not None and not category_daily.empty and float(category_daily["quantity"].sum()) > 0
+    global_has_signal = global_daily is not None and not global_daily.empty and float(global_daily["quantity"].sum()) > 0
+    has_product_signal = health["nonzero_days"] >= 2 or health["total_units"] >= 4
+    return has_product_signal and (category_has_signal or global_has_signal)
+
+
+def _context_scaled_signal(
+    daily: pd.DataFrame,
+    context_daily: pd.DataFrame | None,
+    tomorrow_weekday: int,
+) -> float:
+    if context_daily is None or context_daily.empty:
+        return 0.0
+
+    product_recent_mean = float(daily["quantity"].tail(min(28, len(daily))).mean()) if not daily.empty else 0.0
+    product_total_units = float(daily["quantity"].sum()) if not daily.empty else 0.0
+    context_recent_mean = float(context_daily["quantity"].tail(min(28, len(context_daily))).mean())
+    context_weekday = context_daily.loc[context_daily["day_of_week"] == tomorrow_weekday, "quantity"].astype(float)
+    context_weekday_mean = float(context_weekday.mean()) if not context_weekday.empty else context_recent_mean
+    context_signal = (context_weekday_mean * 0.6) + (context_recent_mean * 0.4)
+
+    if context_signal <= 0:
+        return 0.0
+
+    recent_share = product_recent_mean / max(context_recent_mean, 1.0)
+    lifetime_share = product_total_units / max(float(context_daily["quantity"].sum()), 1.0)
+    share = min(1.0, max(0.02 if product_total_units > 0 else 0.0, (recent_share * 0.7) + (lifetime_share * 0.3)))
+    return context_signal * share
+
+
+def _sparse_history_prediction(
+    daily: pd.DataFrame,
+    category: str,
+    tomorrow_weekday: int,
+    weather: str,
+    event: str,
+    category_daily: pd.DataFrame | None = None,
+    global_daily: pd.DataFrame | None = None,
+) -> Dict:
+    baseline = _heuristic_prediction(
+        daily,
+        category,
+        tomorrow_weekday,
+        weather,
+        event,
+    )
+    health = _get_history_health(daily)
+    category_signal = _context_scaled_signal(daily, category_daily, tomorrow_weekday)
+    global_signal = _context_scaled_signal(daily, global_daily, tomorrow_weekday)
+
+    product_weight = 0.7 if health["nonzero_days"] >= 4 else 0.5 if health["nonzero_days"] >= 2 else 0.25
+    if health["recent_nonzero_days"] == 0:
+        product_weight -= 0.25
+    elif health["recent_nonzero_days"] == 1:
+        product_weight -= 0.1
+    product_weight = max(0.15, product_weight)
+
+    category_weight = 0.0
+    global_weight = 0.0
+    if category_signal > 0:
+        category_weight = 0.25
+    if global_signal > 0:
+        global_weight = 0.15
+
+    if health["recent_nonzero_days"] == 0:
+        category_weight += 0.1 if category_signal > 0 else 0.0
+        global_weight += 0.05 if global_signal > 0 else 0.0
+
+    weight_total = product_weight + category_weight + global_weight
+    if weight_total <= 0:
+        return baseline
+
+    assisted_prediction = (
+        (baseline["prediction"] * product_weight)
+        + (category_signal * category_weight)
+        + (global_signal * global_weight)
+    ) / weight_total
+
+    if assisted_prediction > 0 and assisted_prediction < 0.5:
+        assisted_prediction = 0.5
+
+    return {
+        **baseline,
+        "prediction": max(0, round(assisted_prediction)),
+        "source": "category-assisted",
+    }
+
+
 def _heuristic_prediction(
     daily: pd.DataFrame,
     category: str,
@@ -311,7 +1244,7 @@ def _heuristic_prediction(
     event: str,
 ) -> Dict:
     if daily.empty:
-        return {"prediction": 0, "avg_daily": 0.0, "days_observed": 0}
+        return {"prediction": 0, "avg_daily": 0.0, "days_observed": 0, "source": "heuristic"}
 
     avg_daily = float(daily["quantity"].mean())
     recent_avg = float(daily["quantity"].tail(min(3, len(daily))).mean())
@@ -333,6 +1266,7 @@ def _heuristic_prediction(
         "prediction": max(0, round(adjusted)),
         "avg_daily": round(avg_daily, 2),
         "days_observed": len(daily),
+        "source": "heuristic",
     }
 
 
@@ -343,17 +1277,41 @@ def _ml_prediction(
     weather: str,
     event: str,
     algorithm: str,
+    category_daily: pd.DataFrame | None = None,
+    global_daily: pd.DataFrame | None = None,
+    driver_daily: pd.DataFrame | None = None,
+    tomorrow_driver: Dict | None = None,
 ) -> Dict:
-    if len(daily) < 10:
-        return {"prediction": None, "y_test": [], "y_pred": []}
+    if not _is_model_ready(daily):
+        return {
+            "prediction": None,
+            "y_test": [],
+            "y_pred": [],
+            "reason": _build_history_gap_reason(daily),
+        }
 
-    model_df = _build_feature_frame(daily)
+    model_df = _build_feature_frame(
+        daily,
+        category_daily=category_daily,
+        global_daily=global_daily,
+        driver_daily=driver_daily,
+    )
     if len(model_df) < 8:
-        return {"prediction": None, "y_test": [], "y_pred": []}
+        return {
+            "prediction": None,
+            "y_test": [],
+            "y_pred": [],
+            "reason": "Not enough clean training rows after feature engineering.",
+        }
 
-    validation_window = min(6, max(3, len(model_df) // 5))
+    validation_window = max(3, int(np.ceil(len(model_df) * 0.2)))
     if len(model_df) - validation_window < 6:
-        return {"prediction": None, "y_test": [], "y_pred": []}
+        return {
+            "prediction": None,
+            "y_test": [],
+            "y_pred": [],
+            "reason": "Time-based split left too little history for training.",
+        }
 
     train_df = model_df.iloc[:-validation_window]
     test_df = model_df.iloc[-validation_window:]
@@ -363,7 +1321,12 @@ def _ml_prediction(
         model.fit(train_df[FORECAST_FEATURE_COLUMNS].values, train_df["quantity"].values)
         raw_predictions = model.predict(test_df[FORECAST_FEATURE_COLUMNS].values)
     except Exception:
-        return {"prediction": None, "y_test": [], "y_pred": []}
+        return {
+            "prediction": None,
+            "y_test": [],
+            "y_pred": [],
+            "reason": "Model training failed on the available history.",
+        }
 
     y_test = [float(value) for value in test_df["quantity"].tolist()]
     y_pred_model = [max(0.0, float(value)) for value in raw_predictions]
@@ -381,12 +1344,24 @@ def _ml_prediction(
         y_pred_heuristic.append(float(heuristic_prediction))
 
     if len(y_test) < 3:
-        return {"prediction": None, "y_test": [], "y_pred": []}
+        return {
+            "prediction": None,
+            "y_test": [],
+            "y_pred": [],
+            "reason": "Backtest window was too small to validate the model.",
+        }
 
     model_mape = _safe_mape(y_test, y_pred_model)
     heuristic_mape = _safe_mape(y_test, y_pred_heuristic)
 
-    blend_weight = _choose_blend_weight(len(model_df), model_mape, heuristic_mape)
+    blend_weight = _select_blend_weight(
+        y_test,
+        y_pred_model,
+        y_pred_heuristic,
+        len(model_df),
+        model_mape,
+        heuristic_mape,
+    )
     blended_validation_predictions = [
         (model_value * blend_weight) + (heuristic_value * (1 - blend_weight))
         for model_value, heuristic_value in zip(y_pred_model, y_pred_heuristic)
@@ -395,9 +1370,24 @@ def _ml_prediction(
     final_model = _build_model(algorithm)
     try:
         final_model.fit(model_df[FORECAST_FEATURE_COLUMNS].values, model_df["quantity"].values)
-        future_raw_prediction = float(final_model.predict(_build_future_features(daily, tomorrow_weekday))[0])
+        future_raw_prediction = float(
+            final_model.predict(
+                _build_future_features(
+                    daily,
+                    tomorrow_weekday,
+                    category_daily=category_daily,
+                    global_daily=global_daily,
+                    tomorrow_driver=tomorrow_driver,
+                )
+            )[0]
+        )
     except Exception:
-        return {"prediction": None, "y_test": [], "y_pred": []}
+        return {
+            "prediction": None,
+            "y_test": [],
+            "y_pred": [],
+            "reason": "Future feature generation failed for tomorrow's forecast.",
+        }
 
     future_heuristic_prediction = _heuristic_prediction(
         daily,
@@ -415,6 +1405,7 @@ def _ml_prediction(
         "prediction": prediction,
         "y_test": list(y_test),
         "y_pred": [float(value) for value in blended_validation_predictions],
+        "reason": "",
     }
 
 
@@ -593,13 +1584,24 @@ def predict_tomorrow_sales(
     weather: str = "clear",
     event: str = "none",
 ) -> Dict:
+    now_utc = datetime.utcnow()
+    _prune_prediction_cache(now_utc)
+    cache_key = _build_prediction_cache_key(db, algorithm, weather, event)
+    cached_entry = _PREDICTION_RESULT_CACHE.get(cache_key)
+    if cached_entry and cached_entry.get("expires_at", now_utc) > now_utc:
+        return copy.deepcopy(cached_entry["result"])
+
     df = _fetch_sales_df(db, days_back=180)
+    driver_range = _ensure_driver_history(db, df)
+    driver_daily = _fetch_driver_daily_frame(db, driver_range["start_date"], driver_range["end_date"])
+    feature_summary = _build_feature_summary(driver_daily, driver_range)
     products = db.query(models.Product).filter(models.Product.is_active == True).all()
 
     if not products:
-        return {
+        result = {
             "metrics": _fallback_metrics(algorithm),
             "algorithm_metrics": _build_algorithm_metrics(algorithm, _fallback_metrics(algorithm)),
+            "feature_summary": feature_summary,
             "predictions": [],
             "weekly_sales_trend": _empty_weekly_trend(),
             "summary": {
@@ -614,10 +1616,19 @@ def predict_tomorrow_sales(
             "insights": _build_insights([], {"total_products": 0}, "heuristic"),
             "data_source": "heuristic",
         }
+        _PREDICTION_RESULT_CACHE[cache_key] = {
+            "expires_at": now_utc + timedelta(seconds=PREDICTION_CACHE_TTL_SECONDS),
+            "result": copy.deepcopy(result),
+        }
+        return result
 
     tomorrow = get_ph_tomorrow()
     tomorrow_weekday = tomorrow.weekday()
     series_end_date = df["date"].max() if not df.empty else None
+    context_lookup = _build_context_daily_lookup(df, series_end_date=series_end_date)
+    global_daily = context_lookup["global"]
+    category_daily_lookup = context_lookup["by_category"]
+    tomorrow_driver = _build_tomorrow_driver_row(driver_daily, tomorrow, weather, event)
 
     predictions = []
     global_y_test = []
@@ -627,22 +1638,39 @@ def predict_tomorrow_sales(
     for product in products:
         product_df = df[df["product_id"] == product.id].copy()
         daily = _build_daily_sales(product_df, series_end_date=series_end_date)
+        category_key = (product.category or "General").lower()
+        category_daily = category_daily_lookup.get(category_key)
 
-        heuristic = _heuristic_prediction(
-            daily,
-            (product.category or "General").lower(),
-            tomorrow_weekday,
-            weather,
-            event,
-        )
+        if _is_sparse_category_ready(daily, category_daily, global_daily) and not _is_model_ready(daily):
+            heuristic = _sparse_history_prediction(
+                daily,
+                category_key,
+                tomorrow_weekday,
+                weather,
+                event,
+                category_daily=category_daily,
+                global_daily=global_daily,
+            )
+        else:
+            heuristic = _heuristic_prediction(
+                daily,
+                category_key,
+                tomorrow_weekday,
+                weather,
+                event,
+            )
 
         ml_result = _ml_prediction(
             daily,
-            (product.category or "General").lower(),
+            category_key,
             tomorrow_weekday,
             weather,
             event,
             algorithm,
+            category_daily=category_daily,
+            global_daily=global_daily,
+            driver_daily=driver_daily,
+            tomorrow_driver=tomorrow_driver,
         )
 
         if ml_result["prediction"] is not None:
@@ -651,9 +1679,16 @@ def predict_tomorrow_sales(
             model_backed_predictions += 1
             global_y_test.extend(ml_result["y_test"])
             global_y_pred.extend(ml_result["y_pred"])
+            active_feature_groups = MODEL_FEATURE_GROUPS
+            fallback_reason = ""
         else:
             predicted_quantity = heuristic["prediction"]
-            prediction_source = "heuristic"
+            prediction_source = heuristic.get("source", "heuristic")
+            active_feature_groups = HEURISTIC_FEATURE_GROUPS
+            fallback_reason = ml_result.get(
+                "reason",
+                "Model-ready history is not available for this product.",
+            )
 
         recommendation = _build_recommendation(
             int(predicted_quantity),
@@ -685,6 +1720,8 @@ def predict_tomorrow_sales(
                 "confidence": confidence,
                 "prediction_source": prediction_source,
                 "last_sold_on": last_sold_on,
+                "active_feature_groups": active_feature_groups,
+                "fallback_reason": fallback_reason,
                 **recommendation,
             }
         )
@@ -736,12 +1773,18 @@ def predict_tomorrow_sales(
 
     data_source = "ml+heuristic" if model_backed_predictions > 0 else "heuristic"
 
-    return {
+    result = {
         "metrics": metrics,
         "algorithm_metrics": _build_algorithm_metrics(algorithm, metrics),
+        "feature_summary": feature_summary,
         "predictions": predictions,
         "weekly_sales_trend": weekly_sales_trend,
         "summary": summary,
         "insights": _build_insights(predictions, summary, data_source),
         "data_source": data_source,
     }
+    _PREDICTION_RESULT_CACHE[cache_key] = {
+        "expires_at": now_utc + timedelta(seconds=PREDICTION_CACHE_TTL_SECONDS),
+        "result": copy.deepcopy(result),
+    }
+    return result

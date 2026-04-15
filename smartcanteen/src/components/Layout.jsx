@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowPathIcon,
   ArrowRightOnRectangleIcon,
@@ -42,6 +42,7 @@ const LOW_STOCK_SIGNATURE_KEY = 'sc_low_stock_signature';
 const HIGH_DEMAND_SIGNATURE_KEY = 'sc_high_demand_signature';
 const DISMISSED_LOW_STOCK_ALERTS_KEY = 'sc_dismissed_low_stock_alerts';
 const DISMISSED_HIGH_DEMAND_ALERTS_KEY = 'sc_dismissed_high_demand_alerts';
+const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
 const LOW_STOCK_POLL_MS = 60000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
 
@@ -56,6 +57,14 @@ function getStoredUser() {
 function getStoredSidebarCollapsed() {
   try {
     return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function getStoredUnreadAlerts() {
+  try {
+    return localStorage.getItem(UNREAD_ALERTS_STORAGE_KEY) === '1';
   } catch {
     return false;
   }
@@ -81,6 +90,33 @@ function buildLowStockItemSignature(item) {
 
 function buildHighDemandItemSignature(item) {
   return `${item.product_id}:${item.predicted_quantity}:${item.stock_gap}`;
+}
+
+function persistAlertSignature(storageKey, signature) {
+  if (signature) {
+    localStorage.setItem(storageKey, signature);
+    return;
+  }
+
+  localStorage.removeItem(storageKey);
+}
+
+function signatureToSet(signature) {
+  return new Set(
+    `${signature || ''}`
+      .split('|')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function hasNewSignatureEntries(previousSignature, nextSignature) {
+  if (!nextSignature) {
+    return false;
+  }
+
+  const previousEntries = signatureToSet(previousSignature);
+  return [...signatureToSet(nextSignature)].some((entry) => !previousEntries.has(entry));
 }
 
 function readDismissedAlertSignatures(storageKey) {
@@ -373,13 +409,14 @@ export default function Layout({ children, onLogout }) {
   const [lowStockItems, setLowStockItems] = useState([]);
   const [highDemandItems, setHighDemandItems] = useState([]);
   const [alertsLoading, setAlertsLoading] = useState(true);
-  const [hasUnreadAlerts, setHasUnreadAlerts] = useState(false);
+  const [hasUnreadAlerts, setHasUnreadAlerts] = useState(getStoredUnreadAlerts);
   const [alertPermission, setAlertPermission] = useState('prompt');
   const [lastAlertCheck, setLastAlertCheck] = useState(null);
   const [pendingSyncCount, setPendingSyncCount] = useState(countOfflineTransactions());
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [navSearch, setNavSearch] = useState('');
+  const alertsRequestInFlightRef = useRef(false);
 
   const user = getStoredUser();
 
@@ -439,24 +476,20 @@ export default function Layout({ children, onLogout }) {
 
       const nextSignature = buildLowStockSignature(visibleItems);
       const previousSignature = localStorage.getItem(LOW_STOCK_SIGNATURE_KEY) || '';
+      const hasFreshEntries = hasNewSignatureEntries(previousSignature, nextSignature);
 
-      if (!nextSignature) {
-        localStorage.removeItem(LOW_STOCK_SIGNATURE_KEY);
-        return;
+      persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, nextSignature);
+
+      if (notifyOnChange && hasFreshEntries) {
+        const countLabel = visibleItems.length === 1 ? 'item is' : 'items are';
+        window.showToast?.(`${visibleItems.length} low stock ${countLabel} below alert level.`, 'warning');
+        await sendLowStockDeviceAlert(visibleItems);
       }
 
-      if (nextSignature !== previousSignature) {
-        localStorage.setItem(LOW_STOCK_SIGNATURE_KEY, nextSignature);
-        setHasUnreadAlerts(true);
-
-        if (notifyOnChange) {
-          const countLabel = visibleItems.length === 1 ? 'item is' : 'items are';
-          window.showToast?.(`${visibleItems.length} low stock ${countLabel} below alert level.`, 'warning');
-          await sendLowStockDeviceAlert(visibleItems);
-        }
-      }
+      return { visibleItems, hasFreshEntries };
     } catch {
       // Keep the last successful alert state if refresh fails.
+      return { visibleItems: lowStockItems, hasFreshEntries: false };
     }
   }
 
@@ -474,35 +507,53 @@ export default function Layout({ children, onLogout }) {
 
       const nextSignature = buildHighDemandSignature(visibleItems);
       const previousSignature = localStorage.getItem(HIGH_DEMAND_SIGNATURE_KEY) || '';
+      const hasFreshEntries = hasNewSignatureEntries(previousSignature, nextSignature);
 
-      if (!nextSignature) {
-        localStorage.removeItem(HIGH_DEMAND_SIGNATURE_KEY);
-        return;
+      persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, nextSignature);
+
+      if (notifyOnChange && hasFreshEntries) {
+        const countLabel = visibleItems.length === 1 ? 'item may' : 'items may';
+        window.showToast?.(`${visibleItems.length} high demand ${countLabel} sell fast tomorrow.`, 'warning');
+        await sendHighDemandDeviceAlert(visibleItems);
       }
 
-      if (nextSignature !== previousSignature) {
-        localStorage.setItem(HIGH_DEMAND_SIGNATURE_KEY, nextSignature);
-        setHasUnreadAlerts(true);
-
-        if (notifyOnChange) {
-          const countLabel = visibleItems.length === 1 ? 'item may' : 'items may';
-          window.showToast?.(`${visibleItems.length} high demand ${countLabel} sell fast tomorrow.`, 'warning');
-          await sendHighDemandDeviceAlert(visibleItems);
-        }
-      }
+      return { visibleItems, hasFreshEntries };
     } catch {
       // Keep the last successful forecast alert state if refresh fails.
+      return { visibleItems: highDemandItems, hasFreshEntries: false };
     }
   }
 
   async function loadAlertData({ notifyOnChange = true } = {}) {
+    if (alertsRequestInFlightRef.current) {
+      return;
+    }
+
+    alertsRequestInFlightRef.current = true;
     setAlertsLoading(true);
-    await Promise.allSettled([
+
+    try {
+      const [lowStockResult, highDemandResult] = await Promise.all([
       loadLowStockAlerts({ notifyOnChange }),
       loadHighDemandAlerts({ notifyOnChange }),
-    ]);
-    setLastAlertCheck(new Date().toISOString());
-    setAlertsLoading(false);
+      ]);
+      const totalVisibleAlerts =
+        lowStockResult.visibleItems.length + highDemandResult.visibleItems.length;
+      const hasFreshAlerts =
+        lowStockResult.hasFreshEntries || highDemandResult.hasFreshEntries;
+
+      setHasUnreadAlerts((currentValue) => {
+        if (totalVisibleAlerts === 0) {
+          return false;
+        }
+
+        return hasFreshAlerts ? true : currentValue;
+      });
+      setLastAlertCheck(new Date().toISOString());
+    } finally {
+      alertsRequestInFlightRef.current = false;
+      setAlertsLoading(false);
+    }
   }
 
   async function refreshOfflineData({ showSyncToast = false } = {}) {
@@ -590,8 +641,9 @@ export default function Layout({ children, onLogout }) {
       (entry) => buildLowStockItemSignature(entry) !== signature
     );
     setLowStockItems(remainingLowStockItems);
-    localStorage.setItem(LOW_STOCK_SIGNATURE_KEY, buildLowStockSignature(remainingLowStockItems));
-    setHasUnreadAlerts(remainingLowStockItems.length + highDemandItems.length > 0);
+    persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, buildLowStockSignature(remainingLowStockItems));
+    const remainingAlertCount = remainingLowStockItems.length + highDemandItems.length;
+    setHasUnreadAlerts((currentValue) => (remainingAlertCount === 0 ? false : currentValue));
   }
 
   function dismissHighDemandAlert(item) {
@@ -604,8 +656,9 @@ export default function Layout({ children, onLogout }) {
       (entry) => buildHighDemandItemSignature(entry) !== signature
     );
     setHighDemandItems(remainingHighDemandItems);
-    localStorage.setItem(HIGH_DEMAND_SIGNATURE_KEY, buildHighDemandSignature(remainingHighDemandItems));
-    setHasUnreadAlerts(lowStockItems.length + remainingHighDemandItems.length > 0);
+    persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, buildHighDemandSignature(remainingHighDemandItems));
+    const remainingAlertCount = lowStockItems.length + remainingHighDemandItems.length;
+    setHasUnreadAlerts((currentValue) => (remainingAlertCount === 0 ? false : currentValue));
   }
 
   function openLowStockAlert(item) {
@@ -645,7 +698,7 @@ export default function Layout({ children, onLogout }) {
     }
 
     loadPermission();
-    loadAlertData();
+    loadAlertData({ notifyOnChange: false });
     refreshOfflineData();
 
     const handleStatus = () => {
@@ -683,6 +736,14 @@ export default function Layout({ children, onLogout }) {
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(UNREAD_ALERTS_STORAGE_KEY, hasUnreadAlerts ? '1' : '0');
+    } catch {
+      // Ignore storage failures so alerts still work in restricted contexts.
+    }
+  }, [hasUnreadAlerts]);
 
   useEffect(() => {
     setMobileMenuOpen(false);

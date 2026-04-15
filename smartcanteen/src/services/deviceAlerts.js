@@ -2,6 +2,12 @@ import { Capacitor } from '@capacitor/core';
 
 const LOW_STOCK_CHANNEL_ID = 'low-stock-alerts';
 const HIGH_DEMAND_CHANNEL_ID = 'high-demand-alerts';
+let nativeNotificationSeed = Date.now() % 2147483000;
+
+function nextNativeNotificationId() {
+  nativeNotificationSeed = (nativeNotificationSeed + 1) % 2147483000;
+  return nativeNotificationSeed || 1;
+}
 
 function buildLowStockTitle(items) {
   return items.length === 1 ? 'Low stock alert' : `${items.length} low stock alerts`;
@@ -133,7 +139,7 @@ export async function sendLowStockDeviceAlert(items) {
       await LocalNotifications.schedule({
         notifications: [
           {
-            id: Date.now() % 2147483000,
+            id: nextNativeNotificationId(),
             title,
             body,
             channelId: LOW_STOCK_CHANNEL_ID,
@@ -182,7 +188,7 @@ export async function sendHighDemandDeviceAlert(items) {
       await LocalNotifications.schedule({
         notifications: [
           {
-            id: Date.now() % 2147483000,
+            id: nextNativeNotificationId(),
             title,
             body,
             channelId: HIGH_DEMAND_CHANNEL_ID,
