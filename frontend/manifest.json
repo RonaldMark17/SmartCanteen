@@ -1,0 +1,20 @@
+{
+  "name": "SmartCanteen AI",
+  "short_name": "SmartCanteen",
+  "description": "AI-powered canteen POS & inventory system",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1e1b4b",
+  "theme_color": "#d946ef",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='24' fill='%23d946ef'/><text y='130' x='30' font-size='120' font-family='Arial'>🍽️</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "screenshots": []
+}

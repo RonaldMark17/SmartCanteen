@@ -1,0 +1,9 @@
+{
+  "appId": "com.smartcanteen.app",
+  "appName": "SmartCanteen",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}
