@@ -31,6 +31,84 @@ function clearAuth() {
   STATE.user = null;
 }
 
+function getCartDiscount() {
+  return parseFloat(document.getElementById("cart-discount")?.value || 0) || 0;
+}
+
+function getPaymentType() {
+  return document.getElementById("payment-type")?.value || "cash";
+}
+
+function calculateCartTotals(cart = STATE.cart, discount = getCartDiscount()) {
+  const subtotal = cart.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+  const total = Math.max(0, subtotal - discount);
+  return { subtotal, total, discount };
+}
+
+function buildTransactionData() {
+  const discount = getCartDiscount();
+  const { total } = calculateCartTotals(STATE.cart, discount);
+
+  return {
+    items: STATE.cart.map(({ product_id, quantity, unit_price }) => ({
+      product_id,
+      quantity,
+      unit_price,
+    })),
+    discount,
+    payment_type: getPaymentType(),
+    total,
+  };
+}
+
+function refreshProductViews() {
+  if (STATE.view === "pos") {
+    renderProductGrid(document.getElementById("pos-search")?.value || "");
+  }
+  if (STATE.view === "inventory") {
+    renderInventoryTable(STATE.products);
+  }
+}
+
+async function applyLocalStockDeduction(items) {
+  let hasChanges = false;
+
+  for (const item of items) {
+    const product = STATE.products.find((entry) => entry.id === item.product_id);
+    if (!product) continue;
+
+    product.stock = Math.max(0, product.stock - item.quantity);
+    hasChanges = true;
+  }
+
+  if (!hasChanges) return;
+
+  await IDB.cacheProducts(STATE.products);
+  refreshProductViews();
+}
+
+async function saveTransactionOffline(data) {
+  await IDB.saveOfflineTransaction({
+    items: data.items,
+    discount: data.discount,
+    payment_type: data.payment_type,
+    total: data.total,
+  });
+
+  await applyLocalStockDeduction(data.items);
+
+  STATE.cart = [];
+  renderCart();
+  Sync.updatePendingBadge();
+  Sync.scheduleBackgroundSync?.();
+
+  showToast(
+    `<span class="material-symbols-outlined">save</span> Order saved offline. It will sync automatically when the connection comes back.`,
+    "warning",
+  );
+  showReceipt(data, data.total, true);
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 window.showToast = function (msg, type = "info") {
   const container = document.getElementById("toast-container");
@@ -300,9 +378,7 @@ function renderCart() {
   const cartList   = document.getElementById("cart-items");
   const totalEl    = document.getElementById("cart-total");
   const countEl    = document.getElementById("cart-count");
-  const discount   = parseFloat(document.getElementById("cart-discount")?.value || 0) || 0;
-  const subtotal   = STATE.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0);
-  const total      = Math.max(0, subtotal - discount);
+  const { total }  = calculateCartTotals();
 
   countEl.textContent = STATE.cart.length;
 
@@ -331,45 +407,27 @@ function renderCart() {
 async function checkout() {
   if (STATE.cart.length === 0) { showToast(`<span class="material-symbols-outlined">shopping_cart</span> Cart is empty!`, "warning"); return; }
 
-  const discount     = parseFloat(document.getElementById("cart-discount")?.value || 0) || 0;
-  const payment_type = document.getElementById("payment-type")?.value || "cash";
-
-  const data = {
-    items:        STATE.cart.map(({ product_id, quantity, unit_price }) => ({ product_id, quantity, unit_price })),
-    discount,
-    payment_type,
-  };
-
-  const total = STATE.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0) - discount;
+  const data = buildTransactionData();
 
   if (!navigator.onLine) {
-    // Offline → save locally
-    await IDB.saveOfflineTransaction({ ...data, total });
-    STATE.cart = [];
-    renderCart();
-    Sync.updatePendingBadge();
-    showToast(`<span class="material-symbols-outlined">save</span> Transaction saved offline. Will sync when back online.`, "warning");
-    showReceipt(data, total, true);
+    await saveTransactionOffline(data);
     return;
   }
 
   try {
-    const txn = await API.createTransaction(data);
-
-    // Deduct from local cache so POS stays accurate offline
-    for (const item of STATE.cart) {
-      const p = STATE.products.find((x) => x.id === item.product_id);
-      if (p) p.stock = Math.max(0, p.stock - item.quantity);
-    }
-    await IDB.cacheProducts(STATE.products);
-    renderProductGrid();
+    await API.createTransaction(data);
+    await applyLocalStockDeduction(data.items);
 
     STATE.cart = [];
     renderCart();
     showToast(`<span class="material-symbols-outlined">check_circle</span> Transaction complete!`, "success");
-    showReceipt(data, total, false);
+    showReceipt(data, data.total, false);
 
   } catch (err) {
+    if (err instanceof API.OfflineError) {
+      await saveTransactionOffline(data);
+      return;
+    }
     showToast(`<span class="material-symbols-outlined">error</span> ${err.message}`, "error");
   }
 }
@@ -634,6 +692,12 @@ function closeModal(id) {
   document.getElementById(id)?.classList.add("hidden");
 }
 
+window.addEventListener("smartcanteen:products-updated", (event) => {
+  if (!Array.isArray(event.detail)) return;
+  STATE.products = event.detail;
+  refreshProductViews();
+});
+
 // ── DOM ready ─────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
   // Register Service Worker
@@ -693,3 +757,4 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.closeModal        = closeModal;
   window.handleLogout      = handleLogout;
 });
+

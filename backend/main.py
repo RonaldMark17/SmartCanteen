@@ -5,7 +5,7 @@ Run:  uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ─────────────────────────────────────────────────
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Query
+from fastapi import FastAPI, Depends, HTTPException, Request, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -20,8 +20,100 @@ import backend.auth as auth
 import backend.analytics_helpers as analytics_helpers
 import backend.ml_predictor as ml_predictor
 from backend.database import engine, get_db, Base
+from backend.time_utils import normalize_client_timestamp
 
 from sqlalchemy.orm import joinedload
+
+
+class TransactionValidationError(Exception):
+    def __init__(self, message: str, status_code: int = 400):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _normalize_transaction_items(items) -> List[dict]:
+    normalized_items = []
+
+    for item in items:
+        try:
+            if isinstance(item, dict):
+                normalized_items.append({
+                    "product_id": int(item["product_id"]),
+                    "quantity": int(item["quantity"]),
+                    "unit_price": float(item["unit_price"]),
+                })
+            else:
+                normalized_items.append({
+                    "product_id": int(item.product_id),
+                    "quantity": int(item.quantity),
+                    "unit_price": float(item.unit_price),
+                })
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise TransactionValidationError("Invalid transaction item payload") from exc
+
+    if not normalized_items:
+        raise TransactionValidationError("Transaction must include at least one item")
+
+    return normalized_items
+
+
+def _persist_transaction(
+    db: Session,
+    *,
+    user_id: int,
+    items,
+    discount: float = 0.0,
+    payment_type: str = "cash",
+    notes: Optional[str] = None,
+    created_at: Optional[datetime] = None,
+    synced: bool = True,
+):
+    normalized_items = _normalize_transaction_items(items)
+    discount_value = float(discount or 0)
+    subtotal = sum(item["quantity"] * item["unit_price"] for item in normalized_items)
+    total = max(0.0, subtotal - discount_value)
+
+    txn_kwargs = {
+        "user_id": user_id,
+        "total": total,
+        "discount": discount_value,
+        "payment_type": payment_type or "cash",
+        "notes": notes,
+        "synced": synced,
+    }
+    if created_at is not None:
+        txn_kwargs["created_at"] = created_at
+
+    txn = models.Transaction(**txn_kwargs)
+    db.add(txn)
+    db.flush()
+
+    for item in normalized_items:
+        if item["quantity"] <= 0:
+            raise TransactionValidationError("Transaction item quantity must be greater than zero")
+
+        product = db.query(models.Product).filter(models.Product.id == item["product_id"]).first()
+        if not product or not product.is_active:
+            raise TransactionValidationError(
+                f"Product {item['product_id']} not found",
+                status_code=404,
+            )
+        if product.stock < item["quantity"]:
+            raise TransactionValidationError(
+                f"Insufficient stock for '{product.name}' "
+                f"(available: {product.stock}, requested: {item['quantity']})",
+            )
+
+        product.stock -= item["quantity"]
+        db.add(models.TransactionItem(
+            transaction_id=txn.id,
+            product_id=item["product_id"],
+            quantity=item["quantity"],
+            unit_price=item["unit_price"],
+        ))
+
+    db.flush()
+    return txn
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
@@ -33,7 +125,6 @@ app = FastAPI(
 )
 
 app.add_middleware(
-    CORSMiddleware,
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -78,6 +169,14 @@ if FRONTEND_DIR:
 @app.get("/", include_in_schema=False)
 def root():
     return _frontend_index_response()
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    favicon_file = _resolve_frontend_file("favicon.ico") or _resolve_frontend_file("favicon.svg")
+    if favicon_file:
+        return FileResponse(favicon_file)
+    return Response(status_code=204)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -243,38 +342,21 @@ def create_transaction(
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.get_current_user),
 ):
-    subtotal = sum(i.quantity * i.unit_price for i in data.items)
-    total    = max(0.0, subtotal - data.discount)
+    try:
+        txn = _persist_transaction(
+            db,
+            user_id=current.id,
+            items=data.items,
+            discount=data.discount,
+            payment_type=data.payment_type,
+            notes=data.notes,
+            synced=True,
+        )
+        db.commit()
+    except TransactionValidationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
-    txn = models.Transaction(
-        user_id=current.id, total=total,
-        discount=data.discount, payment_type=data.payment_type,
-        notes=data.notes,
-    )
-    db.add(txn)
-    db.flush()
-
-    for i in data.items:
-        product = db.query(models.Product).filter(models.Product.id == i.product_id).first()
-        if not product:
-            db.rollback()
-            raise HTTPException(status_code=404, detail=f"Product {i.product_id} not found")
-        if product.stock < i.quantity:
-            db.rollback()
-            raise HTTPException(
-                status_code=400,
-                detail=f"Insufficient stock for '{product.name}' "
-                       f"(available: {product.stock}, requested: {i.quantity})",
-            )
-        product.stock -= i.quantity
-        db.add(models.TransactionItem(
-            transaction_id=txn.id,
-            product_id=i.product_id,
-            quantity=i.quantity,
-            unit_price=i.unit_price,
-        ))
-
-    db.commit()
     db.refresh(txn)
     return txn
 
@@ -316,45 +398,36 @@ def sync_offline(
     current: models.User = Depends(auth.get_current_user),
 ):
     """Accept a batch of offline-captured transactions and persist them."""
-    synced, errors = 0, []
+    synced, synced_local_ids, errors = 0, [], []
 
     for t_data in payload.transactions:
+        local_id = t_data.get("local_id")
         try:
-            items_raw = t_data.get("items", [])
-            discount  = float(t_data.get("discount", 0))
-            subtotal  = sum(i["quantity"] * i["unit_price"] for i in items_raw)
-            total     = max(0.0, subtotal - discount)
-
-            raw_ts = t_data.get("created_at")
-            ts = datetime.fromisoformat(raw_ts) if raw_ts else datetime.utcnow()
-
-            txn = models.Transaction(
-                user_id=current.id, total=total,
-                discount=discount,
-                payment_type=t_data.get("payment_type", "cash"),
-                synced=True, created_at=ts,
-            )
-            db.add(txn)
-            db.flush()
-
-            for i in items_raw:
-                product = db.query(models.Product).filter(
-                    models.Product.id == i["product_id"]).first()
-                if product:
-                    product.stock = max(0, product.stock - i["quantity"])
-                    db.add(models.TransactionItem(
-                        transaction_id=txn.id,
-                        product_id=i["product_id"],
-                        quantity=i["quantity"],
-                        unit_price=i["unit_price"],
-                    ))
+            with db.begin_nested():
+                _persist_transaction(
+                    db,
+                    user_id=current.id,
+                    items=t_data.get("items", []),
+                    discount=t_data.get("discount", 0),
+                    payment_type=t_data.get("payment_type", "cash"),
+                    notes=t_data.get("notes"),
+                    created_at=normalize_client_timestamp(t_data.get("created_at")),
+                    synced=True,
+                )
             synced += 1
+            synced_local_ids.append(local_id)
+        except TransactionValidationError as exc:
+            errors.append({"local_id": local_id, "message": str(exc)})
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append({"local_id": local_id, "message": f"Unexpected sync failure: {exc}"})
 
     db.commit()
-    return {"synced": synced, "errors": errors,
-            "message": f"Synced {synced} offline transaction(s)"}
+    return {
+        "synced": synced,
+        "synced_local_ids": synced_local_ids,
+        "failed_transactions": errors,
+        "message": f"Synced {synced} offline transaction(s)",
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

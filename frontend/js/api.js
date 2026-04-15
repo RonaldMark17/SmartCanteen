@@ -26,6 +26,11 @@ class OfflineError extends Error {
   constructor() { super("You are currently offline."); this.name = "OfflineError"; }
 }
 
+function isOfflineResponse(payload) {
+  const message = String(payload?.detail || payload?.error || "").toLowerCase();
+  return message.includes("offline") || message.includes("cached data");
+}
+
 async function request(method, path, body = null) {
   if (!navigator.onLine) throw new OfflineError();
 
@@ -39,11 +44,16 @@ async function request(method, path, body = null) {
     headers["ngrok-skip-browser-warning"] = "true";
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (_) {
+    throw new OfflineError();
+  }
 
   if (res.status === 401) {
     // Token expired → force re-login
@@ -55,7 +65,10 @@ async function request(method, path, body = null) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    if (res.status === 503 && isOfflineResponse(err)) {
+      throw new OfflineError();
+    }
+    throw new Error(err.detail || err.error || `HTTP ${res.status}`);
   }
 
   return res.json();
@@ -68,7 +81,7 @@ const API = {
   register: (data)               => request("POST", "/api/auth/register", data),
 
   // ── Products ──────────────────────────────────────────────────────────────
-  getProducts:   ()     => request("GET",    "/api/products"),
+  getProducts:   (activeOnly = true) => request("GET", `/api/products?active_only=${activeOnly}`),
   getLowStock:   ()     => request("GET",    "/api/products/low-stock"),
   createProduct: (data) => request("POST",   "/api/products",      data),
   updateProduct: (id, data) => request("PUT", `/api/products/${id}`, data),

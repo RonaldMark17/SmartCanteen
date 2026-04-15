@@ -15,9 +15,11 @@ const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
 const OFFLINE_SESSION_STORAGE_KEY = 'sc_offline_session';
 const DEFAULT_NATIVE_API_ORIGIN = 'https://cecile-unchipped-shea.ngrok-free.dev';
 const NATIVE_API_BASE = `${DEFAULT_NATIVE_API_ORIGIN}${API_ROOT_PATH}`;
+const DEFAULT_LOCAL_API_PORT = String(import.meta.env.VITE_API_PORT || '8000').trim();
 
 const envApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const envNativeApiBase = import.meta.env.VITE_NATIVE_API_BASE_URL?.trim();
+const envApiHost = import.meta.env.VITE_API_HOST?.trim();
 
 function isAbsoluteUrl(value) {
   return /^https?:\/\//i.test(String(value || ''));
@@ -54,6 +56,20 @@ function normalizeApiBase(value) {
   return API_ROOT_PATH;
 }
 
+function isProxyRelativeApiBase(value) {
+  const normalized = String(value || '').trim();
+  return !normalized || normalized === API_ROOT_PATH || normalized === `${API_ROOT_PATH}/`;
+}
+
+function resolveLocalWebApiBase() {
+  const host =
+    envApiHost ||
+    (typeof window !== 'undefined' && window.location?.hostname) ||
+    '127.0.0.1';
+
+  return normalizeApiBase(`http://${host}:${DEFAULT_LOCAL_API_PORT}${API_ROOT_PATH}`);
+}
+
 export function formatLocalDateInputValue(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -77,6 +93,10 @@ function resolveApiBase() {
     }
 
     return normalizeApiBase(NATIVE_API_BASE);
+  }
+
+  if (import.meta.env.DEV && isProxyRelativeApiBase(envApiBase)) {
+    return resolveLocalWebApiBase();
   }
 
   return normalizeApiBase(envApiBase || API_ROOT_PATH);
@@ -266,6 +286,10 @@ async function request(method, path, body = null) {
       if (cached !== null) {
         return cached;
       }
+    }
+
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      errMsg = `Cannot connect to server at ${API_BASE}. Check your backend and API config.`;
     }
 
     throw new Error(errMsg);
