@@ -13,12 +13,15 @@ import {
   CloudArrowUpIcon,
   CubeIcon,
   ExclamationTriangleIcon,
+  HomeIcon,
   LockClosedIcon,
+  MagnifyingGlassIcon,
   ShieldCheckIcon,
   SparklesIcon,
   UserCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import DismissibleAlert from './DismissibleAlert';
 import { API } from '../services/api';
 import {
   getAlertPermissionStatus,
@@ -27,6 +30,7 @@ import {
   sendLowStockDeviceAlert,
 } from '../services/deviceAlerts';
 import { OFFLINE_QUEUE_EVENT, countOfflineTransactions } from '../services/offlineStore';
+import { getAllowedRolesForPath, getDefaultRoute } from '../config/access';
 
 const LOW_STOCK_SIGNATURE_KEY = 'sc_low_stock_signature';
 const HIGH_DEMAND_SIGNATURE_KEY = 'sc_high_demand_signature';
@@ -191,6 +195,168 @@ function getPermissionLabel(status) {
   return 'Phone alerts not enabled';
 }
 
+function getPageMeta(pathname) {
+  if (pathname.startsWith('/dashboard')) {
+    return {
+      eyebrow: 'Operations Overview',
+      title: 'Command center for daily service',
+      description: 'Keep sales, stock movement, and forecasts aligned from one workspace.',
+    };
+  }
+
+  if (pathname.startsWith('/pos')) {
+    return {
+      eyebrow: 'Cashier Workspace',
+      title: 'Move queues faster with a cleaner checkout flow',
+      description: 'Process orders, review carts, and keep counter operations moving smoothly.',
+    };
+  }
+
+  if (pathname.startsWith('/inventory')) {
+    return {
+      eyebrow: 'Inventory Control',
+      title: 'Watch stock health before shortages slow the team down',
+      description: 'Track available items, low-stock risks, and product activity in one place.',
+    };
+  }
+
+  if (pathname.startsWith('/transactions')) {
+    return {
+      eyebrow: 'Transactions',
+      title: 'Review completed sales with clearer operating context',
+      description: 'Check transaction history, cashier activity, and recent service trends quickly.',
+    };
+  }
+
+  if (pathname.startsWith('/analytics')) {
+    return {
+      eyebrow: 'Analytics',
+      title: 'Read the numbers behind each service day',
+      description: 'Spot patterns in sales, top products, and team performance without leaving the app shell.',
+    };
+  }
+
+  if (pathname.startsWith('/predictions')) {
+    return {
+      eyebrow: 'AI Predictions',
+      title: 'Plan tomorrow with stronger demand signals',
+      description: 'Compare forecast guidance, weather context, and restock priorities before the next rush.',
+    };
+  }
+
+  if (pathname.startsWith('/audit')) {
+    return {
+      eyebrow: 'Audit Trail',
+      title: 'Review admin activity with clearer visibility',
+      description: 'Track sensitive actions, role-based activity, and system accountability over time.',
+    };
+  }
+
+  return {
+    eyebrow: 'Workspace',
+    title: 'Manage day-to-day canteen operations',
+    description: 'Navigate the tools your team needs for sales, stock, and planning.',
+  };
+}
+
+function getGreeting(date = new Date()) {
+  const hour = date.getHours();
+
+  if (hour < 12) {
+    return 'Good morning';
+  }
+
+  if (hour < 18) {
+    return 'Good afternoon';
+  }
+
+  return 'Good evening';
+}
+
+function formatWorkspaceDate(date = new Date()) {
+  return date.toLocaleDateString('en-PH', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function formatWorkspaceTime(date = new Date()) {
+  return date.toLocaleTimeString('en-PH', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function getUserInitials(name) {
+  const normalized = `${name || ''}`.trim();
+  if (!normalized) {
+    return 'SC';
+  }
+
+  const initials = normalized
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('');
+
+  return initials || 'SC';
+}
+
+function getNavDescription(path) {
+  if (path === '/dashboard') {
+    return 'Overview, KPIs, and recent activity';
+  }
+  if (path === '/pos') {
+    return 'Checkout flow and cashier tools';
+  }
+  if (path === '/inventory') {
+    return 'Stock visibility and product review';
+  }
+  if (path === '/transactions') {
+    return 'Sales history and receipt tracking';
+  }
+  if (path === '/analytics') {
+    return 'Revenue trends and performance insights';
+  }
+  if (path === '/predictions') {
+    return 'Demand planning and AI guidance';
+  }
+  if (path === '/audit') {
+    return 'Sensitive admin actions and logs';
+  }
+
+  return 'Workspace module';
+}
+
+function getRoleFocus(role) {
+  if (role === 'admin') {
+    return {
+      label: 'Admin focus',
+      title: 'Watch the whole system and keep the team aligned.',
+      description:
+        'Best for reviewing dashboards, analytics, audit activity, and cross-team operations.',
+    };
+  }
+
+  if (role === 'staff') {
+    return {
+      label: 'Staff focus',
+      title: 'Stay ahead of stock needs and tomorrow’s demand.',
+      description:
+        'Best for inventory control, analytics checks, and prediction-driven prep work.',
+    };
+  }
+
+  return {
+    label: 'Cashier focus',
+    title: 'Process orders quickly and keep service moving.',
+    description:
+      'Best for POS transactions, recent sales review, and low-stock awareness during service.',
+  };
+}
+
 export default function Layout({ children, onLogout }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -205,22 +371,51 @@ export default function Layout({ children, onLogout }) {
   const [alertPermission, setAlertPermission] = useState('prompt');
   const [lastAlertCheck, setLastAlertCheck] = useState(null);
   const [pendingSyncCount, setPendingSyncCount] = useState(countOfflineTransactions());
+  const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [navSearch, setNavSearch] = useState('');
 
   const user = getStoredUser();
 
   const navItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon, adminOnly: false },
-    { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon, adminOnly: false },
-    { name: 'Inventory', path: '/inventory', icon: CubeIcon, adminOnly: false },
-    { name: 'Transactions', path: '/transactions', icon: ClockIcon, adminOnly: false },
-    { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon, adminOnly: false },
-    { name: 'AI Predictions', path: '/predictions', icon: SparklesIcon, adminOnly: false },
-    { name: 'Audit Log', path: '/audit', icon: ShieldCheckIcon, adminOnly: true },
+    { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
+    { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
+    { name: 'Inventory', path: '/inventory', icon: CubeIcon },
+    { name: 'Transactions', path: '/transactions', icon: ClockIcon },
+    { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
+    { name: 'AI Predictions', path: '/predictions', icon: SparklesIcon },
+    { name: 'Audit Log', path: '/audit', icon: ShieldCheckIcon },
   ];
 
-  const visibleNavItems = navItems.filter((item) => !item.adminOnly || user.role === 'admin');
+  const visibleNavItems = navItems.filter((item) =>
+    getAllowedRolesForPath(item.path).includes(user.role)
+  );
   const isActive = (path) => location.pathname === path;
   const totalAlertCount = lowStockItems.length + highDemandItems.length;
+  const pageMeta = getPageMeta(location.pathname);
+  const defaultRoute = getDefaultRoute(user.role);
+  const roleFocus = getRoleFocus(user.role);
+  const displayName = user.full_name || user.username || 'SmartCanteen user';
+  const userInitials = getUserInitials(displayName);
+  const greeting = getGreeting(currentTime);
+  const formattedDate = formatWorkspaceDate(currentTime);
+  const formattedTime = formatWorkspaceTime(currentTime);
+  const workspaceStatus = isSynced ? 'Online and ready' : 'Offline cache active';
+  const alertSummary =
+    totalAlertCount > 0
+      ? `${totalAlertCount} active alert${totalAlertCount > 1 ? 's' : ''}`
+      : 'No active alerts';
+  const navQuery = navSearch.trim().toLowerCase();
+  const filteredNavItems = visibleNavItems.filter((item) => {
+    if (!navQuery) {
+      return true;
+    }
+
+    return (
+      item.name.toLowerCase().includes(navQuery) ||
+      getNavDescription(item.path).toLowerCase().includes(navQuery)
+    );
+  });
 
   async function loadLowStockAlerts({ notifyOnChange = true } = {}) {
     try {
@@ -352,6 +547,29 @@ export default function Layout({ children, onLogout }) {
     setNotificationsOpen(true);
   }
 
+  async function handleWorkspaceRefresh() {
+    if (workspaceRefreshing) {
+      return;
+    }
+
+    setWorkspaceRefreshing(true);
+    try {
+      await Promise.allSettled([
+        loadAlertData({ notifyOnChange: false }),
+        refreshOfflineData({ showSyncToast: true }),
+      ]);
+
+      window.showToast?.(
+        navigator.onLine
+          ? 'Workspace refreshed with the latest cached and live data.'
+          : 'Workspace refreshed using the latest data saved on this device.',
+        'success'
+      );
+    } finally {
+      setWorkspaceRefreshing(false);
+    }
+  }
+
   function markAllNotificationsRead() {
     setHasUnreadAlerts(false);
   }
@@ -370,6 +588,20 @@ export default function Layout({ children, onLogout }) {
     setHasUnreadAlerts(remainingLowStockItems.length + highDemandItems.length > 0);
   }
 
+  function dismissHighDemandAlert(item) {
+    const signature = buildHighDemandItemSignature(item);
+    const dismissed = readDismissedAlertSignatures(DISMISSED_HIGH_DEMAND_ALERTS_KEY);
+    dismissed.add(signature);
+    saveDismissedAlertSignatures(DISMISSED_HIGH_DEMAND_ALERTS_KEY, dismissed);
+
+    const remainingHighDemandItems = highDemandItems.filter(
+      (entry) => buildHighDemandItemSignature(entry) !== signature
+    );
+    setHighDemandItems(remainingHighDemandItems);
+    localStorage.setItem(HIGH_DEMAND_SIGNATURE_KEY, buildHighDemandSignature(remainingHighDemandItems));
+    setHasUnreadAlerts(lowStockItems.length + remainingHighDemandItems.length > 0);
+  }
+
   function openLowStockAlert(item) {
     dismissLowStockAlert(item);
     setNotificationsOpen(false);
@@ -384,6 +616,7 @@ export default function Layout({ children, onLogout }) {
   }
 
   function openHighDemandAlert(item) {
+    dismissHighDemandAlert(item);
     setNotificationsOpen(false);
     navigate('/predictions', {
       state: {
@@ -449,6 +682,76 @@ export default function Layout({ children, onLogout }) {
     setMobileMenuOpen(false);
     setNotificationsOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTime(new Date());
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const pulseCards = [
+    {
+      title: 'Workspace status',
+      value: workspaceStatus,
+      detail: `${formattedDate} at ${formattedTime}`,
+      Icon: CloudArrowUpIcon,
+      tone:
+        isSynced
+          ? 'border-cyan-200 bg-cyan-50/80 text-cyan-900'
+          : 'border-amber-200 bg-amber-50/90 text-amber-900',
+      actionLabel: workspaceRefreshing ? 'Refreshing...' : 'Refresh data',
+      onAction: handleWorkspaceRefresh,
+      actionDisabled: workspaceRefreshing,
+    },
+    {
+      title: 'Pending sync queue',
+      value: pendingSyncCount,
+      detail:
+        pendingSyncCount > 0
+          ? `${pendingSyncCount} transaction(s) will sync when service is available.`
+          : 'No pending offline transactions right now.',
+      Icon: ArrowPathIcon,
+      tone: 'border-emerald-200 bg-emerald-50/80 text-emerald-900',
+      actionLabel: navigator.onLine ? 'Sync now' : 'Offline',
+      onAction: handleWorkspaceRefresh,
+      actionDisabled: workspaceRefreshing || !navigator.onLine,
+    },
+    {
+      title: 'Alerts & demand watch',
+      value: totalAlertCount,
+      detail:
+        totalAlertCount > 0
+          ? `${lowStockItems.length} low stock, ${highDemandItems.length} high demand`
+          : 'No urgent alerts are currently active.',
+      Icon: BellAlertIcon,
+      tone:
+        totalAlertCount > 0
+          ? 'border-rose-200 bg-rose-50/90 text-rose-900'
+          : 'border-slate-200 bg-slate-50/90 text-slate-900',
+      actionLabel: 'Open alerts',
+      onAction: openNotifications,
+      actionDisabled: false,
+    },
+    {
+      title: 'Secure session',
+      value: user.role ? `${user.role}` : 'staff',
+      detail:
+        alertPermission === 'granted'
+          ? 'Phone alerts are enabled for this device.'
+          : 'Enable phone alerts or jump to AI planning tools.',
+      Icon: LockClosedIcon,
+      tone: 'border-violet-200 bg-violet-50/90 text-violet-900',
+      actionLabel:
+        alertPermission === 'granted' ? 'Open predictions' : 'Enable alerts',
+      onAction:
+        alertPermission === 'granted'
+          ? () => navigate('/predictions')
+          : handleEnableAlerts,
+      actionDisabled: false,
+    },
+  ];
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -662,13 +965,24 @@ export default function Layout({ children, onLogout }) {
                               </div>
                             ) : (
                               lowStockItems.map((item) => (
-                                <button
+                                <div
                                   key={item.id}
-                                  type="button"
-                                  onClick={() => openLowStockAlert(item)}
-                                  className="w-full rounded-2xl border border-red-100 bg-red-50/60 p-4 text-left transition hover:border-red-200 hover:bg-red-100/70 focus:outline-none focus:ring-2 focus:ring-red-200"
+                                  className="relative w-full rounded-2xl border border-red-100 bg-red-50/60 p-4 transition hover:border-red-200 hover:bg-red-100/70"
                                 >
-                                  <div className="flex items-start justify-between gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => dismissLowStockAlert(item)}
+                                    aria-label={`Dismiss ${item.name} low stock alert`}
+                                    className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-red-500 transition hover:bg-white/80 hover:text-red-700"
+                                  >
+                                    <XMarkIcon className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openLowStockAlert(item)}
+                                    className="w-full pr-10 text-left focus:outline-none focus:ring-2 focus:ring-red-200"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                       <div className="flex items-center gap-2">
                                         <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-red-500" />
@@ -695,7 +1009,8 @@ export default function Layout({ children, onLogout }) {
                                     Open inventory
                                     <ChevronRightIcon className="h-4 w-4" />
                                   </div>
-                                </button>
+                                  </button>
+                                </div>
                               ))
                             )}
                           </div>
@@ -713,13 +1028,24 @@ export default function Layout({ children, onLogout }) {
                               </div>
                             ) : (
                               highDemandItems.map((item) => (
-                                <button
+                                <div
                                   key={item.product_id}
-                                  type="button"
-                                  onClick={() => openHighDemandAlert(item)}
-                                  className="w-full rounded-2xl border border-sky-100 bg-sky-50/70 p-4 text-left transition hover:border-sky-200 hover:bg-sky-100/70 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                                  className="relative w-full rounded-2xl border border-sky-100 bg-sky-50/70 p-4 transition hover:border-sky-200 hover:bg-sky-100/70"
                                 >
-                                  <div className="flex items-start justify-between gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => dismissHighDemandAlert(item)}
+                                    aria-label={`Dismiss ${item.product_name} high demand alert`}
+                                    className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-sky-500 transition hover:bg-white/80 hover:text-sky-700"
+                                  >
+                                    <XMarkIcon className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openHighDemandAlert(item)}
+                                    className="w-full pr-10 text-left focus:outline-none focus:ring-2 focus:ring-sky-200"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                       <div className="flex items-center gap-2">
                                         <ArrowTrendingUpIcon className="h-4 w-4 shrink-0 text-sky-600" />
@@ -754,7 +1080,8 @@ export default function Layout({ children, onLogout }) {
                                     Open predictions
                                     <ChevronRightIcon className="h-4 w-4" />
                                   </div>
-                                </button>
+                                  </button>
+                                </div>
                               ))
                             )}
                           </div>
@@ -785,10 +1112,17 @@ export default function Layout({ children, onLogout }) {
         <main className="custom-scrollbar flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="mx-auto h-full max-w-7xl">
             {!isSynced && (
-              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                Offline mode is active. The app is showing the last synced data saved on this device.
-                {pendingSyncCount > 0 ? ` ${pendingSyncCount} transaction(s) are waiting to sync.` : ''}
-              </div>
+              <DismissibleAlert
+                resetKey={`${isSynced}-${pendingSyncCount}`}
+                tone="amber"
+                title="Offline mode is active"
+                className="mb-4 rounded-xl"
+              >
+                <>
+                  The app is showing the last synced data saved on this device.
+                  {pendingSyncCount > 0 ? ` ${pendingSyncCount} transaction(s) are waiting to sync.` : ''}
+                </>
+              </DismissibleAlert>
             )}
             {children}
           </div>
@@ -833,35 +1167,6 @@ export default function Layout({ children, onLogout }) {
                   <span className="text-sm font-semibold">{item.name}</span>
                 </Link>
               ))}
-            </div>
-
-            <div className="mx-4 mb-4 space-y-3 rounded-2xl border border-slate-700/50 bg-slate-800/50 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase text-slate-500">Low Stock</span>
-                <span
-                  className={`rounded-full px-2 py-1 text-[10px] font-bold ${
-                    lowStockItems.length > 0 ? 'bg-red-500/15 text-red-300' : 'bg-emerald-500/15 text-emerald-300'
-                  }`}
-                >
-                  {lowStockItems.length > 0 ? `${lowStockItems.length} alerts` : 'All clear'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase text-slate-500">High Demand</span>
-                <span className="text-[10px] font-bold text-slate-300">
-                  {highDemandItems.length > 0 ? `${highDemandItems.length} tomorrow` : 'No alerts'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase text-slate-500">Phone Alerts</span>
-                <span className="text-[10px] font-bold text-slate-300">{getPermissionLabel(alertPermission)}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase text-slate-500">Pending Sync</span>
-                <span className="text-[10px] font-bold text-slate-300">
-                  {pendingSyncCount > 0 ? `${pendingSyncCount} queued` : '0 queued'}
-                </span>
-              </div>
             </div>
 
             <div className="border-t border-slate-800 p-4">

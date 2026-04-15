@@ -9,6 +9,19 @@
 
 const API_BASE = "";   // Same origin; change to "http://localhost:8000" for dev
 
+function isAbsoluteUrl(value) {
+  return /^https?:\/\//i.test(String(value || ""));
+}
+
+function isNgrokUrl(value) {
+  return /\.ngrok(-free)?\.app\b|\.ngrok(-free)?\.dev\b/i.test(String(value || ""));
+}
+
+function shouldSendNgrokHeader() {
+  if (isAbsoluteUrl(API_BASE) && isNgrokUrl(API_BASE)) return true;
+  return typeof window !== "undefined" && isNgrokUrl(window.location.origin);
+}
+
 class OfflineError extends Error {
   constructor() { super("You are currently offline."); this.name = "OfflineError"; }
 }
@@ -17,8 +30,14 @@ async function request(method, path, body = null) {
   if (!navigator.onLine) throw new OfflineError();
 
   const token   = localStorage.getItem("sc_token");
-  const headers = { "Content-Type": "application/json" };
+  const headers = {
+    "Content-Type": "application/json",
+    "X-SmartCanteen-Client": "web",
+  };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (shouldSendNgrokHeader()) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
 
   const res = await fetch(`${API_BASE}${path}`, {
     method,

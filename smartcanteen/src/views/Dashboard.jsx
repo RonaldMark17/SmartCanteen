@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { API } from '../services/api';
+import { API, formatLocalDateInputValue } from '../services/api';
+import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
   ArrowDownTrayIcon,
@@ -300,8 +301,8 @@ export default function Dashboard() {
       setError('');
 
       const now = new Date();
-      const yearStart = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
-      const today = now.toISOString().split('T')[0];
+      const yearStart = formatLocalDateInputValue(new Date(now.getFullYear(), 0, 1));
+      const today = formatLocalDateInputValue(now);
 
       const [summaryResult, predictionsResult, transactionsResult] = await Promise.allSettled([
         API.getSummary(),
@@ -488,9 +489,9 @@ export default function Dashboard() {
         </div>
 
         {error && (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <DismissibleAlert resetKey={error} tone="amber" className="mt-4 rounded-xl">
             {error}
-          </div>
+          </DismissibleAlert>
         )}
       </div>
 

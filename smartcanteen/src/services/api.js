@@ -10,9 +10,11 @@ import {
   saveOfflineLoginProfile,
 } from './offlineStore';
 
+const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
 const OFFLINE_SESSION_STORAGE_KEY = 'sc_offline_session';
-const NATIVE_API_BASE = 'https://cecile-unchipped-shea.ngrok-free.dev/api';
+const DEFAULT_NATIVE_API_ORIGIN = 'https://cecile-unchipped-shea.ngrok-free.dev';
+const NATIVE_API_BASE = `${DEFAULT_NATIVE_API_ORIGIN}${API_ROOT_PATH}`;
 
 const envApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const envNativeApiBase = import.meta.env.VITE_NATIVE_API_BASE_URL?.trim();
@@ -25,20 +27,59 @@ function isNgrokUrl(value) {
   return /\.ngrok(-free)?\.app\b|\.ngrok(-free)?\.dev\b/i.test(String(value || ''));
 }
 
+function normalizeApiBase(value) {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) {
+    return API_ROOT_PATH;
+  }
+
+  if (isAbsoluteUrl(rawValue)) {
+    const url = new URL(rawValue);
+    const pathname = trimTrailingSlash(url.pathname || '');
+
+    if (!pathname || pathname === API_ROOT_PATH || pathname.startsWith(`${API_ROOT_PATH}/`)) {
+      url.pathname = pathname || API_ROOT_PATH;
+      return trimTrailingSlash(url.toString());
+    }
+
+    // The backend always exposes API routes from the root /api namespace.
+    return `${url.origin}${API_ROOT_PATH}`;
+  }
+
+  const normalizedPath = rawValue.startsWith('/') ? rawValue : `/${rawValue}`;
+  if (normalizedPath === API_ROOT_PATH || normalizedPath.startsWith(`${API_ROOT_PATH}/`)) {
+    return trimTrailingSlash(normalizedPath);
+  }
+
+  return API_ROOT_PATH;
+}
+
+export function formatLocalDateInputValue(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function resolveApiBase() {
   if (Capacitor.isNativePlatform()) {
     if (envNativeApiBase) {
-      return trimTrailingSlash(envNativeApiBase);
+      return normalizeApiBase(envNativeApiBase);
     }
 
     if (envApiBase && isAbsoluteUrl(envApiBase)) {
-      return trimTrailingSlash(envApiBase);
+      return normalizeApiBase(envApiBase);
     }
 
-    return NATIVE_API_BASE;
+    return normalizeApiBase(NATIVE_API_BASE);
   }
 
-  return trimTrailingSlash(envApiBase || '/api');
+  return normalizeApiBase(envApiBase || API_ROOT_PATH);
 }
 
 const API_BASE = resolveApiBase();
@@ -104,7 +145,7 @@ function looksLikeHtml(payload) {
 function buildUnexpectedResponseError(path, payload) {
   if (looksLikeHtml(payload)) {
     return new Error(
-      `The API path "${path}" returned HTML instead of JSON. Restart the FastAPI server and make sure ngrok points to the backend app, not a static frontend server.`
+      `The API path "${path}" returned HTML instead of JSON. Make sure your API base points to the backend /api routes instead of a frontend page.`
     );
   }
 
@@ -216,7 +257,7 @@ async function request(method, path, body = null) {
     } catch {
       const raw = await errorResponse.text().catch(() => '');
       if (looksLikeHtml(raw)) {
-        errMsg = `The API path "${path}" returned HTML instead of JSON. Restart the FastAPI server and make sure ngrok points to the backend app.`;
+        errMsg = `The API path "${path}" returned HTML instead of JSON. Make sure your API base points to the backend /api routes instead of a frontend page.`;
       }
     }
 
@@ -249,10 +290,10 @@ async function primeOfflineData({ role } = {}) {
   }
 
   const now = new Date();
-  const today = now.toISOString().split('T')[0];
+  const today = formatLocalDateInputValue(now);
   const weekStart = new Date(now);
   weekStart.setDate(now.getDate() - 7);
-  const yearStart = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
+  const yearStart = formatLocalDateInputValue(new Date(now.getFullYear(), 0, 1));
 
   const jobs = [
     () => request('GET', `/products${toQuery({ active_only: true })}`),
@@ -261,7 +302,7 @@ async function primeOfflineData({ role } = {}) {
       request(
         'GET',
         `/transactions${toQuery({
-          start_date: weekStart.toISOString().split('T')[0],
+          start_date: formatLocalDateInputValue(weekStart),
           end_date: today,
           skip: 0,
           limit: 200,

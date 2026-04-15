@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
+import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   BeakerIcon,
+  BoltIcon,
   ChartBarIcon,
   CheckBadgeIcon,
   CheckCircleIcon,
@@ -16,6 +18,7 @@ import {
   LightBulbIcon,
   MagnifyingGlassIcon,
   SparklesIcon,
+  SunIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -33,6 +36,12 @@ import { Line } from 'react-chartjs-2';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
 const ALGORITHM_OPTIONS = ['XGBoost', 'Random Forest', 'LSTM'];
+const OPENWEATHER_API_KEY = import.meta.env.VITE_OPENWEATHERMAP_API_KEY?.trim() || '';
+const OPENWEATHER_LAT = import.meta.env.VITE_OPENWEATHERMAP_LAT?.trim() || '';
+const OPENWEATHER_LON = import.meta.env.VITE_OPENWEATHERMAP_LON?.trim() || '';
+const DEFAULT_OPENWEATHER_LAT = '14.5995';
+const DEFAULT_OPENWEATHER_LON = '120.9842';
+const DEFAULT_OPENWEATHER_LOCATION_LABEL = 'Manila, PH';
 const WEATHER_OPTIONS = [
   {
     value: 'hot_dry',
@@ -220,6 +229,95 @@ function normalizeMetrics(metrics) {
   };
 }
 
+function formatWeatherFetchedAt(value) {
+  if (!value) return 'Not synced yet';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not synced yet';
+
+  return date.toLocaleString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatWeatherDayLabel(value, timezone = 'Asia/Manila') {
+  if (!value) return 'Unknown day';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown day';
+
+  if (typeof timezone === 'number' && Number.isFinite(timezone)) {
+    const shiftedDate = new Date(date.getTime() + timezone * 1000);
+    return shiftedDate.toLocaleDateString('en-PH', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+  }
+
+  return date.toLocaleDateString('en-PH', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: timezone,
+  });
+}
+
+function getWeatherCardTheme(main) {
+  const normalized = String(main || '').toLowerCase();
+
+  if (normalized.includes('thunder') || normalized.includes('storm')) {
+    return {
+      Icon: BoltIcon,
+      card:
+        'border-violet-400/20 bg-[radial-gradient(circle_at_top,_rgba(168,85,247,0.26),_transparent_36%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(46,16,101,0.95))]',
+      iconWrap: 'border-violet-300/20 bg-violet-400/10 text-violet-100',
+      chip: 'bg-violet-400/15 text-violet-100 border border-violet-300/20',
+    };
+  }
+
+  if (normalized.includes('rain') || normalized.includes('drizzle')) {
+    return {
+      Icon: CloudIcon,
+      card:
+        'border-sky-400/20 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.22),_transparent_38%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(14,116,144,0.95))]',
+      iconWrap: 'border-sky-200/20 bg-sky-400/10 text-sky-100',
+      chip: 'bg-sky-400/15 text-sky-100 border border-sky-200/20',
+    };
+  }
+
+  if (normalized.includes('cloud')) {
+    return {
+      Icon: CloudIcon,
+      card:
+        'border-slate-400/20 bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.2),_transparent_38%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(51,65,85,0.95))]',
+      iconWrap: 'border-slate-200/20 bg-slate-400/10 text-slate-100',
+      chip: 'bg-slate-400/15 text-slate-100 border border-slate-200/20',
+    };
+  }
+
+  if (normalized.includes('clear') || normalized.includes('sun')) {
+    return {
+      Icon: SunIcon,
+      card:
+        'border-amber-400/20 bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.22),_transparent_40%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(120,53,15,0.95))]',
+      iconWrap: 'border-amber-200/20 bg-amber-400/10 text-amber-100',
+      chip: 'bg-amber-400/15 text-amber-100 border border-amber-200/20',
+    };
+  }
+
+  return {
+    Icon: SparklesIcon,
+    card:
+      'border-cyan-400/20 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.2),_transparent_38%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(30,41,59,0.96))]',
+    iconWrap: 'border-cyan-200/20 bg-cyan-400/10 text-cyan-100',
+    chip: 'bg-cyan-400/15 text-cyan-100 border border-cyan-200/20',
+  };
+}
+
 function getSchoolDayLabel(value) {
   if (!value) return null;
 
@@ -389,6 +487,191 @@ function normalizeForecastResponse(response) {
 
 function getWeatherProfile(weather) {
   return WEATHER_OPTIONS.find((option) => option.value === weather) || WEATHER_OPTIONS[0];
+}
+
+function getFallbackOpenWeatherCoordinates() {
+  return {
+    lat: OPENWEATHER_LAT || DEFAULT_OPENWEATHER_LAT,
+    lon: OPENWEATHER_LON || DEFAULT_OPENWEATHER_LON,
+    source: OPENWEATHER_LAT && OPENWEATHER_LON ? 'configured coordinates' : 'default Manila coordinates',
+  };
+}
+
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      reject(new Error('Device location is not available in this browser.'));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 300000,
+    });
+  });
+}
+
+async function resolveOpenWeatherCoordinates() {
+  const fallback = getFallbackOpenWeatherCoordinates();
+
+  try {
+    const position = await getCurrentPosition();
+    const latitude = Number(position?.coords?.latitude);
+    const longitude = Number(position?.coords?.longitude);
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return fallback;
+    }
+
+    return {
+      lat: latitude.toFixed(6),
+      lon: longitude.toFixed(6),
+      source: 'Device Location',
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function buildOpenWeatherRequestUrl(coordinates = getFallbackOpenWeatherCoordinates()) {
+  if (!OPENWEATHER_API_KEY) {
+    return '';
+  }
+
+  const url = new URL('https://api.openweathermap.org/data/2.5/weather');
+  url.searchParams.set('lat', coordinates.lat);
+  url.searchParams.set('lon', coordinates.lon);
+  url.searchParams.set('appid', OPENWEATHER_API_KEY);
+  url.searchParams.set('units', 'metric');
+  return url.toString();
+}
+
+function buildOpenWeatherForecastUrl(coordinates = getFallbackOpenWeatherCoordinates()) {
+  if (!OPENWEATHER_API_KEY) {
+    return '';
+  }
+
+  const url = new URL('https://api.openweathermap.org/data/2.5/forecast');
+  url.searchParams.set('lat', coordinates.lat);
+  url.searchParams.set('lon', coordinates.lon);
+  url.searchParams.set('appid', OPENWEATHER_API_KEY);
+  url.searchParams.set('units', 'metric');
+  return url.toString();
+}
+
+function mapOpenWeatherToScenario(payload) {
+  const weatherId = Number(payload?.weather?.[0]?.id || 0);
+  const condition = String(payload?.weather?.[0]?.main || '').toLowerCase();
+  const temperature = Number(payload?.main?.temp ?? Number.NaN);
+  const windSpeed = Number(payload?.wind?.speed ?? 0);
+
+  if (windSpeed >= 33) {
+    return 'typhoon';
+  }
+  if (weatherId >= 200 && weatherId < 300) {
+    return 'thunderstorm';
+  }
+  if (weatherId >= 300 && weatherId < 600 || condition.includes('rain') || condition.includes('drizzle')) {
+    return windSpeed >= 17 ? 'thunderstorm' : 'rainy_monsoon';
+  }
+  if (condition.includes('storm') || condition.includes('squall') || condition.includes('tornado')) {
+    return 'thunderstorm';
+  }
+  if (condition.includes('cloud') || weatherId >= 801) {
+    return 'cool_breezy';
+  }
+  if (Number.isFinite(temperature) && temperature <= 24) {
+    return 'cool_breezy';
+  }
+  return 'hot_dry';
+}
+
+function buildForecastDayKey(unixSeconds, timezoneOffsetSeconds = 0) {
+  const shiftedDate = new Date((Number(unixSeconds || 0) + Number(timezoneOffsetSeconds || 0)) * 1000);
+  const year = shiftedDate.getUTCFullYear();
+  const month = String(shiftedDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shiftedDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getForecastLocalHour(unixSeconds, timezoneOffsetSeconds = 0) {
+  const shiftedDate = new Date((Number(unixSeconds || 0) + Number(timezoneOffsetSeconds || 0)) * 1000);
+  return shiftedDate.getUTCHours();
+}
+
+function normalizeOpenWeatherDailyForecast(payload) {
+  const timezone = Number(payload?.city?.timezone ?? 28800);
+  if (!Array.isArray(payload?.list)) {
+    return { timezone, items: [] };
+  }
+
+  const groupedDays = new Map();
+  payload.list.forEach((entry) => {
+    const dayKey = buildForecastDayKey(entry?.dt, timezone);
+    if (!groupedDays.has(dayKey)) {
+      groupedDays.set(dayKey, []);
+    }
+
+    groupedDays.get(dayKey).push(entry);
+  });
+
+  return {
+    timezone,
+    items: Array.from(groupedDays.entries())
+      .slice(0, 5)
+      .map(([dayKey, entries], index) => {
+        const representativeEntry = [...entries].sort((left, right) => {
+          const leftDistance = Math.abs(getForecastLocalHour(left?.dt, timezone) - 12);
+          const rightDistance = Math.abs(getForecastLocalHour(right?.dt, timezone) - 12);
+          return leftDistance - rightDistance;
+        })[0] || entries[0];
+        const mainTemperatures = entries.map((entry) => Number(entry?.main?.temp ?? 0));
+        const minTemperatures = entries.map((entry) => Number(entry?.main?.temp_min ?? entry?.main?.temp ?? 0));
+        const maxTemperatures = entries.map((entry) => Number(entry?.main?.temp_max ?? entry?.main?.temp ?? 0));
+        const humidityValues = entries.map((entry) => Number(entry?.main?.humidity ?? 0));
+        const rainChance = Math.max(
+          0,
+          ...entries.map((entry) => Math.round(Number(entry?.pop ?? 0) * 100))
+        );
+        const windSpeed = Math.max(0, ...entries.map((entry) => Number(entry?.wind?.speed ?? 0)));
+        const averageHumidity =
+          humidityValues.length > 0
+            ? Math.round(humidityValues.reduce((sum, value) => sum + value, 0) / humidityValues.length)
+            : 0;
+
+        return {
+          id: `${dayKey}-${index}`,
+          date: representativeEntry?.dt
+            ? new Date(Number(representativeEntry.dt) * 1000).toISOString()
+            : null,
+          summary:
+            rainChance > 0
+              ? `Peak rain chance ${rainChance}% across ${entries.length} forecast intervals.`
+              : `${entries.length} forecast intervals from the free 5-day feed.`,
+          description: representativeEntry?.weather?.[0]?.description || 'Weather details unavailable',
+          main: representativeEntry?.weather?.[0]?.main || 'Weather',
+          minTemp: Math.min(...minTemperatures, ...mainTemperatures),
+          maxTemp: Math.max(...maxTemperatures, ...mainTemperatures),
+          rainChance,
+          humidity: Math.max(0, averageHumidity),
+          windSpeed,
+        };
+      }),
+  };
+}
+
+async function readOpenWeatherError(response, fallbackMessage) {
+  try {
+    const payload = await response.json();
+    if (payload?.message) {
+      return String(payload.message);
+    }
+  } catch {
+    // Ignore JSON parsing errors and fall back to a generic message.
+  }
+
+  return fallbackMessage;
 }
 
 function getScenarioModifier(weather, event) {
@@ -952,6 +1235,12 @@ export default function Predictions() {
   const [notificationFocus, setNotificationFocus] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
   const [usingSampleData, setUsingSampleData] = useState(false);
+  const [weatherSyncing, setWeatherSyncing] = useState(false);
+  const [liveWeather, setLiveWeather] = useState(null);
+  const [openWeatherIssue, setOpenWeatherIssue] = useState('');
+  const [weeklyWeatherForecast, setWeeklyWeatherForecast] = useState([]);
+  const [weatherForecastTimezone, setWeatherForecastTimezone] = useState('Asia/Manila');
+  const [weatherForecastError, setWeatherForecastError] = useState('');
   const [forecast, setForecast] = useState(() => ({
     metrics: DEFAULT_METRICS,
     predictions: [],
@@ -964,13 +1253,25 @@ export default function Predictions() {
     missingPredictionCount: 0,
   }));
   const recommendationsRef = useRef(null);
+  const hasAutoWeatherSyncedRef = useRef(false);
   const weatherProfile = getWeatherProfile(weather);
 
   function scrollToRecommendations() {
     recommendationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  async function loadForecast({ sample = false } = {}) {
+  async function loadForecast({
+    sample = false,
+    algorithmOverride = algorithm,
+    weatherOverride = weather,
+    eventOverride = event,
+    leadingNotice = '',
+  } = {}) {
+    const activeWeather = weatherOverride;
+    const activeEvent = eventOverride;
+    const activeAlgorithm = algorithmOverride;
+    const activeWeatherProfile = getWeatherProfile(activeWeather);
+
     setLoading(true);
     setError('');
     setNotice('');
@@ -979,23 +1280,24 @@ export default function Predictions() {
       try {
         const catalogProducts = normalizeCatalogProducts(await API.getProducts());
         const sampleForecast = ensureForecastCoverage(
-          buildSampleForecast(weather, event, algorithm),
+          buildSampleForecast(activeWeather, activeEvent, activeAlgorithm),
           catalogProducts,
-          weather,
-          event
+          activeWeather,
+          activeEvent
         );
 
         setForecast(sampleForecast);
         setUsingSampleData(true);
-        setNotice(
+        const sampleNotice =
           sampleForecast.missingPredictionCount > 0
             ? `Sample forecast loaded. ${sampleForecast.missingPredictionCount} additional product${sampleForecast.missingPredictionCount > 1 ? 's were' : ' was'} filled from the active catalog.`
-            : 'Sample forecast loaded. Use Refresh Forecast to switch back to live server data.'
-        );
+            : 'Sample forecast loaded. Use Refresh Forecast to switch back to live server data.';
+        setNotice(leadingNotice ? `${leadingNotice} ${sampleNotice}` : sampleNotice);
       } catch {
-        setForecast(buildSampleForecast(weather, event, algorithm));
+        setForecast(buildSampleForecast(activeWeather, activeEvent, activeAlgorithm));
         setUsingSampleData(true);
-        setNotice('Sample forecast loaded. Use Refresh Forecast to switch back to live server data.');
+        const sampleNotice = 'Sample forecast loaded. Use Refresh Forecast to switch back to live server data.';
+        setNotice(leadingNotice ? `${leadingNotice} ${sampleNotice}` : sampleNotice);
       }
 
       setLoading(false);
@@ -1004,7 +1306,11 @@ export default function Predictions() {
 
     try {
       const [predictionResult, productsResult] = await Promise.allSettled([
-        API.getPredictions({ algorithm, weather: weatherProfile.backendWeather, event }),
+        API.getPredictions({
+          algorithm: activeAlgorithm,
+          weather: activeWeatherProfile.backendWeather,
+          event: activeEvent,
+        }),
         API.getProducts(),
       ]);
 
@@ -1018,11 +1324,11 @@ export default function Predictions() {
         normalized = ensureForecastCoverage(
           normalizeForecastResponse(predictionResult.value),
           catalogProducts,
-          weather,
-          event
+          activeWeather,
+          activeEvent
         );
       } else if (catalogProducts.length > 0) {
-        normalized = buildCatalogOnlyForecast(catalogProducts, weather, event);
+        normalized = buildCatalogOnlyForecast(catalogProducts, activeWeather, activeEvent);
       } else {
         throw predictionResult.reason || new Error('Unable to load prediction data.');
       }
@@ -1030,7 +1336,7 @@ export default function Predictions() {
       setForecast(normalized);
       setUsingSampleData(false);
 
-      const notices = [];
+      const notices = leadingNotice ? [leadingNotice] : [];
       if (normalized.backendError) {
         notices.push(`Live forecast returned a warning: ${normalized.backendError}`);
       }
@@ -1056,16 +1362,130 @@ export default function Predictions() {
     }
   }
 
-  async function loadSampleAndJump() {
+  async function loadSampleForecast() {
     await loadForecast({ sample: true });
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        scrollToRecommendations();
+  }
+
+  async function syncWeatherFromOpenWeatherMap() {
+    if (!OPENWEATHER_API_KEY) {
+      setOpenWeatherIssue(
+        'Add VITE_OPENWEATHERMAP_API_KEY to your frontend environment to enable OpenWeatherMap weather syncing.'
+      );
+      return;
+    }
+
+    setWeatherSyncing(true);
+    setOpenWeatherIssue('');
+    setWeatherForecastError('');
+
+    const coordinates = await resolveOpenWeatherCoordinates();
+    const requestUrl = buildOpenWeatherRequestUrl(coordinates);
+    if (!requestUrl) {
+      setOpenWeatherIssue('OpenWeatherMap configuration is incomplete. Check your API key and location settings.');
+      setWeatherSyncing(false);
+      return;
+    }
+
+    try {
+      const forecastRequestUrl = buildOpenWeatherForecastUrl(coordinates);
+      const [currentResponse, forecastResponse] = await Promise.allSettled([
+        fetch(requestUrl),
+        forecastRequestUrl ? fetch(forecastRequestUrl) : Promise.resolve(null),
+      ]);
+
+      if (currentResponse.status !== 'fulfilled') {
+        throw new Error('Unable to reach OpenWeatherMap right now.');
+      }
+
+      if (!currentResponse.value.ok) {
+        const statusMessage = await readOpenWeatherError(
+          currentResponse.value,
+          `OpenWeatherMap returned HTTP ${currentResponse.value.status}.`
+        );
+        throw new Error(statusMessage);
+      }
+
+      const payload = await currentResponse.value.json();
+      const mappedWeather = mapOpenWeatherToScenario(payload);
+      const mappedProfile = getWeatherProfile(mappedWeather);
+      const locationLabel =
+        [payload?.name, payload?.sys?.country].filter(Boolean).join(', ') ||
+        DEFAULT_OPENWEATHER_LOCATION_LABEL;
+      const summaryParts = [];
+      const temp = Number(payload?.main?.temp ?? Number.NaN);
+      if (Number.isFinite(temp)) {
+        summaryParts.push(`${temp.toFixed(1)}C`);
+      }
+      if (payload?.weather?.[0]?.description) {
+        summaryParts.push(payload.weather[0].description);
+      }
+      if (Number.isFinite(Number(payload?.wind?.speed))) {
+        summaryParts.push(`wind ${Number(payload.wind.speed).toFixed(1)} m/s`);
+      }
+      const fetchedAt = payload?.dt ? new Date(Number(payload.dt) * 1000).toISOString() : new Date().toISOString();
+
+      setLiveWeather({
+        location: locationLabel,
+        summary:
+          summaryParts.join(' | ') || 'Current weather synced from OpenWeatherMap.',
+        fetchedAt,
+        mappedWeather,
+        coordinatesLabel: `${coordinates.lat}, ${coordinates.lon}`,
+        coordinateSource: coordinates.source,
       });
-    });
+      setWeather(mappedWeather);
+
+      if (forecastResponse.status === 'fulfilled' && forecastResponse.value) {
+        if (forecastResponse.value.ok) {
+          const forecastPayload = await forecastResponse.value.json();
+          const normalizedDaily = normalizeOpenWeatherDailyForecast(forecastPayload);
+          setWeeklyWeatherForecast(normalizedDaily.items);
+          setWeatherForecastTimezone(normalizedDaily.timezone);
+        } else {
+          const forecastMessage = await readOpenWeatherError(
+            forecastResponse.value,
+            `OpenWeatherMap returned HTTP ${forecastResponse.value.status}.`
+          );
+          setWeeklyWeatherForecast([]);
+          setWeatherForecastTimezone('Asia/Manila');
+          setWeatherForecastError(forecastMessage);
+        }
+      } else {
+        setWeeklyWeatherForecast([]);
+        setWeatherForecastTimezone('Asia/Manila');
+        setWeatherForecastError(
+          '5-day forecast could not be loaded from OpenWeatherMap free forecast.'
+        );
+      }
+
+      await loadForecast({
+        weatherOverride: mappedWeather,
+        leadingNotice: `OpenWeatherMap synced for ${locationLabel} using ${coordinates.source}. Using the ${mappedProfile.label} scenario for this forecast.`,
+      });
+    } catch (err) {
+      setLiveWeather(null);
+      setWeeklyWeatherForecast([]);
+      setWeatherForecastTimezone('Asia/Manila');
+      setOpenWeatherIssue(err.message || 'Unable to sync current weather from OpenWeatherMap.');
+      setWeatherForecastError(err.message || '5-day forecast is unavailable until OpenWeatherMap weather sync succeeds.');
+      await loadForecast();
+    } finally {
+      setWeatherSyncing(false);
+    }
   }
 
   useEffect(() => {
+    if (hasAutoWeatherSyncedRef.current) {
+      return;
+    }
+
+    hasAutoWeatherSyncedRef.current = true;
+
+    if (OPENWEATHER_API_KEY) {
+      syncWeatherFromOpenWeatherMap();
+      return;
+    }
+
     loadForecast();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1258,6 +1678,11 @@ export default function Predictions() {
                   <span className="rounded-full bg-white/10 px-3 py-1">Generated: {formatGeneratedAt(forecast.generatedAt)}</span>
                   <span className="rounded-full bg-white/10 px-3 py-1">Algorithm: {algorithm}</span>
                   <span className="rounded-full bg-white/10 px-3 py-1">Weather: {weatherProfile.label}</span>
+                  {liveWeather && (
+                    <span className="rounded-full bg-white/10 px-3 py-1">
+                      Weather Source: OpenWeatherMap
+                    </span>
+                  )}
                 </>
               )}
             </div>
@@ -1280,8 +1705,8 @@ export default function Predictions() {
             </label>
 
             <label className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-slate-300">Weather</div>
-              <select
+                <div className="text-[11px] font-bold uppercase tracking-widest text-slate-300">Weather</div>
+                <select
                 value={weather}
                 onChange={(eventTarget) => setWeather(eventTarget.target.value)}
                 className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900/40 px-3 py-2 text-sm font-semibold text-white outline-none"
@@ -1291,8 +1716,31 @@ export default function Predictions() {
                     {option.label}
                   </option>
                 ))}
-              </select>
-              <div className="mt-2 text-xs text-slate-300">{weatherProfile.note}</div>
+                </select>
+                <div className="mt-2 text-xs text-slate-300">{weatherProfile.note}</div>
+                <button
+                  type="button"
+                  onClick={syncWeatherFromOpenWeatherMap}
+                  disabled={weatherSyncing}
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-900/60 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {weatherSyncing ? (
+                    <>
+                      <Skeleton className="h-4 w-4 rounded-md bg-white/30" />
+                      Syncing OpenWeatherMap...
+                    </>
+                  ) : (
+                    <>
+                      <CloudIcon className="h-4 w-4" />
+                      Use OpenWeatherMap
+                    </>
+                  )}
+                </button>
+                <div className="mt-2 text-[11px] text-slate-300/90">
+                  {OPENWEATHER_API_KEY
+                    ? `OpenWeatherMap uses your device location when permission is granted. If location is unavailable, it falls back to ${OPENWEATHER_LAT && OPENWEATHER_LON ? `${OPENWEATHER_LAT}, ${OPENWEATHER_LON}` : DEFAULT_OPENWEATHER_LOCATION_LABEL}.`
+                    : 'Set VITE_OPENWEATHERMAP_API_KEY to enable live OpenWeatherMap weather syncing.'}
+                </div>
             </label>
 
             <label className="rounded-2xl border border-white/10 bg-white/10 p-3 sm:col-span-2">
@@ -1331,7 +1779,7 @@ export default function Predictions() {
               </button>
               <button
                 type="button"
-                onClick={loadSampleAndJump}
+                onClick={loadSampleForecast}
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-black text-white transition hover:bg-white/15"
               >
                 <BeakerIcon className="h-4 w-4" />
@@ -1351,40 +1799,224 @@ export default function Predictions() {
       </div>
 
       {error && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          <div className="flex items-start gap-3">
-            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" />
-            <div>
-              <div className="font-bold">Prediction service issue</div>
-              <div className="mt-1">{error}</div>
-            </div>
-          </div>
-        </div>
+        <DismissibleAlert
+          resetKey={error}
+          tone="red"
+          title="Prediction service issue"
+          icon={ExclamationTriangleIcon}
+        >
+          {error}
+        </DismissibleAlert>
       )}
 
       {(notice || usingSampleData) && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <div className="flex items-start gap-3">
-            <CloudIcon className="mt-0.5 h-5 w-5 shrink-0" />
-            <div>
-              <div className="font-bold">{usingSampleData ? 'Sample forecast mode' : 'Forecast notice'}</div>
-              <div className="mt-1">
-                {notice || 'Sample data is on screen. Refresh the forecast to request live data again.'}
-              </div>
-            </div>
-          </div>
-        </div>
+        <DismissibleAlert
+          resetKey={`${notice}-${usingSampleData}`}
+          tone="amber"
+          title={usingSampleData ? 'Sample forecast mode' : 'Forecast notice'}
+          icon={CloudIcon}
+        >
+          {notice || 'Sample data is on screen. Refresh the forecast to request live data again.'}
+        </DismissibleAlert>
       )}
 
-      {notificationFocus && (
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-          <div className="font-bold">
-            {notificationFocus.type === 'high-demand' ? 'High demand alert opened' : 'Notification opened'}
+      {openWeatherIssue && (
+        <DismissibleAlert
+          resetKey={openWeatherIssue}
+          tone="amber"
+          title="OpenWeatherMap setup issue"
+          icon={CloudIcon}
+        >
+          <>
+            <div>{openWeatherIssue}</div>
+            <div className="mt-2 text-xs text-amber-700">
+              Predictions are still running with the selected weather profile.
+            </div>
+          </>
+        </DismissibleAlert>
+      )}
+
+      {liveWeather && (
+        <DismissibleAlert
+          resetKey={`${liveWeather.fetchedAt}-${liveWeather.summary}`}
+          tone="sky"
+          title="OpenWeatherMap weather sync"
+          icon={CloudIcon}
+        >
+          <>
+            <div>
+              {liveWeather.location} | {liveWeather.summary}
+            </div>
+            <div className="mt-1 text-xs text-sky-700">
+              Synced {formatWeatherFetchedAt(liveWeather.fetchedAt)} | Coordinates:{' '}
+              {liveWeather.coordinatesLabel} from {liveWeather.coordinateSource} | Forecast
+              scenario: {getWeatherProfile(liveWeather.mappedWeather).label}
+            </div>
+          </>
+        </DismissibleAlert>
+      )}
+
+      <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-sky-700">
+              <CloudIcon className="h-4 w-4" />
+              Free Weather Feed
+            </div>
+            <h2 className="mt-3 text-xl font-black tracking-tight text-slate-900 sm:text-2xl">
+              5-Day Weather Forecast
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              Use OpenWeatherMap&apos;s free forecast feed to preview the next 5 days of weather and support planning beyond tomorrow&apos;s sales forecast.
+            </p>
           </div>
-          <div className="mt-1">
-            {notificationFocus.name || 'Selected product'} is highlighted in Product Recommendations below.
+
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            <div className="rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.24em] text-white">
+              {weeklyWeatherForecast.length > 0
+                ? 'OpenWeatherMap loaded'
+                : OPENWEATHER_API_KEY
+                  ? 'Manual weather sync'
+                  : 'Weather sync disabled'}
+            </div>
+            {liveWeather?.location && (
+              <div className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[11px] font-bold text-slate-600">
+                {liveWeather.location}
+              </div>
+            )}
           </div>
         </div>
+
+        {weeklyWeatherForecast.length > 0 ? (
+          <div className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50 p-3 sm:p-4">
+            <div className="mb-4 flex flex-col gap-2 border-b border-slate-200/80 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs font-semibold text-slate-500">
+                Synced {formatWeatherFetchedAt(liveWeather?.fetchedAt)} for {liveWeather?.location || DEFAULT_OPENWEATHER_LOCATION_LABEL}
+              </div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400 sm:hidden">
+                Mobile-friendly stacked forecast
+              </div>
+              <div className="hidden text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400 sm:block">
+                Responsive forecast overview
+              </div>
+            </div>
+
+            <div className="mb-4 flex flex-wrap gap-2">
+              <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600">
+                {weeklyWeatherForecast.length} forecast days
+              </div>
+              {liveWeather?.coordinateSource && (
+                <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600">
+                  Source: {liveWeather.coordinateSource}
+                </div>
+              )}
+              <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600">
+                Scenario: {getWeatherProfile(liveWeather?.mappedWeather || weather).label}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                {weeklyWeatherForecast.map((day) => {
+                  const theme = getWeatherCardTheme(day.main);
+                  const WeatherIcon = theme.Icon;
+
+                  return (
+                  <article
+                    key={day.id}
+                    className={`w-full rounded-[26px] border p-4 text-white shadow-lg shadow-slate-900/10 ${theme.card}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-400">
+                          {formatWeatherDayLabel(day.date, weatherForecastTimezone)}
+                        </div>
+                        <div className="mt-2 text-lg font-black tracking-tight text-white">
+                          {day.main}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-300">{day.description}</div>
+                      </div>
+                      <div className={`rounded-2xl p-3 ${theme.iconWrap}`}>
+                        <WeatherIcon className="h-5 w-5" />
+                      </div>
+                    </div>
+
+                    {day.summary && (
+                      <div className="mt-3 min-h-[3.5rem] rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs leading-5 text-slate-300">
+                        {day.summary}
+                      </div>
+                    )}
+
+                    <div className={`mt-3 inline-flex rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] ${theme.chip}`}>
+                      {day.main}
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
+                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">High</div>
+                        <div className="mt-1 text-base font-black text-white">
+                          {day.maxTemp.toFixed(1)}C
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
+                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">Low</div>
+                        <div className="mt-1 text-base font-black text-white">
+                          {day.minTemp.toFixed(1)}C
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
+                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">Rain</div>
+                        <div className="mt-1 text-base font-black text-white">{day.rainChance}%</div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
+                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">Wind</div>
+                        <div className="mt-1 text-base font-black text-white">
+                          {day.windSpeed.toFixed(1)} m/s
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                )})}
+            </div>
+          </div>
+        ) : weatherForecastError ? (
+          <DismissibleAlert
+            resetKey={weatherForecastError}
+            tone="amber"
+            title="5-day forecast unavailable"
+            className="mt-5 rounded-[24px] px-4 py-4 sm:px-5"
+          >
+            <>
+              <div className="leading-6">{weatherForecastError}</div>
+              <div className="mt-2 text-xs text-amber-700">
+                The free tier uses OpenWeatherMap&apos;s 5-day / 3-hour forecast feed instead of
+                the paid One Call daily API.
+              </div>
+            </>
+          </DismissibleAlert>
+        ) : (
+          <div className="mt-5 rounded-[24px] border border-dashed border-slate-200 bg-white/70 px-4 py-8 text-center sm:px-5">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+              <CloudIcon className="h-6 w-6" />
+            </div>
+            <div className="mt-4 text-sm font-bold text-slate-700">No 5-day weather forecast yet</div>
+            <div className="mt-1 text-sm leading-6 text-slate-500">
+              {OPENWEATHER_API_KEY
+                ? 'Use OpenWeatherMap to load the next 5 days for your current location using the free forecast API.'
+                : 'Add a valid OpenWeatherMap API key to enable optional 5-day weather syncing.'}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {notificationFocus && (
+        <DismissibleAlert
+          resetKey={location.key}
+          tone="sky"
+          title={notificationFocus.type === 'high-demand' ? 'High demand alert opened' : 'Notification opened'}
+        >
+          {notificationFocus.name || 'Selected product'} is highlighted in Product
+          Recommendations below.
+        </DismissibleAlert>
       )}
 
       {loading ? (
@@ -1630,7 +2262,7 @@ export default function Predictions() {
               action={
                 <button
                   type="button"
-                  onClick={loadSampleAndJump}
+                  onClick={loadSampleForecast}
                   className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white transition hover:bg-slate-800"
                 >
                   <BeakerIcon className="h-4 w-4" />

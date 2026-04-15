@@ -5,13 +5,31 @@ import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 
 const PH_TIMEZONE = 'Asia/Manila';
 
-function formatPhilippineDateTime(value) {
+function parseAuditTimestamp(value) {
   if (!value) {
-    return 'Not available';
+    return null;
   }
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  const rawValue = String(value).trim();
+  if (!rawValue) {
+    return null;
+  }
+
+  const normalizedValue = /(?:[zZ]|[+\-]\d{2}:\d{2})$/.test(rawValue)
+    ? rawValue
+    : `${rawValue}Z`;
+  const date = new Date(normalizedValue);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatPhilippineDateTime(value) {
+  const date = parseAuditTimestamp(value);
+  if (!date) {
     return 'Not available';
   }
 
@@ -56,7 +74,7 @@ export default function AuditLog() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full gap-6">
+    <div className="flex h-full min-h-0 flex-col gap-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <ShieldCheckIcon className="w-6 h-6 text-slate-700" /> Audit Log
@@ -71,10 +89,10 @@ export default function AuditLog() {
         <p className="text-sm text-slate-500">System actions securely tracked for accountability. All timestamps below use Philippine time (UTC+8).</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm flex-1 overflow-hidden flex flex-col">
-        <div className="hidden flex-1 md:block">
-          <table className="w-full text-left text-sm text-slate-600">
-            <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200 sticky top-0">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-auto md:block">
+          <table className="min-w-full text-left text-sm text-slate-600">
+            <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">
               <tr>
                 <th className="px-6 py-4">Timestamp</th>
                 <th className="px-6 py-4">Action</th>

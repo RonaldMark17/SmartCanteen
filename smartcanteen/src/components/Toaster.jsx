@@ -1,22 +1,42 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { 
   CheckCircleIcon, 
   ExclamationTriangleIcon, 
   XCircleIcon, 
-  InformationCircleIcon 
+  InformationCircleIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 
 export default function Toaster() {
   const [toasts, setToasts] = useState([]);
+  const timeoutIdsRef = useRef(new Map());
+
+  const removeToast = (id) => {
+    const timeoutId = timeoutIdsRef.current.get(id);
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+      timeoutIdsRef.current.delete(id);
+    }
+
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  };
 
   useEffect(() => {
     window.showToast = (message, type = 'info') => {
-      const id = Date.now();
-      setToasts(prev => [...prev, { id, message, type }]);
-      
-      setTimeout(() => {
-        setToasts(prev => prev.filter(t => t.id !== id));
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setToasts((prev) => [...prev, { id, message, type }]);
+
+      const timeoutId = window.setTimeout(() => {
+        removeToast(id);
       }, 3000);
+
+      timeoutIdsRef.current.set(id, timeoutId);
+    };
+
+    return () => {
+      timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      timeoutIdsRef.current.clear();
+      delete window.showToast;
     };
   }, []);
 
@@ -35,14 +55,22 @@ export default function Toaster() {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-3 pointer-events-none">
-      {toasts.map(toast => (
+    <div className="pointer-events-none fixed inset-x-4 bottom-4 z-[9999] flex flex-col gap-3 sm:inset-x-auto sm:bottom-6 sm:right-6">
+      {toasts.map((toast) => (
         <div 
           key={toast.id} 
-          className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-lg shadow-slate-900/5 min-w-[250px] animate-in slide-in-from-right-8 fade-in duration-300 ${backgrounds[toast.type]}`}
+          className={`pointer-events-auto flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg shadow-slate-900/5 animate-in slide-in-from-right-8 fade-in duration-300 sm:min-w-[280px] ${backgrounds[toast.type]}`}
         >
-          {icons[toast.type]}
-          <span className="text-sm font-bold">{toast.message}</span>
+          <div className="shrink-0">{icons[toast.type]}</div>
+          <span className="min-w-0 flex-1 text-sm font-bold">{toast.message}</span>
+          <button
+            type="button"
+            onClick={() => removeToast(toast.id)}
+            aria-label="Dismiss notification"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-white/70"
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
         </div>
       ))}
     </div>

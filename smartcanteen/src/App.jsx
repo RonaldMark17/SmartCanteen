@@ -10,12 +10,11 @@ import Analytics from './views/Analytics';
 import Predictions from './views/Predictions';
 import AuditLog from './views/AuditLog';
 import TransactionHistory from './views/TransactionHistory';
-
-const ROLE_DEFAULT_ROUTES = {
-  admin: '/dashboard',
-  staff: '/inventory',
-  cashier: '/pos',
-};
+import {
+  APP_ROUTE_ACCESS,
+  getDefaultRoute,
+  isValidRole,
+} from './config/access';
 
 function getStoredUser() {
   try {
@@ -23,10 +22,6 @@ function getStoredUser() {
   } catch {
     return {};
   }
-}
-
-function getDefaultRoute(role) {
-  return ROLE_DEFAULT_ROUTES[role] || '/pos';
 }
 
 function clearSession() {
@@ -57,9 +52,8 @@ export default function App() {
 
   const user = getStoredUser();
   const role = user.role;
-  const validRoles = Object.keys(ROLE_DEFAULT_ROUTES);
 
-  if (!validRoles.includes(role)) {
+  if (!isValidRole(role)) {
     clearSession();
     return (
       <>
@@ -70,6 +64,15 @@ export default function App() {
   }
 
   const defaultRoute = getDefaultRoute(role);
+  const routeElements = {
+    dashboard: <Dashboard />,
+    pos: <POS />,
+    inventory: <Inventory />,
+    analytics: <Analytics />,
+    transactions: <TransactionHistory />,
+    predictions: <Predictions />,
+    audit: <AuditLog />,
+  };
 
   return (
     <BrowserRouter>
@@ -84,83 +87,20 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to={defaultRoute} replace />} />
 
-          <Route
-            path="/dashboard"
-            element={
-              <RoleRoute
-                allowedRoles={['admin', 'staff', 'cashier']}
-                role={role}
-                fallbackPath={defaultRoute}
-                element={<Dashboard />}
-              />
-            }
-          />
-          <Route
-            path="/pos"
-            element={
-              <RoleRoute
-                allowedRoles={['admin', 'staff', 'cashier']}
-                role={role}
-                fallbackPath={defaultRoute}
-                element={<POS />}
-              />
-            }
-          />
-          <Route
-            path="/inventory"
-            element={
-              <RoleRoute
-                allowedRoles={['admin', 'staff', 'cashier']}
-                role={role}
-                fallbackPath={defaultRoute}
-                element={<Inventory />}
-              />
-            }
-          />
-          <Route
-            path="/analytics"
-            element={
-              <RoleRoute
-                allowedRoles={['admin', 'staff', 'cashier']}
-                role={role}
-                fallbackPath={defaultRoute}
-                element={<Analytics />}
-              />
-            }
-          />
-          <Route
-            path="/transactions"
-            element={
-              <RoleRoute
-                allowedRoles={['admin', 'staff', 'cashier']}
-                role={role}
-                fallbackPath={defaultRoute}
-                element={<TransactionHistory />}
-              />
-            }
-          />
-          <Route
-            path="/predictions"
-            element={
-              <RoleRoute
-                allowedRoles={['admin', 'staff', 'cashier']}
-                role={role}
-                fallbackPath={defaultRoute}
-                element={<Predictions />}
-              />
-            }
-          />
-          <Route
-            path="/audit"
-            element={
-              <RoleRoute
-                allowedRoles={['admin']}
-                role={role}
-                fallbackPath={defaultRoute}
-                element={<AuditLog />}
-              />
-            }
-          />
+          {APP_ROUTE_ACCESS.map((route) => (
+            <Route
+              key={route.key}
+              path={route.path}
+              element={
+                <RoleRoute
+                  allowedRoles={route.allowedRoles}
+                  role={role}
+                  fallbackPath={defaultRoute}
+                  element={routeElements[route.key]}
+                />
+              }
+            />
+          ))}
 
           <Route path="*" element={<Navigate to={defaultRoute} replace />} />
         </Routes>

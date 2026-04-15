@@ -50,8 +50,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const responseClone = response.clone();
-          caches.open(SHELL_CACHE).then((cache) => cache.put('/index.html', responseClone));
+          if (response.ok) {
+            const responseClone = response.clone();
+            event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.put('/index.html', responseClone)));
+          }
           return response;
         })
         .catch(async () => (await caches.match(request)) || caches.match('/index.html'))
@@ -64,7 +66,8 @@ self.addEventListener('fetch', (event) => {
       const networkResponse = fetch(request)
         .then((response) => {
           if (response.ok) {
-            caches.open(SHELL_CACHE).then((cache) => cache.put(request, response.clone()));
+            const responseClone = response.clone();
+            event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.put(request, responseClone)));
           }
           return response;
         })

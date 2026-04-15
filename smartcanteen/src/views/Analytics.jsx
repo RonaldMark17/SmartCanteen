@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { API } from '../services/api';
+import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
   ArrowPathIcon,
@@ -288,9 +289,9 @@ export default function Analytics() {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <DismissibleAlert resetKey={error} tone="amber" className="rounded-xl">
           {error}
-        </div>
+        </DismissibleAlert>
       )}
 
       

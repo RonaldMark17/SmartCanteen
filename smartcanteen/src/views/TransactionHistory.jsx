@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { API } from '../services/api';
+import { API, formatLocalDateInputValue } from '../services/api';
+import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
+  ArrowDownTrayIcon,
   BanknotesIcon,
   CalendarIcon,
   EyeIcon,
@@ -19,13 +21,73 @@ function createDefaultDateRange() {
   start.setDate(end.getDate() - 7);
 
   return {
-    start: start.toISOString().split('T')[0],
-    end: end.toISOString().split('T')[0],
+    start: formatLocalDateInputValue(start),
+    end: formatLocalDateInputValue(end),
   };
 }
 
 function getItemName(item) {
   return item.product?.name || `Product #${item.product_id}`;
+}
+
+function escapeCsvValue(value) {
+  return `"${String(value ?? '').replaceAll('"', '""')}"`;
+}
+
+function parseTransactionTimestamp(value) {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) {
+    return null;
+  }
+
+  const normalizedValue = /(?:[zZ]|[+\-]\d{2}:\d{2})$/.test(rawValue)
+    ? rawValue
+    : `${rawValue}Z`;
+  const date = new Date(normalizedValue);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTransactionDate(value) {
+  const date = parseTransactionTimestamp(value);
+  if (!date) {
+    return 'N/A';
+  }
+
+  return date.toLocaleDateString('en-PH', {
+    timeZone: 'Asia/Manila',
+  });
+}
+
+function formatTransactionTime(value) {
+  const date = parseTransactionTimestamp(value);
+  if (!date) {
+    return '';
+  }
+
+  return date.toLocaleTimeString('en-PH', {
+    timeZone: 'Asia/Manila',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatTransactionDateTime(value) {
+  const date = parseTransactionTimestamp(value);
+  if (!date) {
+    return 'N/A';
+  }
+
+  return date.toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
 
 export default function TransactionHistory() {
@@ -84,8 +146,57 @@ export default function TransactionHistory() {
 
   const totalRevenue = filteredTxns.reduce((sum, transaction) => sum + Number(transaction.total || 0), 0);
 
+  const exportTransactionsCsv = () => {
+    if (filteredTxns.length === 0) {
+      window.showToast?.('No transactions available to export.', 'warning');
+      return;
+    }
+
+    const headers = [
+      'Transaction ID',
+      'Date',
+      'Time',
+      'Payment Method',
+      'Item Count',
+      'Items',
+      'Total (PHP)',
+    ];
+
+    const rows = filteredTxns.map((transaction) => {
+      const itemsSummary = (transaction.items || [])
+        .map((item) => `${Number(item.quantity || 0)}x ${getItemName(item)}`)
+        .join('; ');
+
+      return [
+        `TXN-${String(transaction.id || '').padStart(6, '0')}`,
+        formatTransactionDate(transaction.created_at),
+        formatTransactionTime(transaction.created_at) || 'N/A',
+        transaction.payment_type || 'cash',
+        (transaction.items || []).length,
+        itemsSummary || 'No items',
+        Number(transaction.total || 0).toFixed(2),
+      ].map(escapeCsvValue).join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const safeStart = dateRange.start || formatLocalDateInputValue(new Date());
+    const safeEnd = dateRange.end || safeStart;
+
+    link.href = url;
+    link.download = `SmartCanteen_Transactions_${safeStart}_to_${safeEnd}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    window.showToast?.('Transaction history exported successfully.', 'success');
+  };
+
   return (
-    <div className="flex h-full flex-col gap-6">
+    <div className="flex h-full min-h-0 flex-col gap-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-black text-slate-900">Transaction History</h1>
@@ -93,6 +204,15 @@ export default function TransactionHistory() {
         </div>
 
         <div className="flex w-full flex-wrap items-center gap-3 md:w-auto md:flex-nowrap">
+          <button
+            type="button"
+            onClick={exportTransactionsCsv}
+            disabled={loading || filteredTxns.length === 0}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ArrowDownTrayIcon className="h-5 w-5" />
+            Export CSV
+          </button>
           <button
             type="button"
             onClick={() => setReloadKey((value) => value + 1)}
@@ -114,9 +234,9 @@ export default function TransactionHistory() {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <DismissibleAlert resetKey={error} tone="amber" className="rounded-xl">
           {error}
-        </div>
+        </DismissibleAlert>
       )}
 
       <div className="grid grid-cols-1 gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-4">
@@ -150,8 +270,8 @@ export default function TransactionHistory() {
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="hidden flex-1 md:block">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-y-auto md:block">
           <table className="w-full text-left text-sm text-slate-600">
             <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">
               <tr>
@@ -189,14 +309,10 @@ export default function TransactionHistory() {
                     </td>
                     <td className="px-6 py-4 text-xs">
                       <div className="font-bold">
-                        {transaction.created_at
-                          ? new Date(transaction.created_at).toLocaleDateString('en-PH')
-                          : 'N/A'}
+                        {formatTransactionDate(transaction.created_at)}
                       </div>
                       <div className="text-slate-400">
-                        {transaction.created_at
-                          ? new Date(transaction.created_at).toLocaleTimeString('en-PH')
-                          : ''}
+                        {formatTransactionTime(transaction.created_at)}
                       </div>
                     </td>
                     <td className="px-6 py-4">{(transaction.items || []).length} items</td>
@@ -259,14 +375,10 @@ export default function TransactionHistory() {
                         TXN-{String(transaction.id).padStart(6, '0')}
                       </div>
                       <div className="mt-1 text-sm font-bold text-slate-700">
-                        {transaction.created_at
-                          ? new Date(transaction.created_at).toLocaleDateString('en-PH')
-                          : 'N/A'}
+                        {formatTransactionDate(transaction.created_at)}
                       </div>
                       <div className="text-xs text-slate-400">
-                        {transaction.created_at
-                          ? new Date(transaction.created_at).toLocaleTimeString('en-PH')
-                          : ''}
+                        {formatTransactionTime(transaction.created_at)}
                       </div>
                     </div>
                     <button
@@ -350,10 +462,7 @@ export default function TransactionHistory() {
 
               <div className="mt-6 space-y-1 rounded-lg border border-slate-100 bg-slate-50 p-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 <p>
-                  Date:{' '}
-                  {selectedTxn.created_at
-                    ? new Date(selectedTxn.created_at).toLocaleString('en-PH')
-                    : 'N/A'}
+                  Date: {formatTransactionDateTime(selectedTxn.created_at)}
                 </p>
                 <p>Payment: {selectedTxn.payment_type || 'cash'}</p>
               </div>

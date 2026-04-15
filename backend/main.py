@@ -20,8 +20,31 @@ import backend.auth as auth
 import backend.analytics_helpers as analytics_helpers
 import backend.ml_predictor as ml_predictor
 from backend.database import engine, get_db, Base
+from backend.time_utils import (
+    build_ph_date_range_bounds,
+    build_recent_ph_day_keys,
+    get_ph_day_bounds_utc_naive,
+    get_ph_recent_cutoff_utc_naive,
+    normalize_client_timestamp,
+    utc_naive_to_aware,
+    utc_now_aware,
+    utc_now_naive,
+)
 
 from sqlalchemy.orm import joinedload
+
+
+def prepare_transaction_for_response(transaction):
+    if transaction and transaction.created_at:
+        transaction.created_at = utc_naive_to_aware(transaction.created_at)
+    return transaction
+
+
+def prepare_audit_log_for_response(log):
+    if log and log.timestamp:
+        log.timestamp = utc_naive_to_aware(log.timestamp)
+    return log
+
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
@@ -77,6 +100,7 @@ if FRONTEND_DIR:
 @app.get("/", include_in_schema=False)
 def root():
     return _frontend_index_response()
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -192,7 +216,7 @@ def update_product(
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(product, field, value)
-    product.updated_at = datetime.utcnow()
+    product.updated_at = utc_now_naive()
     db.commit()
     db.refresh(product)
 
@@ -249,6 +273,7 @@ def create_transaction(
         user_id=current.id, total=total,
         discount=data.discount, payment_type=data.payment_type,
         notes=data.notes,
+        created_at=utc_now_naive(),
     )
     db.add(txn)
     db.flush()
@@ -275,7 +300,7 @@ def create_transaction(
 
     db.commit()
     db.refresh(txn)
-    return txn
+    return prepare_transaction_for_response(txn)
 
 
 @app.get("/api/transactions", response_model=List[schemas.TransactionResponse], tags=["Transactions"])
@@ -295,17 +320,16 @@ def list_transactions(
     # Apply Date Filtering if dates are provided
     if start_date and end_date:
         try:
-            start = datetime.strptime(start_date, "%Y-%m-%d")
-            # End of day filter (23:59:59)
-            end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            start, end = build_transaction_query_bounds(start_date, end_date)
             query = query.filter(models.Transaction.created_at.between(start, end))
         except ValueError:
             pass # Ignore invalid date formats
 
-    return (
+    transactions = (
         query.order_by(models.Transaction.created_at.desc())
         .offset(skip).limit(limit).all()
     )
+    return [prepare_transaction_for_response(transaction) for transaction in transactions]
 
 
 @app.post("/api/transactions/sync", tags=["Transactions"])
@@ -325,7 +349,7 @@ def sync_offline(
             total     = max(0.0, subtotal - discount)
 
             raw_ts = t_data.get("created_at")
-            ts = datetime.fromisoformat(raw_ts) if raw_ts else datetime.utcnow()
+            ts = normalize_client_timestamp(raw_ts)
 
             txn = models.Transaction(
                 user_id=current.id, total=total,
@@ -365,10 +389,10 @@ def summary(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start, today_end = get_ph_day_bounds_utc_naive(utc_now_aware().astimezone().date())
 
     today_txns   = db.query(models.Transaction).filter(
-        models.Transaction.created_at >= today_start).all()
+        models.Transaction.created_at.between(today_start, today_end)).all()
     all_txns     = db.query(models.Transaction).all()
     low_stock_ct = db.query(models.Product).filter(
         models.Product.is_active == True,
@@ -391,20 +415,19 @@ def daily_sales(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = get_ph_recent_cutoff_utc_naive(days)
     txns   = db.query(models.Transaction).filter(
         models.Transaction.created_at >= cutoff).all()
 
     bucket: dict = {}
     for t in txns:
-        k = t.created_at.date().isoformat()
+        k = utc_naive_to_aware(t.created_at).astimezone(analytics_helpers.PH_TIMEZONE).date().isoformat()
         bucket.setdefault(k, {"date": k, "revenue": 0.0, "transactions": 0})
         bucket[k]["revenue"]      += t.total
         bucket[k]["transactions"] += 1
 
     result = []
-    for i in range(days - 1, -1, -1):
-        d = (datetime.utcnow() - timedelta(days=i)).date().isoformat()
+    for d in build_recent_ph_day_keys(days):
         entry = bucket.get(d, {"date": d, "revenue": 0.0, "transactions": 0})
         entry["revenue"] = round(entry["revenue"], 2)
         result.append(entry)
@@ -451,7 +474,7 @@ def predict_tomorrow(
             "summary": result.get("summary", {}),
             "insights": result.get("insights", []),
             "data_source": result.get("data_source", "heuristic"),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": utc_now_aware().isoformat()
         }
 
     except Exception as e:
@@ -471,7 +494,7 @@ def predict_tomorrow(
             "insights": [],
             "data_source": "error",
             "error": str(e),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": utc_now_aware().isoformat()
         }
 
 
@@ -486,7 +509,7 @@ def restock_alerts(
     return {
         "alerts": alerts,
         "count": len(alerts),
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now_aware().isoformat(),
     }
 
 
@@ -500,11 +523,12 @@ def audit_logs(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.require_admin),
 ):
-    return (
+    logs = (
         db.query(models.AuditLog)
         .order_by(models.AuditLog.timestamp.desc())
         .offset(skip).limit(limit).all()
     )
+    return [prepare_audit_log_for_response(log) for log in logs]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -513,7 +537,7 @@ def audit_logs(
 
 @app.get("/api/health", tags=["System"])
 def health():
-    return {"status": "online", "timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"}
+    return {"status": "online", "timestamp": utc_now_aware().isoformat(), "version": "1.0.0"}
 
 
 @app.post("/api/seed", tags=["System"])
@@ -576,3 +600,4 @@ def frontend_catch_all(full_path: str):
         raise HTTPException(status_code=404, detail="File not found")
 
     return _frontend_index_response()
+

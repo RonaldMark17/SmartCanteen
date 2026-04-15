@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
+import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import { PlusIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 
@@ -169,7 +170,7 @@ export default function Inventory() {
     : products;
 
   return (
-    <div className="flex flex-col h-full gap-6 relative">
+    <div className="relative flex h-full min-h-0 flex-col gap-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
@@ -193,18 +194,19 @@ export default function Inventory() {
       </div>
 
       {notificationFocus && (
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-          <div className="font-bold">
-            {notificationFocus.type === 'low-stock' ? 'Low stock alert opened' : 'Notification opened'}
-          </div>
-          <div className="mt-1">
-            {notificationFocus.name || 'Selected product'} is highlighted below so you can review its stock faster.
-          </div>
-        </div>
+        <DismissibleAlert
+          resetKey={location.key}
+          tone="sky"
+          title={notificationFocus.type === 'low-stock' ? 'Low stock alert opened' : 'Notification opened'}
+          className="rounded-2xl"
+        >
+          {notificationFocus.name || 'Selected product'} is highlighted below so you can review
+          its stock faster.
+        </DismissibleAlert>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm flex-1 overflow-hidden flex flex-col">
-        <div className="hidden flex-1 md:block">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-y-auto md:block">
           <table className="w-full text-left text-sm text-slate-600">
             <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200 sticky top-0">
               <tr>
@@ -272,7 +274,7 @@ export default function Inventory() {
           </table>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 md:hidden">
+        <div className="custom-scrollbar flex-1 overflow-y-auto p-4 md:hidden">
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 5 }, (_, index) => (
@@ -386,7 +388,16 @@ export default function Inventory() {
             <div className="p-6">
               <h3 className="text-xl font-bold text-slate-900 mb-4">{formData.id ? 'Edit Product' : 'Add Product'}</h3>
               
-              {formError && <div className="mb-4 text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-100">{formError}</div>}
+              {formError && (
+                <DismissibleAlert
+                  resetKey={formError}
+                  tone="red"
+                  title="Save issue"
+                  className="mb-4 rounded-lg border-red-100 p-3"
+                >
+                  {formError}
+                </DismissibleAlert>
+              )}
               
               <form onSubmit={handleSave} className="space-y-4">
                 <div>

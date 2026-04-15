@@ -11,6 +11,8 @@ import {
   DocumentTextIcon,
   GiftIcon,
   MagnifyingGlassIcon,
+  MinusSmallIcon,
+  PlusSmallIcon,
   PrinterIcon,
   ShoppingBagIcon,
   ShoppingCartIcon,
@@ -273,19 +275,24 @@ export default function POS() {
               const isSelected = selectedQty > 0;
 
               return (
-                <button
+                <div
                   key={product.id}
-                  type="button"
-                  onClick={() => addToCart(product)}
-                  disabled={product.stock === 0}
                   className={`relative flex flex-col items-center rounded-xl border p-4 text-center shadow-sm transition-all ${
                     product.stock === 0
-                      ? 'cursor-not-allowed border-slate-200 bg-white opacity-50 grayscale'
+                      ? 'border-slate-200 bg-white opacity-50 grayscale'
                       : isSelected
-                        ? 'cursor-pointer border-primary bg-primary/5 shadow-md ring-2 ring-primary/15'
+                        ? 'border-primary bg-primary/5 shadow-md ring-2 ring-primary/15'
                         : 'border-slate-200 bg-white hover:-translate-y-1 hover:border-primary hover:shadow-md'
                   }`}
                 >
+                  <button
+                    type="button"
+                    onClick={() => addToCart(product)}
+                    disabled={product.stock === 0}
+                    className={`flex w-full flex-1 flex-col items-center text-center ${
+                      product.stock === 0 ? 'cursor-not-allowed' : 'cursor-pointer'
+                    }`}
+                  >
                   {isSelected && (
                     <div className="absolute right-3 top-3 inline-flex min-w-[2.2rem] items-center justify-center rounded-full bg-primary px-2 py-1 text-[11px] font-black text-white shadow-sm">
                       {selectedQty}
@@ -328,7 +335,37 @@ export default function POS() {
                       </div>
                     )}
                   </div>
-                </button>
+                  </button>
+
+                  <div className="mt-3 flex w-full items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
+                    <button
+                      type="button"
+                      onClick={() => updateQty(product.id, selectedQty - 1)}
+                      disabled={selectedQty === 0}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500"
+                      aria-label={`Decrease ${product.name} quantity`}
+                    >
+                      <MinusSmallIcon className="h-5 w-5" />
+                    </button>
+
+                    <div className="min-w-0 flex-1 text-center">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                        Qty
+                      </div>
+                      <div className="text-lg font-black text-slate-900">{selectedQty}</div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => addToCart(product)}
+                      disabled={product.stock === 0 || selectedQty >= product.stock}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500"
+                      aria-label={`Increase ${product.name} quantity`}
+                    >
+                      <PlusSmallIcon className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
               );
             })}
 
@@ -343,76 +380,387 @@ export default function POS() {
       </div>
 
       {showOrderModal && hasCartItems && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-md sm:p-4">
-          <div className="relative flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-[30px] border border-slate-200/80 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)]">
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-md sm:items-center sm:p-4">
+          <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)] sm:h-[94vh] sm:max-h-[94vh] sm:max-w-6xl sm:rounded-[30px] sm:border sm:border-slate-200/80">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%),radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_38%)]" />
 
-            <div className="relative shrink-0 border-b border-slate-200 bg-slate-950 px-4 py-5 text-white sm:px-6">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                <div className="max-w-3xl">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-100">
-                    <ShoppingCartIcon className="h-4 w-4" />
-                    Current Order
+            <div className="relative shrink-0 border-b border-slate-200 bg-slate-950 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] text-white sm:px-6 sm:py-5">
+              <div className="sm:hidden">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-slate-100">
+                      <ShoppingCartIcon className="h-4 w-4" />
+                      Current Order
+                    </div>
+                    <h3 className="mt-2 text-lg font-black tracking-tight">Review order</h3>
+                    <p className="mt-1 text-xs font-semibold text-slate-300">
+                      {cart.length} item(s) | {totalUnits} unit(s) | {formatCurrency(cartTotal)}
+                    </p>
                   </div>
-                  <h3 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">
-                    Review order before checkout
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-300">
-                    Check item quantities, apply discounts, and confirm the payment details before
-                    completing this sale.
-                  </p>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={clearCart}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowOrderModal(false)}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-white transition hover:border-white/20 hover:bg-white/15"
+                      aria-label="Close order modal"
+                    >
+                      <XMarkIcon className="h-5 w-5" />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button
-                    type="button"
-                    onClick={clearCart}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                    Clear Order
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowOrderModal(false)}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
-                  >
-                    <XMarkIcon className="h-4 w-4" />
-                    Close
-                  </button>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
+                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
+                      Items
+                    </div>
+                    <div className="mt-1 text-base font-black">{cart.length}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
+                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
+                      Units
+                    </div>
+                    <div className="mt-1 text-base font-black">{totalUnits}</div>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5">
+                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-100">
+                      Total
+                    </div>
+                    <div className="mt-1 text-sm font-black">{formatCurrency(cartTotal)}</div>
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
-                    Items
+              <div className="hidden sm:block">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="max-w-3xl">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-100">
+                      <ShoppingCartIcon className="h-4 w-4" />
+                      Current Order
+                    </div>
+                    <h3 className="mt-3 text-xl font-black tracking-tight sm:text-3xl">
+                      Review order before checkout
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      Check item quantities, apply discounts, and confirm the payment details before
+                      completing this sale.
+                    </p>
                   </div>
-                  <div className="mt-1 text-xl font-black">{cart.length}</div>
+
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={clearCart}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                      Clear Order
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowOrderModal(false)}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                    >
+                      <XMarkIcon className="h-4 w-4" />
+                      Close
+                    </button>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
-                    Units
+
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
+                      Items
+                    </div>
+                    <div className="mt-1 text-xl font-black">{cart.length}</div>
                   </div>
-                  <div className="mt-1 text-xl font-black">{totalUnits}</div>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
-                    Subtotal
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
+                      Units
+                    </div>
+                    <div className="mt-1 text-xl font-black">{totalUnits}</div>
                   </div>
-                  <div className="mt-1 text-base font-black">{formatCurrency(subtotal)}</div>
-                </div>
-                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-emerald-100">
-                    Total Due
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
+                      Subtotal
+                    </div>
+                    <div className="mt-1 text-base font-black">{formatCurrency(subtotal)}</div>
                   </div>
-                  <div className="mt-1 text-base font-black">{formatCurrency(cartTotal)}</div>
+                  <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-emerald-100">
+                      Total Due
+                    </div>
+                    <div className="mt-1 text-base font-black">{formatCurrency(cartTotal)}</div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.9fr)]">
-              <div className="custom-scrollbar min-h-[280px] overflow-y-auto bg-slate-50/80 p-4 sm:p-5">
+            <div className="min-h-0 flex-1">
+              <div className="custom-scrollbar h-full overflow-y-auto overscroll-y-contain bg-slate-50 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] xl:hidden">
+                <div className="space-y-3">
+                  <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Order Items
+                        </div>
+                        <div className="mt-1 text-base font-black text-slate-900">
+                          Edit quantities in this modal
+                        </div>
+                      </div>
+                      <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-500">
+                        {totalUnits} units
+                      </div>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      {cart.map((item) => (
+                        <div
+                          key={`mobile-order-item-${item.id}`}
+                          className="rounded-[22px] border border-slate-200 bg-slate-50/90 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div
+                                className="truncate text-sm font-black text-slate-900"
+                                title={item.name}
+                              >
+                                {item.name}
+                              </div>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                                <span className="rounded-full bg-white px-2.5 py-1 text-slate-500">
+                                  {item.category || 'General'}
+                                </span>
+                                <span>{formatCurrency(item.price)} each</span>
+                                <span>{item.stock} in stock</span>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => updateQty(item.id, 0)}
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                              aria-label={`Remove ${item.name} from current order`}
+                            >
+                              <XMarkIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+                              <button
+                                type="button"
+                                onClick={() => updateQty(item.id, item.qty - 1)}
+                                className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 hover:text-primary"
+                                aria-label={`Decrease ${item.name} quantity`}
+                              >
+                                <MinusSmallIcon className="h-5 w-5" />
+                              </button>
+                              <div className="min-w-[3rem] text-center">
+                                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                                  Qty
+                                </div>
+                                <div className="text-lg font-black text-slate-900">{item.qty}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => updateQty(item.id, item.qty + 1)}
+                                disabled={item.qty >= item.stock}
+                                className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-600"
+                                aria-label={`Increase ${item.name} quantity`}
+                              >
+                                <PlusSmallIcon className="h-5 w-5" />
+                              </button>
+                            </div>
+
+                            <div className="shrink-0 text-right">
+                              <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                                Line Total
+                              </div>
+                              <div className="mt-1 text-base font-black text-slate-900">
+                                {formatCurrency(item.price * item.qty)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-900">
+                      <DocumentTextIcon className="h-5 w-5 text-slate-400" />
+                      Order details
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Add notes, apply a discount, and choose how the customer will pay.
+                    </p>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label className="rounded-[22px] border border-slate-200 bg-slate-50 p-3">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Discount
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={discount}
+                          onChange={(e) => setDiscount(e.target.value)}
+                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-primary"
+                          placeholder="0.00"
+                        />
+                      </label>
+
+                      <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-3">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Payment
+                        </span>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPaymentType('cash')}
+                            className={`rounded-2xl border px-3 py-3 text-sm font-black transition ${
+                              paymentType === 'cash'
+                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            Cash
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPaymentType('gcash')}
+                            className={`rounded-2xl border px-3 py-3 text-sm font-black transition ${
+                              paymentType === 'gcash'
+                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            GCash
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <label className="mt-3 block">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                        Notes
+                      </span>
+                      <textarea
+                        rows="3"
+                        placeholder="Add order notes for the kitchen or cashier"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none transition focus:border-primary focus:bg-white"
+                      />
+                    </label>
+                  </div>
+
+                  {paymentType === 'cash' && (
+                    <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm">
+                      <div className="flex items-center gap-2 text-sm font-black text-slate-900">
+                        <BanknotesIcon className="h-5 w-5 text-emerald-500" />
+                        Cash received
+                      </div>
+
+                      <input
+                        type="number"
+                        min={cartTotal}
+                        step="0.01"
+                        value={amountReceived}
+                        onChange={(e) => setAmountReceived(e.target.value)}
+                        className="mt-3 w-full rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
+                        placeholder="0.00"
+                      />
+
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                            Change
+                          </div>
+                          <div
+                            className={`mt-1 text-base font-black ${
+                              change > 0 ? 'text-emerald-600' : 'text-slate-500'
+                            }`}
+                          >
+                            {formatCurrency(change)}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                            Balance
+                          </div>
+                          <div
+                            className={`mt-1 text-base font-black ${
+                              remainingBalance > 0 ? 'text-red-600' : 'text-slate-700'
+                            }`}
+                          >
+                            {formatCurrency(remainingBalance)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
+                    <div className="flex items-center justify-between text-sm text-slate-300">
+                      <span>Subtotal</span>
+                      <span className="font-bold text-white">{formatCurrency(subtotal)}</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-sm text-slate-300">
+                      <span>Discount</span>
+                      <span className="font-bold text-white">
+                        - {formatCurrency(numericDiscount)}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-end justify-between border-t border-white/10 pt-4">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Total Due
+                        </div>
+                        <div className="mt-1 text-2xl font-black tracking-tight">
+                          {formatCurrency(cartTotal)}
+                        </div>
+                      </div>
+                      <div className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.24em] text-slate-200">
+                        {paymentType}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={handleCheckout}
+                      disabled={isCheckoutDisabled}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-4 text-sm font-black text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
+                    >
+                      <CheckCircleIcon className="h-6 w-6" />
+                      Complete Transaction
+                    </button>
+
+                    <p className="text-center text-xs font-semibold text-slate-400">
+                      {paymentType === 'cash' && remainingBalance > 0
+                        ? `Waiting for ${formatCurrency(remainingBalance)} more cash.`
+                        : 'Review the full order here, then finish checkout when ready.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hidden h-full min-h-0 xl:block">
+                <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.9fr)]">
+                <div className="custom-scrollbar min-h-[240px] bg-slate-50/80 p-4 sm:p-5 xl:min-h-0 xl:overflow-y-auto">
                 <div className="mb-4 flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">
@@ -470,7 +818,7 @@ export default function POS() {
                         <button
                           type="button"
                           onClick={() => updateQty(item.id, 0)}
-                          className="inline-flex items-center justify-center rounded-2xl border border-slate-200 p-2.5 text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                          className="inline-flex self-start items-center justify-center rounded-2xl border border-slate-200 p-2.5 text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
                           aria-label={`Remove ${item.name} from current order`}
                         >
                           <XMarkIcon className="h-4 w-4" />
@@ -515,7 +863,7 @@ export default function POS() {
                 </div>
               </div>
 
-              <div className="custom-scrollbar overflow-y-auto border-t border-slate-200 bg-white p-4 sm:p-5 lg:border-l lg:border-t-0">
+              <div className="custom-scrollbar border-t border-slate-200 bg-white p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:p-5 sm:pb-5 xl:min-h-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
                 <div className="space-y-4">
                   <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center gap-2 text-sm font-black text-slate-900">
@@ -689,15 +1037,17 @@ export default function POS() {
                   </div>
                 </div>
               </div>
+              </div>
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {receiptData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="flex max-h-[90vh] w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="custom-scrollbar flex-1 overflow-y-auto p-6">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-0 backdrop-blur-sm animate-in fade-in duration-200 sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[90vh] sm:max-w-sm sm:rounded-2xl">
+            <div className="custom-scrollbar flex-1 overflow-y-auto px-5 pb-5 pt-[calc(env(safe-area-inset-top)+1.25rem)] sm:p-6">
               <div className="mb-6 text-center">
                 <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
                   <BanknotesIcon className="h-6 w-6 text-slate-700" />
@@ -770,7 +1120,7 @@ export default function POS() {
               </div>
             </div>
 
-            <div className="flex shrink-0 gap-3 border-t border-slate-200 bg-slate-50 p-4">
+            <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4 sm:flex-row sm:p-4">
               <button
                 type="button"
                 onClick={() => setReceiptData(null)}
