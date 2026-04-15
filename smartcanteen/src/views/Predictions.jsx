@@ -4,6 +4,13 @@ import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
+  formatPhilippineDate,
+  formatPhilippineDateTime,
+  getPhilippineDateKey,
+  getPhilippineWeekday,
+  parseBackendDateTime,
+} from '../utils/dateTime';
+import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   BeakerIcon,
@@ -142,10 +149,8 @@ function formatCount(value) {
 
 function formatGeneratedAt(value) {
   if (!value) return 'Not available';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Not available';
 
-  return date.toLocaleString('en-PH', {
+  return formatPhilippineDateTime(value, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -156,10 +161,7 @@ function formatGeneratedAt(value) {
 
 function formatShortDate(value) {
   if (!value) return 'No sales history';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'No sales history';
-
-  return date.toLocaleDateString('en-PH', {
+  return formatPhilippineDate(value, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -231,10 +233,7 @@ function normalizeMetrics(metrics) {
 
 function formatWeatherFetchedAt(value) {
   if (!value) return 'Not synced yet';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Not synced yet';
-
-  return date.toLocaleString('en-PH', {
+  return formatPhilippineDateTime(value, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -245,8 +244,8 @@ function formatWeatherFetchedAt(value) {
 
 function formatWeatherDayLabel(value, timezone = 'Asia/Manila') {
   if (!value) return 'Unknown day';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Unknown day';
+  const date = parseBackendDateTime(value);
+  if (!date) return 'Unknown day';
 
   if (typeof timezone === 'number' && Number.isFinite(timezone)) {
     const shiftedDate = new Date(date.getTime() + timezone * 1000);
@@ -335,12 +334,12 @@ function getSchoolDayLabel(value) {
     return labelMap[shortLabel];
   }
 
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) {
+  const date = parseBackendDateTime(text);
+  if (!date) {
     return null;
   }
 
-  const weekday = date.getDay();
+  const weekday = getPhilippineWeekday(date);
   return SCHOOL_WEEK_LABELS[weekday - 1] || null;
 }
 
@@ -1615,7 +1614,7 @@ export default function Predictions() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `predictions-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `predictions-${getPhilippineDateKey(new Date())}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
     setNotice('Prediction export downloaded.');

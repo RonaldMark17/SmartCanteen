@@ -3,8 +3,8 @@ from sqlalchemy import (
     Boolean, ForeignKey, Text
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from .database import Base
+from .time_utils import utc_now_naive
 
 
 class User(Base):
@@ -16,7 +16,7 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role          = Column(String, default="cashier")   # admin | cashier | staff
     is_active     = Column(Boolean, default=True)
-    created_at    = Column(DateTime, default=datetime.utcnow)
+    created_at    = Column(DateTime, default=utc_now_naive)
 
     transactions = relationship("Transaction", back_populates="user")
     audit_logs   = relationship("AuditLog",   back_populates="user")
@@ -33,8 +33,8 @@ class Product(Base):
     min_stock  = Column(Integer, default=5)      # low-stock threshold
     barcode    = Column(String, unique=True, nullable=True)
     is_active  = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     transaction_items = relationship("TransactionItem", back_populates="product")
 
@@ -48,7 +48,7 @@ class Transaction(Base):
     discount     = Column(Float, default=0.0)
     payment_type = Column(String, default="cash")   # cash | gcash
     notes        = Column(Text, nullable=True)
-    created_at   = Column(DateTime, default=datetime.utcnow)
+    created_at   = Column(DateTime, default=utc_now_naive)
     synced       = Column(Boolean, default=True)   # False = came from offline queue
 
     user  = relationship("User",            back_populates="transactions")
@@ -77,6 +77,6 @@ class AuditLog(Base):
     action     = Column(String, nullable=False)   # LOGIN | PRODUCT_CREATED | …
     details    = Column(Text,   nullable=True)
     ip_address = Column(String, nullable=True)
-    timestamp  = Column(DateTime, default=datetime.utcnow)
+    timestamp  = Column(DateTime, default=utc_now_naive)
 
     user = relationship("User", back_populates="audit_logs")

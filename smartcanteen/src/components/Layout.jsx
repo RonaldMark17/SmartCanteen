@@ -24,6 +24,12 @@ import {
 import DismissibleAlert from './DismissibleAlert';
 import { API } from '../services/api';
 import {
+  formatPhilippineDate,
+  formatPhilippineTime,
+  getPhilippineDateParts,
+  parseBackendDateTime,
+} from '../utils/dateTime';
+import {
   getAlertPermissionStatus,
   requestAlertPermission,
   sendHighDemandDeviceAlert,
@@ -171,12 +177,12 @@ function formatCheckTime(value) {
     return 'Checking alerts...';
   }
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const date = parseBackendDateTime(value);
+  if (!date) {
     return 'Checking alerts...';
   }
 
-  return `Updated ${date.toLocaleTimeString('en-PH', {
+  return `Updated ${formatPhilippineTime(date, {
     hour: 'numeric',
     minute: '2-digit',
   })}`;
@@ -260,7 +266,7 @@ function getPageMeta(pathname) {
 }
 
 function getGreeting(date = new Date()) {
-  const hour = date.getHours();
+  const hour = getPhilippineDateParts(date)?.hour ?? 12;
 
   if (hour < 12) {
     return 'Good morning';
@@ -274,7 +280,7 @@ function getGreeting(date = new Date()) {
 }
 
 function formatWorkspaceDate(date = new Date()) {
-  return date.toLocaleDateString('en-PH', {
+  return formatPhilippineDate(date, {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -283,7 +289,7 @@ function formatWorkspaceDate(date = new Date()) {
 }
 
 function formatWorkspaceTime(date = new Date()) {
-  return date.toLocaleTimeString('en-PH', {
+  return formatPhilippineTime(date, {
     hour: 'numeric',
     minute: '2-digit',
   });

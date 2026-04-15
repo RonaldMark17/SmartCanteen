@@ -1,8 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { API, formatLocalDateInputValue } from '../services/api';
+import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
+import {
+  formatPhilippineDate,
+  formatPhilippineDateTime,
+  formatPhilippineTime,
+  getDaysInPhilippineMonth,
+  getPhilippineDateKey,
+  getPhilippineDateParts,
+  getPhilippineHour,
+  isSamePhilippinePeriod,
+  parseBackendDateTime,
+} from '../utils/dateTime';
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
@@ -49,17 +60,17 @@ function getPeriodTitle(period) {
 
 function getPeriodDescription(period, now) {
   if (period === 'month') {
-    return now.toLocaleDateString('en-PH', {
+    return formatPhilippineDate(now, {
       month: 'long',
       year: 'numeric',
     });
   }
 
   if (period === 'year') {
-    return now.getFullYear().toString();
+    return String(getPhilippineDateParts(now)?.year || new Date().getFullYear());
   }
 
-  return now.toLocaleDateString('en-PH', {
+  return formatPhilippineDate(now, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -68,27 +79,11 @@ function getPeriodDescription(period, now) {
 }
 
 function parseTransactionDate(transaction) {
-  return transaction.created_at ? new Date(transaction.created_at) : null;
+  return parseBackendDateTime(transaction.created_at);
 }
 
 function isWithinPeriod(date, period, now) {
-  if (!date) {
-    return false;
-  }
-
-  if (period === 'year') {
-    return date.getFullYear() === now.getFullYear();
-  }
-
-  if (period === 'month') {
-    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
-  }
-
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
+  return isSamePhilippinePeriod(date, period, now);
 }
 
 function getPeriodTransactions(transactions, period, now) {
@@ -121,19 +116,17 @@ function buildCategorySplit(transactions) {
 function mapRecentTransactions(transactions) {
   return transactions.slice(0, 5).map((transaction) => ({
     id: `TXN-${String(transaction.id).padStart(6, '0')}`,
-    date: transaction.created_at
-      ? new Date(transaction.created_at).toLocaleDateString('en-PH', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        })
-      : 'N/A',
-    time: transaction.created_at
-      ? new Date(transaction.created_at).toLocaleTimeString('en-PH', {
-          hour: 'numeric',
-          minute: '2-digit',
-        })
-      : 'N/A',
+    date: formatPhilippineDate(transaction.created_at, {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }),
+    time:
+      formatPhilippineTime(transaction.created_at, {
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+      }) || 'N/A',
     amount: Number(transaction.total || 0),
     method: transaction.payment_type === 'gcash' ? 'GCash' : 'Cash',
   }));
@@ -158,7 +151,7 @@ function buildTrend(period, transactions, now) {
   }
 
   if (period === 'month') {
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysInMonth = getDaysInPhilippineMonth(now);
     const revenueByDay = Array.from({ length: daysInMonth }, () => 0);
 
     transactions.forEach((transaction) => {
@@ -166,7 +159,10 @@ function buildTrend(period, transactions, now) {
       if (!date) {
         return;
       }
-      revenueByDay[date.getDate() - 1] += Number(transaction.total || 0);
+      const day = getPhilippineDateParts(date)?.day;
+      if (day) {
+        revenueByDay[day - 1] += Number(transaction.total || 0);
+      }
     });
 
     return {
@@ -182,15 +178,18 @@ function buildTrend(period, transactions, now) {
     if (!date) {
       return;
     }
-    revenueByHour[date.getHours()] += Number(transaction.total || 0);
+    const hour = getPhilippineHour(date);
+    if (hour !== null) {
+      revenueByHour[hour] += Number(transaction.total || 0);
+    }
   });
 
   return {
-    title: 'Daily Revenue Trend',
-    labels: Array.from({ length: 24 }, (_, hour) =>
-      new Date(2000, 0, 1, hour).toLocaleTimeString('en-PH', {
-        hour: 'numeric',
-      })
+      title: 'Daily Revenue Trend',
+      labels: Array.from({ length: 24 }, (_, hour) =>
+        formatPhilippineTime(`2000-01-01T${String(hour).padStart(2, '0')}:00:00+08:00`, {
+          hour: 'numeric',
+        })
     ),
     values: revenueByHour.map((value) => Number(value.toFixed(2))),
   };
@@ -301,8 +300,9 @@ export default function Dashboard() {
       setError('');
 
       const now = new Date();
-      const yearStart = formatLocalDateInputValue(new Date(now.getFullYear(), 0, 1));
-      const today = formatLocalDateInputValue(now);
+      const philippineNow = getPhilippineDateParts(now);
+      const yearStart = `${philippineNow?.year || now.getFullYear()}-01-01`;
+      const today = getPhilippineDateKey(now);
 
       const [summaryResult, predictionsResult, transactionsResult] = await Promise.allSettled([
         API.getSummary(),
@@ -377,7 +377,7 @@ export default function Dashboard() {
     const rows = [
       ['SmartCanteen Dashboard Summary'],
       [],
-      ['Generated At', now.toLocaleString('en-PH')],
+      ['Generated At', formatPhilippineDateTime(now)],
       ['Period', `${periodTitle} - ${getPeriodDescription(period, now)}`],
       [],
       ['Overview'],
@@ -409,7 +409,7 @@ export default function Dashboard() {
     const url = URL.createObjectURL(blob);
 
     link.href = url;
-    link.download = `dashboard-summary-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `dashboard-summary-${period}-${getPhilippineDateKey(new Date())}.csv`;
     link.click();
     URL.revokeObjectURL(url);
 

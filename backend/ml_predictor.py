@@ -1,6 +1,5 @@
 """Prediction helpers for SmartCanteen."""
 
-from datetime import datetime, timedelta
 from typing import Dict, List
 
 import numpy as np
@@ -16,6 +15,7 @@ except ImportError:  # pragma: no cover - optional dependency
     xgb = None
 
 from . import models
+from .time_utils import get_ph_recent_cutoff_utc_naive, get_ph_tomorrow, to_ph_time
 
 
 DEFAULT_METRICS = {
@@ -67,7 +67,7 @@ def _build_algorithm_metrics(selected_algorithm: str, selected_metrics: Dict) ->
 
 
 def _fetch_sales_df(db: Session, days_back: int = 90) -> pd.DataFrame:
-    cutoff = datetime.utcnow() - timedelta(days=max(days_back, 1))
+    cutoff = get_ph_recent_cutoff_utc_naive(days_back)
     transactions = (
         db.query(models.Transaction)
         .filter(models.Transaction.created_at >= cutoff)
@@ -76,7 +76,7 @@ def _fetch_sales_df(db: Session, days_back: int = 90) -> pd.DataFrame:
 
     rows = []
     for transaction in transactions:
-        created_at = transaction.created_at or datetime.utcnow()
+        created_at = to_ph_time(transaction.created_at)
         for item in transaction.items or []:
             product = item.product
             rows.append(
@@ -433,7 +433,7 @@ def predict_tomorrow_sales(
             "data_source": "heuristic",
         }
 
-    tomorrow = datetime.utcnow().date() + timedelta(days=1)
+    tomorrow = get_ph_tomorrow()
     tomorrow_weekday = tomorrow.weekday()
 
     predictions = []

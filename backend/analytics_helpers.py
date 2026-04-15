@@ -1,12 +1,11 @@
-from datetime import datetime, timedelta
-
 from sqlalchemy.orm import Session
 
 from . import models
+from .time_utils import get_ph_recent_cutoff_utc_naive, to_ph_time
 
 
 def get_top_products(db: Session, days: int = 7, limit: int = 10):
-    cutoff = datetime.utcnow() - timedelta(days=max(days, 1))
+    cutoff = get_ph_recent_cutoff_utc_naive(days)
     transactions = (
         db.query(models.Transaction)
         .filter(models.Transaction.created_at >= cutoff)
@@ -46,7 +45,7 @@ def get_top_products(db: Session, days: int = 7, limit: int = 10):
 
 
 def get_hourly_heatmap(db: Session, days: int = 30):
-    cutoff = datetime.utcnow() - timedelta(days=max(days, 1))
+    cutoff = get_ph_recent_cutoff_utc_naive(days)
     transactions = (
         db.query(models.Transaction)
         .filter(models.Transaction.created_at >= cutoff)
@@ -55,7 +54,7 @@ def get_hourly_heatmap(db: Session, days: int = 30):
 
     hourly_sales = {hour: 0.0 for hour in range(24)}
     for transaction in transactions:
-        created_at = transaction.created_at or datetime.utcnow()
+        created_at = to_ph_time(transaction.created_at)
         hourly_sales[created_at.hour] += float(transaction.total or 0)
 
     return [

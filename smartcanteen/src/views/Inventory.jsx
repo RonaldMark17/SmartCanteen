@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
+import { getPhilippineDateKey } from '../utils/dateTime';
 import { PlusIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 
 export default function Inventory() {
@@ -140,7 +141,7 @@ export default function Inventory() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `SmartCanteen_Inventory_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `SmartCanteen_Inventory_Report_${getPhilippineDateKey(new Date())}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

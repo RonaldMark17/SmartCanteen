@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
 from typing import List, Optional
 import os
 
@@ -21,10 +20,12 @@ import backend.analytics_helpers as analytics_helpers
 import backend.ml_predictor as ml_predictor
 from backend.database import engine, get_db, Base
 from backend.time_utils import (
+    PH_TIMEZONE,
     build_ph_date_range_bounds,
     build_recent_ph_day_keys,
     get_ph_day_bounds_utc_naive,
     get_ph_recent_cutoff_utc_naive,
+    get_ph_today,
     normalize_client_timestamp,
     utc_naive_to_aware,
     utc_now_aware,
@@ -320,7 +321,7 @@ def list_transactions(
     # Apply Date Filtering if dates are provided
     if start_date and end_date:
         try:
-            start, end = build_transaction_query_bounds(start_date, end_date)
+            start, end = build_ph_date_range_bounds(start_date, end_date)
             query = query.filter(models.Transaction.created_at.between(start, end))
         except ValueError:
             pass # Ignore invalid date formats
@@ -389,7 +390,7 @@ def summary(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    today_start, today_end = get_ph_day_bounds_utc_naive(utc_now_aware().astimezone().date())
+    today_start, today_end = get_ph_day_bounds_utc_naive(get_ph_today())
 
     today_txns   = db.query(models.Transaction).filter(
         models.Transaction.created_at.between(today_start, today_end)).all()
@@ -421,7 +422,7 @@ def daily_sales(
 
     bucket: dict = {}
     for t in txns:
-        k = utc_naive_to_aware(t.created_at).astimezone(analytics_helpers.PH_TIMEZONE).date().isoformat()
+        k = utc_naive_to_aware(t.created_at).astimezone(PH_TIMEZONE).date().isoformat()
         bucket.setdefault(k, {"date": k, "revenue": 0.0, "transactions": 0})
         bucket[k]["revenue"]      += t.total
         bucket[k]["transactions"] += 1

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
+import { formatPhilippineDate, getPhilippineWeekday } from '../utils/dateTime';
 import {
   ArrowPathIcon,
   ArrowTrendingUpIcon,
@@ -45,12 +46,11 @@ function toNumber(value) {
 }
 
 function isSchoolDay(dateValue) {
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) {
+  const day = getPhilippineWeekday(dateValue);
+  if (day === null) {
     return true;
   }
 
-  const day = date.getDay();
   return day >= 1 && day <= 5;
 }
 
@@ -222,7 +222,7 @@ export default function Analytics() {
   const lineChartData = {
     labels: data.daily.map((item) =>
       item.date
-        ? new Date(item.date).toLocaleDateString('en-PH', {
+        ? formatPhilippineDate(item.date, {
             month: 'short',
             day: 'numeric',
           })
