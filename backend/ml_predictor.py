@@ -7,6 +7,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error, r2_score
 from sklearn.neural_network import MLPRegressor
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sqlalchemy.orm import Session
 
 try:
@@ -47,6 +49,24 @@ CATEGORY_FACTORS = {
         "event": {"intramurals": 1.18, "exams": 0.96, "halfday": 0.82, "none": 1.0},
     },
 }
+
+FORECAST_FEATURE_COLUMNS = [
+    "days_idx",
+    "day_of_week",
+    "is_weekend",
+    "day_of_week_sin",
+    "day_of_week_cos",
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_7",
+    "rolling_mean_3",
+    "rolling_mean_7",
+    "rolling_max_7",
+    "weekday_history_mean",
+    "days_since_last_sale",
+    "recent_nonzero_ratio_14",
+]
 
 
 def _empty_weekly_trend() -> List[Dict]:
@@ -111,14 +131,31 @@ def _build_model(algorithm: str):
     if algorithm == "XGBoost" and xgb is not None:
         return xgb.XGBRegressor(
             objective="reg:squarederror",
-            n_estimators=120,
+            n_estimators=180,
             max_depth=4,
-            learning_rate=0.08,
+            learning_rate=0.05,
+            subsample=0.9,
+            colsample_bytree=0.9,
             random_state=42,
         )
     if algorithm == "LSTM":
-        return MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=800, random_state=42)
-    return RandomForestRegressor(n_estimators=120, max_depth=6, random_state=42)
+        return make_pipeline(
+            StandardScaler(),
+            MLPRegressor(
+                hidden_layer_sizes=(32, 16),
+                alpha=0.001,
+                learning_rate_init=0.01,
+                early_stopping=True,
+                max_iter=1000,
+                random_state=42,
+            ),
+        )
+    return RandomForestRegressor(
+        n_estimators=200,
+        max_depth=8,
+        min_samples_leaf=2,
+        random_state=42,
+    )
 
 
 def _get_category_factor(category: str, weather: str, event: str) -> float:
@@ -132,16 +169,138 @@ def _get_overall_factor(weather: str, event: str) -> float:
     return WEATHER_FACTORS.get(weather, 1.0) * EVENT_FACTORS.get(event, 1.0)
 
 
-def _build_daily_sales(product_df: pd.DataFrame) -> pd.DataFrame:
+def _safe_mape(y_true, y_pred) -> float | None:
+    actual = np.array(y_true, dtype=float)
+    predicted = np.array(y_pred, dtype=float)
+    if actual.size == 0 or predicted.size == 0:
+        return None
+
+    denominator = np.maximum(np.abs(actual), 1.0)
+    return float(np.mean(np.abs(actual - predicted) / denominator) * 100)
+
+
+def _build_daily_sales(product_df: pd.DataFrame, series_end_date=None) -> pd.DataFrame:
     if product_df.empty:
         return pd.DataFrame(columns=["date", "quantity", "day_of_week"])
 
-    return (
+    daily = (
         product_df.groupby("date")
         .agg(quantity=("quantity", "sum"), day_of_week=("day_of_week", "first"))
         .reset_index()
         .sort_values("date")
     )
+    daily["date"] = pd.to_datetime(daily["date"])
+    start_date = daily["date"].min()
+    end_date = pd.to_datetime(series_end_date) if series_end_date is not None else daily["date"].max()
+    full_range = pd.date_range(start=start_date, end=end_date, freq="D")
+
+    daily = (
+        daily.set_index("date")
+        .reindex(full_range, fill_value=0)
+        .rename_axis("date")
+        .reset_index()
+    )
+    daily["day_of_week"] = daily["date"].dt.weekday
+    daily["quantity"] = daily["quantity"].astype(float)
+    daily["date"] = daily["date"].dt.date
+    return daily
+
+
+def _build_feature_frame(daily: pd.DataFrame) -> pd.DataFrame:
+    if len(daily) < 2:
+        return pd.DataFrame(columns=["series_index", "quantity", *FORECAST_FEATURE_COLUMNS])
+
+    frame = daily.copy().reset_index(drop=True)
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["series_index"] = frame.index
+    frame["days_idx"] = np.arange(len(frame))
+    frame["is_weekend"] = (frame["day_of_week"] >= 5).astype(int)
+    frame["day_of_week_sin"] = np.sin((2 * np.pi * frame["day_of_week"]) / 7)
+    frame["day_of_week_cos"] = np.cos((2 * np.pi * frame["day_of_week"]) / 7)
+
+    shifted_quantity = frame["quantity"].shift(1)
+    frame["lag_1"] = shifted_quantity
+    frame["lag_2"] = frame["quantity"].shift(2)
+    frame["lag_3"] = frame["quantity"].shift(3)
+    frame["lag_7"] = frame["quantity"].shift(7)
+    frame["rolling_mean_3"] = shifted_quantity.rolling(3, min_periods=1).mean()
+    frame["rolling_mean_7"] = shifted_quantity.rolling(7, min_periods=1).mean()
+    frame["rolling_max_7"] = shifted_quantity.rolling(7, min_periods=1).max()
+    frame["recent_nonzero_ratio_14"] = shifted_quantity.rolling(14, min_periods=1).apply(
+        lambda values: float(np.count_nonzero(values)) / max(len(values), 1),
+        raw=True,
+    )
+
+    frame["weekday_history_sum"] = frame.groupby("day_of_week")["quantity"].cumsum() - frame["quantity"]
+    frame["weekday_history_count"] = frame.groupby("day_of_week").cumcount()
+    frame["weekday_history_mean"] = np.where(
+        frame["weekday_history_count"] > 0,
+        frame["weekday_history_sum"] / frame["weekday_history_count"],
+        np.nan,
+    )
+
+    last_sale_index = None
+    gaps = []
+    for idx, quantity in enumerate(frame["quantity"].tolist()):
+        if last_sale_index is None:
+            gaps.append(float(idx + 1))
+        else:
+            gaps.append(float(idx - last_sale_index))
+        if quantity > 0:
+            last_sale_index = idx
+    frame["days_since_last_sale"] = pd.Series(gaps).shift(1)
+
+    frame[FORECAST_FEATURE_COLUMNS] = frame[FORECAST_FEATURE_COLUMNS].fillna(0.0)
+    return frame.iloc[1:].copy()
+
+
+def _build_future_features(daily: pd.DataFrame, tomorrow_weekday: int) -> np.ndarray:
+    history = daily.copy().reset_index(drop=True)
+    quantities = history["quantity"].astype(float).to_numpy()
+    recent_3 = quantities[-3:]
+    recent_7 = quantities[-7:]
+    weekday_history = history.loc[history["day_of_week"] == tomorrow_weekday, "quantity"].astype(float)
+
+    if len(quantities):
+        nonzero_indices = np.flatnonzero(quantities > 0)
+        days_since_last_sale = float(len(quantities) - nonzero_indices[-1]) if len(nonzero_indices) else float(len(quantities))
+        recent_nonzero_ratio_14 = float(np.count_nonzero(quantities[-14:])) / min(len(quantities), 14)
+        overall_weekday_mean = float(weekday_history.mean()) if not weekday_history.empty else float(np.mean(quantities))
+    else:
+        days_since_last_sale = 0.0
+        recent_nonzero_ratio_14 = 0.0
+        overall_weekday_mean = 0.0
+
+    feature_row = {
+        "days_idx": float(len(history)),
+        "day_of_week": float(tomorrow_weekday),
+        "is_weekend": float(int(tomorrow_weekday >= 5)),
+        "day_of_week_sin": float(np.sin((2 * np.pi * tomorrow_weekday) / 7)),
+        "day_of_week_cos": float(np.cos((2 * np.pi * tomorrow_weekday) / 7)),
+        "lag_1": float(quantities[-1]) if len(quantities) >= 1 else 0.0,
+        "lag_2": float(quantities[-2]) if len(quantities) >= 2 else 0.0,
+        "lag_3": float(quantities[-3]) if len(quantities) >= 3 else 0.0,
+        "lag_7": float(quantities[-7]) if len(quantities) >= 7 else 0.0,
+        "rolling_mean_3": float(np.mean(recent_3)) if len(recent_3) else 0.0,
+        "rolling_mean_7": float(np.mean(recent_7)) if len(recent_7) else 0.0,
+        "rolling_max_7": float(np.max(recent_7)) if len(recent_7) else 0.0,
+        "weekday_history_mean": overall_weekday_mean,
+        "days_since_last_sale": days_since_last_sale,
+        "recent_nonzero_ratio_14": recent_nonzero_ratio_14,
+    }
+    return np.array([[feature_row[column] for column in FORECAST_FEATURE_COLUMNS]], dtype=float)
+
+
+def _choose_blend_weight(history_points: int, model_mape: float | None, heuristic_mape: float | None) -> float:
+    base_weight = min(0.8, max(0.35, 0.35 + (history_points / 120)))
+
+    if model_mape is not None and heuristic_mape is not None:
+        if model_mape >= heuristic_mape * 1.15:
+            base_weight -= 0.2
+        elif model_mape <= heuristic_mape * 0.85:
+            base_weight += 0.1
+
+    return float(min(0.8, max(0.2, base_weight)))
 
 
 def _heuristic_prediction(
@@ -179,60 +338,83 @@ def _heuristic_prediction(
 
 def _ml_prediction(
     daily: pd.DataFrame,
-    product_id: int,
+    category: str,
     tomorrow_weekday: int,
     weather: str,
     event: str,
     algorithm: str,
 ) -> Dict:
-    if len(daily) < 5:
+    if len(daily) < 10:
         return {"prediction": None, "y_test": [], "y_pred": []}
 
-    model_df = daily.copy()
-    model_df["days_idx"] = range(len(model_df))
-
-    np.random.seed(product_id)
-    model_df["weather_encoded"] = np.random.choice(
-        [0, 1, 2],
-        size=len(model_df),
-        p=[0.6, 0.2, 0.2],
-    )
-    model_df["event_encoded"] = np.random.choice(
-        [0, 1, 2, 3],
-        size=len(model_df),
-        p=[0.7, 0.1, 0.1, 0.1],
-    )
-
-    X = model_df[["days_idx", "day_of_week", "weather_encoded", "event_encoded"]].values
-    y = model_df["quantity"].values
-
-    test_size = max(1, min(3, len(model_df) // 3))
-    if len(model_df) - test_size < 2:
+    model_df = _build_feature_frame(daily)
+    if len(model_df) < 8:
         return {"prediction": None, "y_test": [], "y_pred": []}
 
-    X_train, X_test = X[:-test_size], X[-test_size:]
-    y_train, y_test = y[:-test_size], y[-test_size:]
+    validation_window = min(6, max(3, len(model_df) // 5))
+    if len(model_df) - validation_window < 6:
+        return {"prediction": None, "y_test": [], "y_pred": []}
+
+    train_df = model_df.iloc[:-validation_window]
+    test_df = model_df.iloc[-validation_window:]
 
     model = _build_model(algorithm)
     try:
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-        future_features = np.array(
-            [[
-                len(model_df),
-                tomorrow_weekday,
-                {"clear": 0, "cloudy": 1, "rainy": 2}.get(weather, 0),
-                {"none": 0, "intramurals": 1, "exams": 2, "halfday": 3}.get(event, 0),
-            ]]
-        )
-        prediction = max(0, round(float(model.predict(future_features)[0])))
+        model.fit(train_df[FORECAST_FEATURE_COLUMNS].values, train_df["quantity"].values)
+        raw_predictions = model.predict(test_df[FORECAST_FEATURE_COLUMNS].values)
     except Exception:
         return {"prediction": None, "y_test": [], "y_pred": []}
+
+    y_test = [float(value) for value in test_df["quantity"].tolist()]
+    y_pred_model = [max(0.0, float(value)) for value in raw_predictions]
+    y_pred_heuristic = []
+    for _, test_row in test_df.iterrows():
+        history_cutoff = int(test_row["series_index"])
+        past_daily = daily.iloc[:history_cutoff].copy()
+        heuristic_prediction = _heuristic_prediction(
+            past_daily,
+            category,
+            int(test_row["day_of_week"]),
+            "clear",
+            "none",
+        )["prediction"]
+        y_pred_heuristic.append(float(heuristic_prediction))
+
+    if len(y_test) < 3:
+        return {"prediction": None, "y_test": [], "y_pred": []}
+
+    model_mape = _safe_mape(y_test, y_pred_model)
+    heuristic_mape = _safe_mape(y_test, y_pred_heuristic)
+
+    blend_weight = _choose_blend_weight(len(model_df), model_mape, heuristic_mape)
+    blended_validation_predictions = [
+        (model_value * blend_weight) + (heuristic_value * (1 - blend_weight))
+        for model_value, heuristic_value in zip(y_pred_model, y_pred_heuristic)
+    ]
+
+    final_model = _build_model(algorithm)
+    try:
+        final_model.fit(model_df[FORECAST_FEATURE_COLUMNS].values, model_df["quantity"].values)
+        future_raw_prediction = float(final_model.predict(_build_future_features(daily, tomorrow_weekday))[0])
+    except Exception:
+        return {"prediction": None, "y_test": [], "y_pred": []}
+
+    future_heuristic_prediction = _heuristic_prediction(
+        daily,
+        category,
+        tomorrow_weekday,
+        weather,
+        event,
+    )["prediction"]
+    prediction = max(
+        0,
+        round((future_raw_prediction * blend_weight) + (future_heuristic_prediction * (1 - blend_weight))),
+    )
 
     return {
         "prediction": prediction,
         "y_test": list(y_test),
-        "y_pred": [float(value) for value in y_pred],
+        "y_pred": [float(value) for value in blended_validation_predictions],
     }
 
 
@@ -411,7 +593,7 @@ def predict_tomorrow_sales(
     weather: str = "clear",
     event: str = "none",
 ) -> Dict:
-    df = _fetch_sales_df(db, days_back=90)
+    df = _fetch_sales_df(db, days_back=180)
     products = db.query(models.Product).filter(models.Product.is_active == True).all()
 
     if not products:
@@ -435,6 +617,7 @@ def predict_tomorrow_sales(
 
     tomorrow = get_ph_tomorrow()
     tomorrow_weekday = tomorrow.weekday()
+    series_end_date = df["date"].max() if not df.empty else None
 
     predictions = []
     global_y_test = []
@@ -443,7 +626,7 @@ def predict_tomorrow_sales(
 
     for product in products:
         product_df = df[df["product_id"] == product.id].copy()
-        daily = _build_daily_sales(product_df)
+        daily = _build_daily_sales(product_df, series_end_date=series_end_date)
 
         heuristic = _heuristic_prediction(
             daily,
@@ -455,7 +638,7 @@ def predict_tomorrow_sales(
 
         ml_result = _ml_prediction(
             daily,
-            product.id,
+            (product.category or "General").lower(),
             tomorrow_weekday,
             weather,
             event,
@@ -463,7 +646,7 @@ def predict_tomorrow_sales(
         )
 
         if ml_result["prediction"] is not None:
-            predicted_quantity = round((ml_result["prediction"] * 0.65) + (heuristic["prediction"] * 0.35))
+            predicted_quantity = ml_result["prediction"]
             prediction_source = "ml+heuristic"
             model_backed_predictions += 1
             global_y_test.extend(ml_result["y_test"])
@@ -515,13 +698,7 @@ def predict_tomorrow_sales(
 
     if global_y_test and global_y_pred:
         overall_rmse = np.sqrt(mean_squared_error(global_y_test, global_y_pred))
-        overall_mape = (
-            mean_absolute_percentage_error(
-                np.array(global_y_test) + 1e-5,
-                np.array(global_y_pred) + 1e-5,
-            )
-            * 100
-        )
+        overall_mape = _safe_mape(global_y_test, global_y_pred) or 0.0
         try:
             overall_r2 = r2_score(global_y_test, global_y_pred) if len(global_y_test) > 1 else 0.0
         except Exception:

@@ -58,19 +58,19 @@ function getPeriodTitle(period) {
   return PERIOD_OPTIONS.find((option) => option.key === period)?.label || 'Day';
 }
 
-function getPeriodDescription(period, now) {
+function getPeriodDescription(period, referenceDate) {
   if (period === 'month') {
-    return formatPhilippineDate(now, {
+    return formatPhilippineDate(referenceDate, {
       month: 'long',
       year: 'numeric',
     });
   }
 
   if (period === 'year') {
-    return String(getPhilippineDateParts(now)?.year || new Date().getFullYear());
+    return String(getPhilippineDateParts(referenceDate)?.year || new Date().getFullYear());
   }
 
-  return formatPhilippineDate(now, {
+  return formatPhilippineDate(referenceDate, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -82,18 +82,66 @@ function parseTransactionDate(transaction) {
   return parseBackendDateTime(transaction.created_at);
 }
 
-function isWithinPeriod(date, period, now) {
-  return isSamePhilippinePeriod(date, period, now);
+function isWithinPeriod(date, period, referenceDate) {
+  return isSamePhilippinePeriod(date, period, referenceDate);
 }
 
-function getPeriodTransactions(transactions, period, now) {
+function getPeriodTransactions(transactions, period, referenceDate) {
   return transactions
-    .filter((transaction) => isWithinPeriod(parseTransactionDate(transaction), period, now))
+    .filter((transaction) => isWithinPeriod(parseTransactionDate(transaction), period, referenceDate))
     .sort((left, right) => {
       const leftDate = parseTransactionDate(left)?.getTime() || 0;
       const rightDate = parseTransactionDate(right)?.getTime() || 0;
       return rightDate - leftDate;
     });
+}
+
+function buildPeriodRange(period, selectedDate, selectedMonth, selectedYear) {
+  if (period === 'year') {
+    return {
+      startDate: `${selectedYear}-01-01`,
+      endDate: `${selectedYear}-12-31`,
+    };
+  }
+
+  if (period === 'month') {
+    const [rawYear, rawMonth] = String(selectedMonth || '').split('-');
+    const year = Number(rawYear);
+    const month = Number(rawMonth);
+    const lastDay = year && month ? new Date(year, month, 0).getDate() : 31;
+    return {
+      startDate: `${selectedMonth}-01`,
+      endDate: `${selectedMonth}-${String(lastDay).padStart(2, '0')}`,
+    };
+  }
+
+  return {
+    startDate: selectedDate,
+    endDate: selectedDate,
+  };
+}
+
+function buildReferenceDate(period, selectedDate, selectedMonth, selectedYear) {
+  if (period === 'year') {
+    return new Date(`${selectedYear}-01-01T12:00:00+08:00`);
+  }
+
+  if (period === 'month') {
+    return new Date(`${selectedMonth}-01T12:00:00+08:00`);
+  }
+
+  return new Date(`${selectedDate}T12:00:00+08:00`);
+}
+
+function buildYearOptions(selectedYear) {
+  const currentYear = getPhilippineDateParts(new Date())?.year || new Date().getFullYear();
+  const years = Array.from({ length: 8 }, (_, index) => String(currentYear - index));
+
+  if (selectedYear && !years.includes(String(selectedYear))) {
+    years.push(String(selectedYear));
+  }
+
+  return years.sort((left, right) => Number(right) - Number(left));
 }
 
 function buildCategorySplit(transactions) {
@@ -281,10 +329,21 @@ function DashboardSkeleton() {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
+  const todayKey = getPhilippineDateKey(new Date());
+  const todayParts = getPhilippineDateParts(new Date());
+  const defaultMonth = `${todayParts?.year || new Date().getFullYear()}-${String(
+    todayParts?.month || new Date().getMonth() + 1
+  ).padStart(2, '0')}`;
+  const defaultYear = String(todayParts?.year || new Date().getFullYear());
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [transactionsLoading, setTransactionsLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
-  const [error, setError] = useState('');
+  const [overviewError, setOverviewError] = useState('');
+  const [transactionsError, setTransactionsError] = useState('');
   const [period, setPeriod] = useState('day');
+  const [selectedDate, setSelectedDate] = useState(todayKey);
+  const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
+  const [selectedYear, setSelectedYear] = useState(defaultYear);
   const [data, setData] = useState({
     summary: null,
     transactions: [],
@@ -295,26 +354,21 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadData() {
-      setLoading(true);
-      setError('');
+    async function loadOverview() {
+      setOverviewLoading(true);
+      setOverviewError('');
 
-      const now = new Date();
-      const philippineNow = getPhilippineDateParts(now);
-      const yearStart = `${philippineNow?.year || now.getFullYear()}-01-01`;
-      const today = getPhilippineDateKey(now);
-
-      const [summaryResult, predictionsResult, transactionsResult] = await Promise.allSettled([
+      const [summaryResult, predictionsResult] = await Promise.allSettled([
         API.getSummary(),
         API.getPredictions(),
-        API.getTransactions(yearStart, today, { limit: 2000 }),
       ]);
 
       if (cancelled) {
         return;
       }
 
-      setData({
+      setData((previous) => ({
+        ...previous,
         summary: summaryResult.status === 'fulfilled' ? summaryResult.value : null,
         predictions:
           predictionsResult.status === 'fulfilled'
@@ -324,47 +378,100 @@ export default function Dashboard() {
           predictionsResult.status === 'fulfilled'
             ? predictionsResult.value?.metrics || DEFAULT_METRICS
             : DEFAULT_METRICS,
-        transactions:
-          transactionsResult.status === 'fulfilled' && Array.isArray(transactionsResult.value)
-            ? transactionsResult.value
-            : [],
-      });
+      }));
 
       const failures = [
         summaryResult.status === 'rejected' ? summaryResult.reason?.message || 'Summary failed.' : null,
         predictionsResult.status === 'rejected'
           ? predictionsResult.reason?.message || 'Predictions failed.'
           : null,
-        transactionsResult.status === 'rejected'
-          ? transactionsResult.reason?.message || 'Transactions failed.'
-          : null,
       ].filter(Boolean);
 
       if (failures.length > 0) {
-        setError(`Some dashboard data could not be loaded: ${failures.join(' | ')}`);
+        setOverviewError(`Some dashboard data could not be loaded: ${failures.join(' | ')}`);
       }
 
-      setLoading(false);
+      setOverviewLoading(false);
     }
 
-    loadData();
+    loadOverview();
 
     return () => {
       cancelled = true;
     };
   }, [reloadKey]);
 
-  if (loading) {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTransactions() {
+      setTransactionsLoading(true);
+      setTransactionsError('');
+
+      const { startDate, endDate } = buildPeriodRange(
+        period,
+        selectedDate,
+        selectedMonth,
+        selectedYear
+      );
+
+      try {
+        const transactions = await API.getTransactions(startDate, endDate, { limit: 2000 });
+        if (cancelled) {
+          return;
+        }
+
+        setData((previous) => ({
+          ...previous,
+          transactions: Array.isArray(transactions) ? transactions : [],
+        }));
+      } catch (loadError) {
+        if (cancelled) {
+          return;
+        }
+
+        setTransactionsError(
+          loadError?.message || 'Transactions could not be loaded for the selected period.'
+        );
+        setData((previous) => ({
+          ...previous,
+          transactions: [],
+        }));
+      } finally {
+        if (!cancelled) {
+          setTransactionsLoading(false);
+        }
+      }
+    }
+
+    loadTransactions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey, period, selectedDate, selectedMonth, selectedYear]);
+
+  const now = new Date();
+  const referenceDate = buildReferenceDate(period, selectedDate, selectedMonth, selectedYear);
+  const yearOptions = buildYearOptions(selectedYear);
+  const error = [overviewError, transactionsError].filter(Boolean).join(' | ');
+  const initialLoading =
+    overviewLoading &&
+    transactionsLoading &&
+    !data.summary &&
+    data.transactions.length === 0 &&
+    data.predictions.length === 0;
+
+  if (initialLoading) {
     return <DashboardSkeleton />;
   }
 
-  const now = new Date();
   const periodTitle = getPeriodTitle(period);
   const { summary, transactions, predictions, metrics } = data;
-  const periodTransactions = getPeriodTransactions(transactions, period, now);
+  const periodTransactions = getPeriodTransactions(transactions, period, referenceDate);
   const recentTxns = mapRecentTransactions(periodTransactions);
   const categorySplit = buildCategorySplit(periodTransactions);
-  const trend = buildTrend(period, periodTransactions, now);
+  const trend = buildTrend(period, periodTransactions, referenceDate);
   const periodRevenue = periodTransactions.reduce(
     (sum, transaction) => sum + Number(transaction.total || 0),
     0
@@ -378,7 +485,7 @@ export default function Dashboard() {
       ['SmartCanteen Dashboard Summary'],
       [],
       ['Generated At', formatPhilippineDateTime(now)],
-      ['Period', `${periodTitle} - ${getPeriodDescription(period, now)}`],
+      ['Period', `${periodTitle} - ${getPeriodDescription(period, referenceDate)}`],
       [],
       ['Overview'],
       ['Revenue', formatCurrency(periodRevenue)],
@@ -409,7 +516,9 @@ export default function Dashboard() {
     const url = URL.createObjectURL(blob);
 
     link.href = url;
-    link.download = `dashboard-summary-${period}-${getPhilippineDateKey(new Date())}.csv`;
+    link.download = `dashboard-summary-${period}-${
+      period === 'day' ? selectedDate : period === 'month' ? selectedMonth : selectedYear
+    }.csv`;
     link.click();
     URL.revokeObjectURL(url);
 
@@ -448,7 +557,7 @@ export default function Dashboard() {
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <h1 className="text-2xl font-black text-slate-900">Dashboard Overview</h1>
-            <p className="text-sm text-slate-500">{getPeriodDescription(period, now)}</p>
+            <p className="text-sm text-slate-500">{getPeriodDescription(period, referenceDate)}</p>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -470,6 +579,62 @@ export default function Dashboard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              {period === 'day' && (
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm">
+                  <span>Pick day</span>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(event) => {
+                      const nextDate = event.target.value;
+                      const [year, month] = nextDate.split('-');
+                      setSelectedDate(nextDate);
+                      if (year && month) {
+                        setSelectedMonth(`${year}-${month}`);
+                        setSelectedYear(year);
+                      }
+                    }}
+                    className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
+                  />
+                </label>
+              )}
+
+              {period === 'month' && (
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm">
+                  <span>Pick month</span>
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    onChange={(event) => {
+                      const nextMonth = event.target.value;
+                      const [year] = nextMonth.split('-');
+                      setSelectedMonth(nextMonth);
+                      if (year) {
+                        setSelectedYear(year);
+                      }
+                    }}
+                    className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
+                  />
+                </label>
+              )}
+
+              {period === 'year' && (
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm">
+                  <span>Pick year</span>
+                  <select
+                    value={selectedYear}
+                    onChange={(event) => setSelectedYear(event.target.value)}
+                    className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
+                  >
+                    {yearOptions.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
               <button
                 type="button"
                 onClick={() => setReloadKey((value) => value + 1)}
@@ -492,6 +657,12 @@ export default function Dashboard() {
           <DismissibleAlert resetKey={error} tone="amber" className="mt-4 rounded-xl">
             {error}
           </DismissibleAlert>
+        )}
+
+        {transactionsLoading && !initialLoading && (
+          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+            Updating dashboard range...
+          </p>
         )}
       </div>
 
