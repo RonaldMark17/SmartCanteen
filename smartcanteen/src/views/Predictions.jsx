@@ -138,6 +138,83 @@ const ALGORITHM_REFERENCE_METRICS = {
 const DEFAULT_METRICS = ALGORITHM_REFERENCE_METRICS.XGBoost;
 const SCHOOL_WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const RECOMMENDATIONS_PER_PAGE = 6;
+const SAMPLE_ALGORITHM_METRICS = {
+  XGBoost: { accuracy: '91.4%', rmse: '4.38', mape: '8.6%', r2: '0.88' },
+  'Random Forest': { accuracy: '90.7%', rmse: '4.92', mape: '9.3%', r2: '0.84' },
+  LSTM: { accuracy: '88.9%', rmse: '5.34', mape: '11.1%', r2: '0.78' },
+};
+const SAMPLE_FORECAST_BLUEPRINTS = [
+  {
+    product_id: 'sample-1',
+    product_name: 'Chicken Tinola',
+    category: 'Soup',
+    current_stock: 14,
+    min_stock: 10,
+    base_quantity: 18,
+    historical_average: 16.5,
+    days_observed: 28,
+    unit_price: 50,
+    confidence: 'high',
+    recommendation_type: 'restock',
+    recommendation: 'Restock before lunch service because demand is projected to outpace stock.',
+  },
+  {
+    product_id: 'sample-2',
+    product_name: 'Soft Drinks (small)',
+    category: 'Drinks',
+    current_stock: 45,
+    min_stock: 20,
+    base_quantity: 32,
+    historical_average: 30.2,
+    days_observed: 32,
+    unit_price: 20,
+    confidence: 'high',
+    recommendation_type: 'healthy',
+    recommendation: 'Current stock can cover expected demand comfortably.',
+  },
+  {
+    product_id: 'sample-3',
+    product_name: 'Mango Float (slice)',
+    category: 'Dessert',
+    current_stock: 18,
+    min_stock: 5,
+    base_quantity: 8,
+    historical_average: 7.1,
+    days_observed: 18,
+    unit_price: 30,
+    confidence: 'medium',
+    recommendation_type: 'reduce_waste',
+    recommendation: 'Use the existing dessert stock first to reduce spoilage risk.',
+  },
+  {
+    product_id: 'sample-4',
+    product_name: 'Banana Cue',
+    category: 'Snacks',
+    current_stock: 10,
+    min_stock: 15,
+    base_quantity: 12,
+    historical_average: 11.4,
+    days_observed: 14,
+    unit_price: 15,
+    confidence: 'medium',
+    recommendation_type: 'restock',
+    recommendation: 'Prepare a small top-up batch before the afternoon rush.',
+  },
+  {
+    product_id: 'sample-5',
+    product_name: 'Biko (per slice)',
+    category: 'Dessert',
+    current_stock: 12,
+    min_stock: 4,
+    base_quantity: 4,
+    historical_average: 4.2,
+    days_observed: 9,
+    unit_price: 25,
+    confidence: 'low',
+    recommendation_type: 'low_demand',
+    recommendation: 'Demand looks light. Avoid over-prepping this item tomorrow.',
+  },
+];
 
 function formatCurrency(value) {
   return `PHP ${Number(value || 0).toFixed(2)}`;
@@ -145,6 +222,34 @@ function formatCurrency(value) {
 
 function formatCount(value) {
   return Number(value || 0).toLocaleString('en-PH');
+}
+
+function InlineAlert({
+  resetKey,
+  tone,
+  title,
+  icon,
+  className,
+  body,
+  helperText,
+  helperToneClassName = '',
+}) {
+  return (
+    <DismissibleAlert
+      resetKey={resetKey}
+      tone={tone}
+      title={title}
+      icon={icon}
+      className={className}
+    >
+      <>
+        {body && <div>{body}</div>}
+        {helperText && (
+          <div className={`mt-2 text-xs ${helperToneClassName}`.trim()}>{helperText}</div>
+        )}
+      </>
+    </DismissibleAlert>
+  );
 }
 
 function formatGeneratedAt(value) {
@@ -791,99 +896,33 @@ function buildCatalogOnlyForecast(catalogProducts, weather, event) {
 
 function buildSampleForecast(weather, event, algorithm) {
   const modifier = getScenarioModifier(weather, event);
+  const generatedAt = new Date().toISOString();
 
-  const predictions = [
-    {
-      product_id: 'sample-1',
-      product_name: 'Chicken Tinola',
-      category: 'Soup',
-      current_stock: 14,
-      min_stock: 10,
-      predicted_quantity: Math.round(18 * modifier),
-      historical_average: 16.5,
-      days_observed: 28,
-      estimated_revenue: Number((50 * Math.round(18 * modifier)).toFixed(2)),
-      confidence: 'high',
+  const predictions = SAMPLE_FORECAST_BLUEPRINTS.map((item) => {
+    const predictedQuantity = Math.round(item.base_quantity * modifier);
+    const stockGap = item.recommendation_type === 'restock'
+      ? Math.max(0, predictedQuantity - item.current_stock)
+      : 0;
+
+    return normalizePrediction({
+      product_id: item.product_id,
+      product_name: item.product_name,
+      category: item.category,
+      current_stock: item.current_stock,
+      min_stock: item.min_stock,
+      predicted_quantity: predictedQuantity,
+      historical_average: item.historical_average,
+      days_observed: item.days_observed,
+      estimated_revenue: Number((item.unit_price * predictedQuantity).toFixed(2)),
+      confidence: item.confidence,
       prediction_source: 'sample',
-      recommendation_type: 'restock',
-      stock_gap: Math.max(0, Math.round(18 * modifier) - 14),
-      overstock_units: 0,
-      last_sold_on: new Date().toISOString(),
-      recommendation: 'Restock before lunch service because demand is projected to outpace stock.',
-    },
-    {
-      product_id: 'sample-2',
-      product_name: 'Soft Drinks (small)',
-      category: 'Drinks',
-      current_stock: 45,
-      min_stock: 20,
-      predicted_quantity: Math.round(32 * modifier),
-      historical_average: 30.2,
-      days_observed: 32,
-      estimated_revenue: Number((20 * Math.round(32 * modifier)).toFixed(2)),
-      confidence: 'high',
-      prediction_source: 'sample',
-      recommendation_type: 'healthy',
-      stock_gap: 0,
-      overstock_units: Math.max(0, 45 - Math.round(32 * modifier)),
-      last_sold_on: new Date().toISOString(),
-      recommendation: 'Current stock can cover expected demand comfortably.',
-    },
-    {
-      product_id: 'sample-3',
-      product_name: 'Mango Float (slice)',
-      category: 'Dessert',
-      current_stock: 18,
-      min_stock: 5,
-      predicted_quantity: Math.round(8 * modifier),
-      historical_average: 7.1,
-      days_observed: 18,
-      estimated_revenue: Number((30 * Math.round(8 * modifier)).toFixed(2)),
-      confidence: 'medium',
-      prediction_source: 'sample',
-      recommendation_type: 'reduce_waste',
-      stock_gap: 0,
-      overstock_units: Math.max(0, 18 - Math.round(8 * modifier)),
-      last_sold_on: new Date().toISOString(),
-      recommendation: 'Use the existing dessert stock first to reduce spoilage risk.',
-    },
-    {
-      product_id: 'sample-4',
-      product_name: 'Banana Cue',
-      category: 'Snacks',
-      current_stock: 10,
-      min_stock: 15,
-      predicted_quantity: Math.round(12 * modifier),
-      historical_average: 11.4,
-      days_observed: 14,
-      estimated_revenue: Number((15 * Math.round(12 * modifier)).toFixed(2)),
-      confidence: 'medium',
-      prediction_source: 'sample',
-      recommendation_type: 'restock',
-      stock_gap: Math.max(0, Math.round(12 * modifier) - 10),
-      overstock_units: 0,
-      last_sold_on: new Date().toISOString(),
-      recommendation: 'Prepare a small top-up batch before the afternoon rush.',
-    },
-    {
-      product_id: 'sample-5',
-      product_name: 'Biko (per slice)',
-      category: 'Dessert',
-      current_stock: 12,
-      min_stock: 4,
-      predicted_quantity: Math.round(4 * modifier),
-      historical_average: 4.2,
-      days_observed: 9,
-      estimated_revenue: Number((25 * Math.round(4 * modifier)).toFixed(2)),
-      confidence: 'low',
-      prediction_source: 'sample',
-      recommendation_type: 'low_demand',
-      stock_gap: 0,
-      overstock_units: Math.max(0, 12 - Math.round(4 * modifier)),
-      last_sold_on: new Date().toISOString(),
-      recommendation: 'Demand looks light. Avoid over-prepping this item tomorrow.',
-    },
-  ].map(normalizePrediction);
+      recommendation_type: item.recommendation_type,
+      stock_gap: stockGap,
+      overstock_units: Math.max(0, item.current_stock - predictedQuantity - stockGap),
+      last_sold_on: generatedAt,
+      recommendation: item.recommendation,
+    });
+  });
 
   const weeklyTrend = normalizeTrend([
     { date: 'Mon', predicted_sales: 4100 * modifier },
@@ -895,18 +934,13 @@ function buildSampleForecast(weather, event, algorithm) {
   const summary = deriveSummary(predictions);
 
   return {
-    metrics: {
-      accuracy: algorithm === 'LSTM' ? '88.9%' : algorithm === 'Random Forest' ? '90.7%' : '91.4%',
-      rmse: algorithm === 'LSTM' ? '5.34' : algorithm === 'Random Forest' ? '4.92' : '4.38',
-      mape: algorithm === 'LSTM' ? '11.1%' : algorithm === 'Random Forest' ? '9.3%' : '8.6%',
-      r2: algorithm === 'LSTM' ? '0.78' : algorithm === 'Random Forest' ? '0.84' : '0.88',
-    },
+    metrics: SAMPLE_ALGORITHM_METRICS[algorithm] || SAMPLE_ALGORITHM_METRICS.XGBoost,
     predictions,
     weeklyTrend,
     summary,
     insights: deriveInsights(predictions, summary, 'sample'),
     dataSource: 'sample',
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     backendError: '',
   };
 }
@@ -1798,61 +1832,47 @@ export default function Predictions() {
       </div>
 
       {error && (
-        <DismissibleAlert
+        <InlineAlert
           resetKey={error}
           tone="red"
           title="Prediction service issue"
           icon={ExclamationTriangleIcon}
-        >
-          {error}
-        </DismissibleAlert>
+          body={error}
+        />
       )}
 
       {(notice || usingSampleData) && (
-        <DismissibleAlert
+        <InlineAlert
           resetKey={`${notice}-${usingSampleData}`}
           tone="amber"
           title={usingSampleData ? 'Sample forecast mode' : 'Forecast notice'}
           icon={CloudIcon}
-        >
-          {notice || 'Sample data is on screen. Refresh the forecast to request live data again.'}
-        </DismissibleAlert>
+          body={notice || 'Sample data is on screen. Refresh the forecast to request live data again.'}
+        />
       )}
 
       {openWeatherIssue && (
-        <DismissibleAlert
+        <InlineAlert
           resetKey={openWeatherIssue}
           tone="amber"
           title="OpenWeatherMap setup issue"
           icon={CloudIcon}
-        >
-          <>
-            <div>{openWeatherIssue}</div>
-            <div className="mt-2 text-xs text-amber-700">
-              Predictions are still running with the selected weather profile.
-            </div>
-          </>
-        </DismissibleAlert>
+          body={openWeatherIssue}
+          helperText="Predictions are still running with the selected weather profile."
+          helperToneClassName="text-amber-700"
+        />
       )}
 
       {liveWeather && (
-        <DismissibleAlert
+        <InlineAlert
           resetKey={`${liveWeather.fetchedAt}-${liveWeather.summary}`}
           tone="sky"
           title="OpenWeatherMap weather sync"
           icon={CloudIcon}
-        >
-          <>
-            <div>
-              {liveWeather.location} | {liveWeather.summary}
-            </div>
-            <div className="mt-1 text-xs text-sky-700">
-              Synced {formatWeatherFetchedAt(liveWeather.fetchedAt)} | Coordinates:{' '}
-              {liveWeather.coordinatesLabel} from {liveWeather.coordinateSource} | Forecast
-              scenario: {getWeatherProfile(liveWeather.mappedWeather).label}
-            </div>
-          </>
-        </DismissibleAlert>
+          body={`${liveWeather.location} | ${liveWeather.summary}`}
+          helperText={`Synced ${formatWeatherFetchedAt(liveWeather.fetchedAt)} | Coordinates: ${liveWeather.coordinatesLabel} from ${liveWeather.coordinateSource} | Forecast scenario: ${getWeatherProfile(liveWeather.mappedWeather).label}`}
+          helperToneClassName="text-sky-700"
+        />
       )}
 
       <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
@@ -1978,20 +1998,15 @@ export default function Predictions() {
             </div>
           </div>
         ) : weatherForecastError ? (
-          <DismissibleAlert
+          <InlineAlert
             resetKey={weatherForecastError}
             tone="amber"
             title="5-day forecast unavailable"
             className="mt-5 rounded-[24px] px-4 py-4 sm:px-5"
-          >
-            <>
-              <div className="leading-6">{weatherForecastError}</div>
-              <div className="mt-2 text-xs text-amber-700">
-                The free tier uses OpenWeatherMap&apos;s 5-day / 3-hour forecast feed instead of
-                the paid One Call daily API.
-              </div>
-            </>
-          </DismissibleAlert>
+            body={<div className="leading-6">{weatherForecastError}</div>}
+            helperText="The free tier uses OpenWeatherMap's 5-day / 3-hour forecast feed instead of the paid One Call daily API."
+            helperToneClassName="text-amber-700"
+          />
         ) : (
           <div className="mt-5 rounded-[24px] border border-dashed border-slate-200 bg-white/70 px-4 py-8 text-center sm:px-5">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
@@ -2008,14 +2023,12 @@ export default function Predictions() {
       </div>
 
       {notificationFocus && (
-        <DismissibleAlert
+        <InlineAlert
           resetKey={location.key}
           tone="sky"
           title={notificationFocus.type === 'high-demand' ? 'High demand alert opened' : 'Notification opened'}
-        >
-          {notificationFocus.name || 'Selected product'} is highlighted in Product
-          Recommendations below.
-        </DismissibleAlert>
+          body={`${notificationFocus.name || 'Selected product'} is highlighted in Product Recommendations below.`}
+        />
       )}
 
       {loading ? (

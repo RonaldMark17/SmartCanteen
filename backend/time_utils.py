@@ -1,7 +1,21 @@
 from datetime import datetime, timedelta, timezone
+import os
+import re
+import sqlite3
 from zoneinfo import ZoneInfo
 
 PH_TIMEZONE = ZoneInfo("Asia/Manila")
+FLEXIBLE_DATETIME_PATTERN = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[ T]"
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{1,3}):(?P<second>\d{1,2})"
+    r"(?P<fraction>\.\d+)?(?P<tz>Z|[+-]\d{2}:\d{2})?$"
+)
+SQLITE_DATETIME_COLUMNS = {
+    "users": ("created_at",),
+    "products": ("created_at", "updated_at"),
+    "transactions": ("created_at",),
+    "audit_logs": ("timestamp",),
+}
 
 
 def utc_now_aware():
@@ -12,12 +26,57 @@ def utc_now_naive():
     return utc_now_aware().replace(tzinfo=None)
 
 
+def parse_datetime_flexible(raw_value):
+    if raw_value in (None, ""):
+        return None
+
+    if isinstance(raw_value, datetime):
+        return raw_value
+
+    normalized_value = str(raw_value).strip()
+    if not normalized_value:
+        return None
+
+    try:
+        return datetime.fromisoformat(normalized_value.replace("Z", "+00:00"))
+    except ValueError:
+        match = FLEXIBLE_DATETIME_PATTERN.match(normalized_value)
+        if not match:
+            raise
+
+        parts = match.groupdict()
+        hour = int(parts["hour"])
+        minute = int(parts["minute"])
+        second = int(parts["second"])
+
+        if hour > 23 or minute > 59 or second > 59:
+            raise ValueError(f"Invalid time component in datetime string: {raw_value}")
+
+        fraction = parts["fraction"] or ""
+        timezone_suffix = parts["tz"] or ""
+        canonical = (
+            f'{parts["date"]} {hour:02d}:{minute:02d}:{second:02d}'
+            f"{fraction}{timezone_suffix}"
+        )
+        return datetime.fromisoformat(canonical.replace("Z", "+00:00"))
+
+
+def normalize_datetime_storage_value(raw_value):
+    parsed = parse_datetime_flexible(raw_value)
+    if not parsed:
+        return parsed
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return parsed
+
+
 def normalize_client_timestamp(raw_value):
     if not raw_value:
         return utc_now_naive()
 
-    normalized_value = str(raw_value).replace("Z", "+00:00")
-    parsed = datetime.fromisoformat(normalized_value)
+    parsed = normalize_datetime_storage_value(raw_value)
 
     if parsed.tzinfo is None:
         return parsed
@@ -85,3 +144,57 @@ def build_recent_ph_day_keys(days):
         (today - timedelta(days=offset)).isoformat()
         for offset in range(days - 1, -1, -1)
     ]
+
+
+def repair_sqlite_datetime_storage(database_url):
+    if not database_url.startswith("sqlite:///"):
+        return 0
+
+    sqlite_path = os.path.abspath(database_url.replace("sqlite:///", "", 1))
+    if not os.path.exists(sqlite_path):
+        return 0
+
+    repaired_rows = 0
+    connection = sqlite3.connect(sqlite_path)
+    cursor = connection.cursor()
+
+    try:
+        for table_name, columns in SQLITE_DATETIME_COLUMNS.items():
+            for column_name in columns:
+                try:
+                    rows = cursor.execute(
+                        f"SELECT id, {column_name} FROM {table_name} WHERE {column_name} IS NOT NULL"
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    continue
+
+                for row_id, raw_value in rows:
+                    if not raw_value:
+                        continue
+
+                    try:
+                        datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+                        continue
+                    except ValueError:
+                        pass
+
+                    try:
+                        repaired_value = normalize_datetime_storage_value(raw_value)
+                    except ValueError:
+                        continue
+
+                    if not repaired_value:
+                        continue
+
+                    cursor.execute(
+                        f"UPDATE {table_name} SET {column_name} = ? WHERE id = ?",
+                        (repaired_value.isoformat(sep=" "), row_id),
+                    )
+                    repaired_rows += 1
+
+        if repaired_rows:
+            connection.commit()
+    finally:
+        connection.close()
+
+    return repaired_rows
