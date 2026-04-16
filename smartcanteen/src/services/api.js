@@ -13,8 +13,10 @@ import {
 const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
 const OFFLINE_SESSION_STORAGE_KEY = 'sc_offline_session';
-const DEFAULT_NATIVE_API_ORIGIN = 'https://cecile-unchipped-shea.ngrok-free.dev';
-const NATIVE_API_BASE = `${DEFAULT_NATIVE_API_ORIGIN}${API_ROOT_PATH}`;
+const DEFAULT_REMOTE_API_ORIGIN = 'http://3.27.146.231';
+const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
+const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
+const NATIVE_API_BASE = DEFAULT_REMOTE_API_BASE;
 const DEFAULT_LOCAL_API_PORT = String(import.meta.env.VITE_API_PORT || '8000').trim();
 
 const envApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -61,11 +63,17 @@ function isProxyRelativeApiBase(value) {
   return !normalized || normalized === API_ROOT_PATH || normalized === `${API_ROOT_PATH}/`;
 }
 
+function isLocalWebHost() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const hostname = window.location?.hostname;
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
 function resolveLocalWebApiBase() {
-  const host =
-    envApiHost ||
-    (typeof window !== 'undefined' && window.location?.hostname) ||
-    '127.0.0.1';
+  const host = envApiHost || DEFAULT_LOCAL_API_HOST;
 
   return normalizeApiBase(`http://${host}:${DEFAULT_LOCAL_API_PORT}${API_ROOT_PATH}`);
 }
@@ -99,7 +107,11 @@ function resolveApiBase() {
     return resolveLocalWebApiBase();
   }
 
-  return normalizeApiBase(envApiBase || API_ROOT_PATH);
+  if (isLocalWebHost() && isProxyRelativeApiBase(envApiBase)) {
+    return resolveLocalWebApiBase();
+  }
+
+  return normalizeApiBase(envApiBase || DEFAULT_REMOTE_API_BASE);
 }
 
 const API_BASE = resolveApiBase();
