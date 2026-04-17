@@ -17,10 +17,16 @@ import {
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
+  BanknotesIcon,
   ChartPieIcon,
+  CheckCircleIcon,
+  ClipboardDocumentCheckIcon,
   ClockIcon,
+  CreditCardIcon,
   CurrencyDollarIcon,
+  CubeIcon,
   ExclamationTriangleIcon,
+  FireIcon,
   ShoppingCartIcon,
   SparklesIcon,
 } from '@heroicons/react/24/outline';
@@ -48,6 +54,18 @@ const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'S
 
 function formatCurrency(value) {
   return `PHP ${Number(value || 0).toFixed(2)}`;
+}
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString('en-PH');
+}
+
+function formatPercent(value, total) {
+  if (!total) {
+    return '0%';
+  }
+
+  return `${Math.round((Number(value || 0) / Number(total || 1)) * 100)}%`;
 }
 
 function escapeCsvValue(value) {
@@ -161,6 +179,156 @@ function buildCategorySplit(transactions) {
     .slice(0, 4);
 }
 
+function buildPaymentSummary(transactions) {
+  const summary = {
+    cash: { label: 'Cash', count: 0, revenue: 0 },
+    gcash: { label: 'GCash', count: 0, revenue: 0 },
+  };
+
+  transactions.forEach((transaction) => {
+    const key = transaction.payment_type === 'gcash' ? 'gcash' : 'cash';
+    summary[key].count += 1;
+    summary[key].revenue += Number(transaction.total || 0);
+  });
+
+  return Object.entries(summary).map(([key, item]) => ({
+    key,
+    ...item,
+    revenue: Number(item.revenue.toFixed(2)),
+  }));
+}
+
+function buildTopProducts(transactions) {
+  const totals = new Map();
+
+  transactions.forEach((transaction) => {
+    (transaction.items || []).forEach((item) => {
+      const product = item.product || {};
+      const id = product.id || item.product_id || product.name || 'Unknown product';
+      const quantity = Number(item.quantity || 0);
+      const revenue = quantity * Number(item.unit_price || 0);
+      const current = totals.get(id) || {
+        id,
+        name: product.name || item.product_name || `Product ${id}`,
+        category: product.category || item.category || 'Uncategorized',
+        quantity: 0,
+        revenue: 0,
+      };
+
+      current.quantity += quantity;
+      current.revenue += revenue;
+      totals.set(id, current);
+    });
+  });
+
+  return [...totals.values()]
+    .map((item) => ({ ...item, revenue: Number(item.revenue.toFixed(2)) }))
+    .sort((left, right) => right.revenue - left.revenue || right.quantity - left.quantity)
+    .slice(0, 5);
+}
+
+function getPeakTrendPoint(trend) {
+  const peak = trend.values.reduce(
+    (best, value, index) => {
+      const numericValue = Number(value || 0);
+      return numericValue > best.value
+        ? { label: trend.labels[index] || 'N/A', value: numericValue }
+        : best;
+    },
+    { label: 'N/A', value: 0 }
+  );
+
+  return peak.value > 0 ? peak : null;
+}
+
+function getPeakMetricTitle(period) {
+  if (period === 'year') return 'Best Month';
+  if (period === 'month') return 'Best Day';
+  return 'Busiest Hour';
+}
+
+function buildManagerChecklist({ summary, predictions, topProducts, periodTransactionCount }) {
+  const restockPredictions = predictions.filter(
+    (prediction) =>
+      prediction.recommendation_type === 'restock' ||
+      Number(prediction.stock_gap || 0) > 0 ||
+      String(prediction.recommendation || '').toLowerCase().includes('restock')
+  );
+  const useFirstPredictions = predictions.filter(
+    (prediction) =>
+      prediction.recommendation_type === 'reduce_waste' ||
+      Number(prediction.overstock_units || 0) > 0 ||
+      String(prediction.recommendation || '').toLowerCase().includes('waste')
+  );
+  const checklist = [];
+
+  if (Number(summary?.low_stock_count || 0) > 0) {
+    checklist.push({
+      title: 'Check low stock',
+      message: `${formatNumber(summary.low_stock_count)} product${
+        Number(summary.low_stock_count) === 1 ? '' : 's'
+      } below minimum stock.`,
+      tone: 'red',
+      route: '/inventory',
+    });
+  }
+
+  if (restockPredictions.length > 0) {
+    const topRestock = [...restockPredictions].sort(
+      (left, right) => Number(right.stock_gap || 0) - Number(left.stock_gap || 0)
+    )[0];
+
+    checklist.push({
+      title: 'Restock before service',
+      message: `${topRestock.product_name} needs attention for the next selling day.`,
+      tone: 'amber',
+      route: '/predictions',
+    });
+  }
+
+  if (useFirstPredictions.length > 0) {
+    const topUseFirst = [...useFirstPredictions].sort(
+      (left, right) => Number(right.overstock_units || 0) - Number(left.overstock_units || 0)
+    )[0];
+
+    checklist.push({
+      title: 'Use extra stock first',
+      message: `${topUseFirst.product_name} has more stock than expected demand.`,
+      tone: 'amber',
+      route: '/predictions',
+    });
+  }
+
+  if (periodTransactionCount === 0) {
+    checklist.push({
+      title: 'No sales in this period',
+      message: 'Open POS when service starts so the dashboard can track activity.',
+      tone: 'slate',
+      route: '/pos',
+    });
+  }
+
+  if (topProducts.length > 0) {
+    checklist.push({
+      title: 'Keep best seller ready',
+      message: `${topProducts[0].name} is leading with ${formatNumber(topProducts[0].quantity)} sold.`,
+      tone: 'emerald',
+      route: '/analytics',
+    });
+  }
+
+  if (checklist.length === 0) {
+    checklist.push({
+      title: 'Ready for service',
+      message: 'Sales, stock, and prediction checks look calm for now.',
+      tone: 'emerald',
+      route: '/predictions',
+    });
+  }
+
+  return checklist.slice(0, 4);
+}
+
 function mapRecentTransactions(transactions) {
   return transactions.slice(0, 5).map((transaction) => ({
     id: `TXN-${String(transaction.id).padStart(6, '0')}`,
@@ -251,6 +419,66 @@ function EmptyPanel({ message }) {
   );
 }
 
+function SnapshotCard({ title, value, detail, icon, tone = 'slate', onClick }) {
+  const IconComponent = icon;
+  const toneClasses = {
+    emerald: 'border-emerald-200 bg-emerald-50/70 text-emerald-600',
+    sky: 'border-sky-200 bg-sky-50/70 text-sky-600',
+    amber: 'border-amber-200 bg-amber-50/70 text-amber-600',
+    rose: 'border-rose-200 bg-rose-50/70 text-rose-600',
+    slate: 'border-slate-200 bg-white text-slate-600',
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group flex min-h-[120px] items-start justify-between gap-4 rounded-2xl border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+        toneClasses[tone] || toneClasses.slate
+      }`}
+    >
+      <div className="min-w-0">
+        <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+          {title}
+        </div>
+        <div className="mt-2 truncate text-2xl font-black text-slate-950">{value}</div>
+        <div className="mt-1 text-sm leading-5 text-slate-500">{detail}</div>
+      </div>
+      <div className="rounded-xl bg-white/80 p-2 shadow-sm transition group-hover:scale-105">
+        <IconComponent className="h-5 w-5" />
+      </div>
+    </button>
+  );
+}
+
+function ManagerChecklistCard({ item, onClick }) {
+  const toneClasses = {
+    red: 'border-red-200 bg-red-50/80 text-red-700',
+    amber: 'border-amber-200 bg-amber-50/80 text-amber-700',
+    emerald: 'border-emerald-200 bg-emerald-50/80 text-emerald-700',
+    slate: 'border-slate-200 bg-slate-50 text-slate-600',
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${
+        toneClasses[item.tone] || toneClasses.slate
+      }`}
+    >
+      <div className="mt-0.5 rounded-xl bg-white/80 p-2 shadow-sm">
+        <CheckCircleIcon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-black text-slate-900">{item.title}</div>
+        <div className="mt-1 text-sm leading-5 text-slate-600">{item.message}</div>
+      </div>
+      <ArrowTopRightOnSquareIcon className="mt-1 h-4 w-4 shrink-0 opacity-60" />
+    </button>
+  );
+}
+
 function DashboardSkeleton() {
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto pb-8 pr-2">
@@ -281,6 +509,20 @@ function DashboardSkeleton() {
         ))}
       </div>
 
+      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div
+            key={index}
+            className="min-h-[120px] rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <SkeletonText lines={['w-28 h-3', 'w-32 h-8', 'w-40 h-4']} className="flex-1" />
+              <Skeleton className="h-10 w-10 rounded-xl" />
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="grid h-auto min-h-[350px] shrink-0 grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
@@ -298,6 +540,22 @@ function DashboardSkeleton() {
             <Skeleton className="h-44 w-44 rounded-full" />
           </div>
         </div>
+      </div>
+
+      <div className="grid shrink-0 grid-cols-1 gap-6 xl:grid-cols-3">
+        {Array.from({ length: 3 }, (_, index) => (
+          <div key={index} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between">
+              <SkeletonText lines={['h-5 w-36', 'h-4 w-52']} />
+              <Skeleton className="h-6 w-6 rounded-lg" />
+            </div>
+            <div className="space-y-3">
+              {Array.from({ length: 3 }, (_, rowIndex) => (
+                <Skeleton key={rowIndex} className="h-16 rounded-2xl" />
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="grid shrink-0 grid-cols-1 gap-6 lg:grid-cols-2">
@@ -477,6 +735,20 @@ export default function Dashboard() {
     0
   );
   const periodTransactionCount = periodTransactions.length;
+  const averageOrderValue =
+    periodTransactionCount > 0 ? periodRevenue / periodTransactionCount : 0;
+  const paymentSummary = buildPaymentSummary(periodTransactions);
+  const paymentTotal = paymentSummary.reduce((sum, item) => sum + item.revenue, 0);
+  const topProducts = buildTopProducts(periodTransactions);
+  const topProduct = topProducts[0] || null;
+  const peakTrendPoint = getPeakTrendPoint(trend);
+  const topCategory = categorySplit[0] || null;
+  const managerChecklist = buildManagerChecklist({
+    summary,
+    predictions,
+    topProducts,
+    periodTransactionCount,
+  });
   const hasTrendData = trend.values.some((value) => value > 0);
   const hasCategoryData = categorySplit.length > 0;
 
@@ -496,12 +768,40 @@ export default function Dashboard() {
       ['Today Transactions', summary?.today_transactions || 0],
       ['Active Products', summary?.total_products || 0],
       ['All-Time Revenue', formatCurrency(summary?.total_revenue || 0)],
+      ['Average Order', formatCurrency(averageOrderValue)],
+      [getPeakMetricTitle(period), peakTrendPoint ? peakTrendPoint.label : 'N/A'],
+      ['Top Category', topCategory ? topCategory.category : 'N/A'],
+      ['Top Product', topProduct ? topProduct.name : 'N/A'],
+      [],
+      ['Payment Mix'],
+      ['Method', 'Orders', 'Revenue', 'Share'],
+      ...paymentSummary.map((entry) => [
+        entry.label,
+        entry.count,
+        formatCurrency(entry.revenue),
+        formatPercent(entry.revenue, paymentTotal),
+      ]),
       [],
       ['Sales by Category'],
       ['Category', 'Revenue'],
       ...(categorySplit.length > 0
         ? categorySplit.map((entry) => [entry.category, formatCurrency(entry.value)])
         : [['No category data available', '']]),
+      [],
+      ['Top Products'],
+      ['Product', 'Category', 'Units Sold', 'Revenue'],
+      ...(topProducts.length > 0
+        ? topProducts.map((entry) => [
+            entry.name,
+            entry.category,
+            entry.quantity,
+            formatCurrency(entry.revenue),
+          ])
+        : [['No product data available', '', '', '']]),
+      [],
+      ['Manager Checklist'],
+      ['Task', 'Details'],
+      ...managerChecklist.map((entry) => [entry.title, entry.message]),
       [],
       ['Recent Transactions'],
       ['Transaction ID', 'Date', 'Time', 'Method', 'Amount'],
@@ -709,6 +1009,59 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <SnapshotCard
+          title="Average Order"
+          value={formatCurrency(averageOrderValue)}
+          detail={
+            periodTransactionCount > 0
+              ? `${formatNumber(periodTransactionCount)} order${
+                  periodTransactionCount === 1 ? '' : 's'
+                } in this ${periodTitle.toLowerCase()}`
+              : 'No paid orders in this period'
+          }
+          icon={CurrencyDollarIcon}
+          tone="emerald"
+          onClick={() => navigate('/transactions')}
+        />
+        <SnapshotCard
+          title={getPeakMetricTitle(period)}
+          value={peakTrendPoint?.label || 'No peak yet'}
+          detail={
+            peakTrendPoint
+              ? `${formatCurrency(peakTrendPoint.value)} recorded at the highest point`
+              : 'Peak sales will appear after transactions'
+          }
+          icon={FireIcon}
+          tone="rose"
+          onClick={() => navigate('/analytics')}
+        />
+        <SnapshotCard
+          title="Top Category"
+          value={topCategory?.category || 'No category yet'}
+          detail={
+            topCategory
+              ? `${formatCurrency(topCategory.value)} from selected period`
+              : 'Category sales will appear after itemized orders'
+          }
+          icon={ChartPieIcon}
+          tone="sky"
+          onClick={() => navigate('/analytics')}
+        />
+        <SnapshotCard
+          title="Best Seller"
+          value={topProduct?.name || 'No item yet'}
+          detail={
+            topProduct
+              ? `${formatNumber(topProduct.quantity)} sold | ${formatCurrency(topProduct.revenue)}`
+              : 'Top product will appear after sales'
+          }
+          icon={CubeIcon}
+          tone="amber"
+          onClick={() => navigate('/analytics')}
+        />
+      </div>
+
       <div className="grid h-auto min-h-[350px] shrink-0 grid-cols-1 gap-6 lg:grid-cols-3">
         <div
           onClick={() => navigate('/analytics')}
@@ -778,6 +1131,134 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="grid shrink-0 grid-cols-1 gap-6 xl:grid-cols-3">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
+                Payment Mix
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">Cash and GCash activity for this period.</p>
+            </div>
+            <BanknotesIcon className="h-6 w-6 text-emerald-500" />
+          </div>
+
+          <div className="mt-5 space-y-4">
+            {paymentSummary.map((entry) => {
+              const PaymentIcon = entry.key === 'gcash' ? CreditCardIcon : BanknotesIcon;
+              const share = paymentTotal > 0 ? (entry.revenue / paymentTotal) * 100 : 0;
+
+              return (
+                <button
+                  key={entry.key}
+                  type="button"
+                  onClick={() => navigate('/transactions')}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-left transition hover:border-primary/30 hover:bg-white"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="rounded-xl bg-white p-2 text-slate-600 shadow-sm">
+                        <PaymentIcon className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-slate-900">{entry.label}</div>
+                        <div className="mt-0.5 text-xs font-semibold text-slate-500">
+                          {formatNumber(entry.count)} order{entry.count === 1 ? '' : 's'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-black text-slate-900">
+                        {formatCurrency(entry.revenue)}
+                      </div>
+                      <div className="mt-0.5 text-xs font-bold text-slate-400">
+                        {formatPercent(entry.revenue, paymentTotal)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+                    <div
+                      className={`h-full rounded-full ${
+                        entry.key === 'gcash' ? 'bg-blue-500' : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${share}%` }}
+                    />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
+                Top Products
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">Best-selling items in the selected period.</p>
+            </div>
+            <CubeIcon className="h-6 w-6 text-amber-500" />
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {topProducts.length > 0 ? (
+              topProducts.map((product, index) => (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => navigate('/analytics')}
+                  className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-white"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-sm font-black text-slate-700 shadow-sm">
+                      {index + 1}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-black text-slate-900">
+                        {product.name}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs font-semibold text-slate-500">
+                        {product.category} | {formatNumber(product.quantity)} sold
+                      </div>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right text-sm font-black text-slate-900">
+                    {formatCurrency(product.revenue)}
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                No product sales found in this period.
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
+                Manager Checklist
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">Quick tasks based on sales, stock, and forecast signals.</p>
+            </div>
+            <ClipboardDocumentCheckIcon className="h-6 w-6 text-primary" />
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {managerChecklist.map((item) => (
+              <ManagerChecklistCard
+                key={`${item.title}-${item.message}`}
+                item={item}
+                onClick={() => navigate(item.route)}
+              />
+            ))}
+          </div>
+        </section>
       </div>
 
       <div className="grid shrink-0 grid-cols-1 gap-6 lg:grid-cols-2">
