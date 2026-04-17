@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: apiTarget,
           changeOrigin: true,
+          xfwd: true,
           ws: true,
         },
       },

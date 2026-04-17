@@ -78,6 +78,14 @@ def _get_client_ip(request: Optional[Request] = None):
             and not parsed_ip.is_unspecified
         )
 
+    def is_visible_client_ip(value):
+        try:
+            parsed_ip = ipaddress.ip_address(value)
+        except ValueError:
+            return False
+
+        return not parsed_ip.is_loopback and not parsed_ip.is_unspecified
+
     direct_ip = clean_ip(request.client.host if request.client else None)
     if direct_ip and is_device_network_ip(direct_ip):
         return direct_ip
@@ -114,10 +122,14 @@ def _get_client_ip(request: Optional[Request] = None):
         if is_device_network_ip(ip_address):
             return ip_address
 
-    if direct_ip:
+    for ip_address in forwarded_ips:
+        if is_visible_client_ip(ip_address):
+            return ip_address
+
+    if direct_ip and is_visible_client_ip(direct_ip):
         return direct_ip
 
-    return forwarded_ips[0] if forwarded_ips else None
+    return forwarded_ips[0] if forwarded_ips else direct_ip
 
 
 def _add_audit_log(
