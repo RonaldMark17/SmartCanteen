@@ -6,13 +6,31 @@ import {
   ArrowDownTrayIcon,
   BanknotesIcon,
   CalendarIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   EyeIcon,
   MagnifyingGlassIcon,
   PrinterIcon,
 } from '@heroicons/react/24/outline';
 
+const TRANSACTIONS_PER_PAGE = 10;
+const MAX_PAGE_BUTTONS = 5;
+
 function formatCurrency(value) {
   return `PHP ${Number(value || 0).toFixed(2)}`;
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString('en-PH');
+}
+
+function getPageNumbers(currentPage, totalPages) {
+  const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
+  let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
+  const end = Math.min(totalPages, start + visibleCount - 1);
+  start = Math.max(1, end - visibleCount + 1);
+
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
 function createDefaultDateRange() {
@@ -40,7 +58,7 @@ function parseTransactionTimestamp(value) {
     return null;
   }
 
-  const normalizedValue = /(?:[zZ]|[+\-]\d{2}:\d{2})$/.test(rawValue)
+  const normalizedValue = /(?:[zZ]|[+-]\d{2}:\d{2})$/.test(rawValue)
     ? rawValue
     : `${rawValue}Z`;
   const date = new Date(normalizedValue);
@@ -98,6 +116,7 @@ export default function TransactionHistory() {
   const [selectedTxn, setSelectedTxn] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [dateRange, setDateRange] = useState(createDefaultDateRange);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +164,13 @@ export default function TransactionHistory() {
   });
 
   const totalRevenue = filteredTxns.reduce((sum, transaction) => sum + Number(transaction.total || 0), 0);
+  const totalPages = Math.max(1, Math.ceil(filteredTxns.length / TRANSACTIONS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = filteredTxns.length === 0 ? 0 : (safeCurrentPage - 1) * TRANSACTIONS_PER_PAGE;
+  const paginatedTxns = filteredTxns.slice(pageStartIndex, pageStartIndex + TRANSACTIONS_PER_PAGE);
+  const pageStartCount = filteredTxns.length === 0 ? 0 : pageStartIndex + 1;
+  const pageEndCount = Math.min(pageStartIndex + paginatedTxns.length, filteredTxns.length);
+  const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
 
   const exportTransactionsCsv = () => {
     if (filteredTxns.length === 0) {
@@ -215,7 +241,10 @@ export default function TransactionHistory() {
           </button>
           <button
             type="button"
-            onClick={() => setReloadKey((value) => value + 1)}
+            onClick={() => {
+              setCurrentPage(1);
+              setReloadKey((value) => value + 1);
+            }}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
           >
             Refresh
@@ -247,7 +276,10 @@ export default function TransactionHistory() {
             placeholder="Search TXN ID, payment, or product..."
             className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 outline-none focus:border-primary"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setCurrentPage(1);
+            }}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -255,7 +287,10 @@ export default function TransactionHistory() {
           <input
             type="date"
             value={dateRange.start}
-            onChange={(e) => setDateRange((current) => ({ ...current, start: e.target.value }))}
+            onChange={(e) => {
+              setDateRange((current) => ({ ...current, start: e.target.value }));
+              setCurrentPage(1);
+            }}
             className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold outline-none"
           />
         </div>
@@ -264,7 +299,10 @@ export default function TransactionHistory() {
           <input
             type="date"
             value={dateRange.end}
-            onChange={(e) => setDateRange((current) => ({ ...current, end: e.target.value }))}
+            onChange={(e) => {
+              setDateRange((current) => ({ ...current, end: e.target.value }));
+              setCurrentPage(1);
+            }}
             className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold outline-none"
           />
         </div>
@@ -302,7 +340,7 @@ export default function TransactionHistory() {
                   </td>
                 </tr>
               ) : (
-                filteredTxns.map((transaction) => (
+                paginatedTxns.map((transaction) => (
                   <tr key={transaction.id} className="transition-colors hover:bg-slate-50">
                     <td className="px-6 py-4 font-mono font-bold text-slate-900">
                       TXN-{String(transaction.id).padStart(6, '0')}
@@ -367,7 +405,7 @@ export default function TransactionHistory() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredTxns.map((transaction) => (
+              {paginatedTxns.map((transaction) => (
                 <div key={transaction.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -419,6 +457,56 @@ export default function TransactionHistory() {
             </div>
           )}
         </div>
+
+        {!loading && filteredTxns.length > 0 && (
+          <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-semibold text-slate-600">
+              Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(filteredTxns.length)} transactions
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+                  disabled={safeCurrentPage === 1}
+                  aria-label="Previous transaction page"
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                  <span className="hidden sm:inline">Previous</span>
+                </button>
+
+                {pageNumbers.map((pageNumber) => (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    onClick={() => setCurrentPage(pageNumber)}
+                    aria-current={pageNumber === safeCurrentPage ? 'page' : undefined}
+                    className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
+                      pageNumber === safeCurrentPage
+                        ? 'bg-slate-900 text-white'
+                        : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {formatCount(pageNumber)}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                  aria-label="Next transaction page"
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ChevronRightIcon className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {selectedTxn && (

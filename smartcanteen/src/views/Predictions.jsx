@@ -749,6 +749,93 @@ function getForecastLocalHour(unixSeconds, timezoneOffsetSeconds = 0) {
   return shiftedDate.getUTCHours();
 }
 
+function isForecastWeekday(dayKey) {
+  const date = new Date(`${dayKey}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  const dayOfWeek = date.getUTCDay();
+  return dayOfWeek >= 1 && dayOfWeek <= 5;
+}
+
+function addDaysToForecastDayKey(dayKey, daysToAdd = 1) {
+  const date = new Date(`${dayKey}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  date.setUTCDate(date.getUTCDate() + daysToAdd);
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getNextForecastWeekdayKey(dayKey) {
+  let nextDayKey = addDaysToForecastDayKey(dayKey, 1);
+
+  while (nextDayKey && !isForecastWeekday(nextDayKey)) {
+    nextDayKey = addDaysToForecastDayKey(nextDayKey, 1);
+  }
+
+  return nextDayKey;
+}
+
+function buildForecastDateFromDayKey(dayKey, timezoneOffsetSeconds = 0) {
+  const [year, month, day] = String(dayKey || '').split('-').map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  const localNoonUtcMs = Date.UTC(year, month - 1, day, 12, 0, 0) - Number(timezoneOffsetSeconds || 0) * 1000;
+  return new Date(localNoonUtcMs).toISOString();
+}
+
+function buildOpenWeatherDayItem(dayKey, entries, timezone, index) {
+  const representativeEntry =
+    [...entries].sort((left, right) => {
+      const leftDistance = Math.abs(getForecastLocalHour(left?.dt, timezone) - 12);
+      const rightDistance = Math.abs(getForecastLocalHour(right?.dt, timezone) - 12);
+      return leftDistance - rightDistance;
+    })[0] || entries[0];
+  const mainTemperatures = entries.map((entry) => Number(entry?.main?.temp ?? 0));
+  const minTemperatures = entries.map((entry) =>
+    Number(entry?.main?.temp_min ?? entry?.main?.temp ?? 0)
+  );
+  const maxTemperatures = entries.map((entry) =>
+    Number(entry?.main?.temp_max ?? entry?.main?.temp ?? 0)
+  );
+  const rainChance = Math.max(
+    0,
+    ...entries.map((entry) => Math.round(Number(entry?.pop ?? 0) * 100))
+  );
+
+  return {
+    id: `${dayKey}-${index}`,
+    date: representativeEntry?.dt
+      ? new Date(Number(representativeEntry.dt) * 1000).toISOString()
+      : buildForecastDateFromDayKey(dayKey, timezone),
+    description: representativeEntry?.weather?.[0]?.description || 'Weather details unavailable',
+    main: representativeEntry?.weather?.[0]?.main || 'Weather',
+    minTemp: Math.min(...minTemperatures, ...mainTemperatures),
+    maxTemp: Math.max(...maxTemperatures, ...mainTemperatures),
+    rainChance,
+  };
+}
+
+function buildEstimatedForecastDayItem(dayKey, sourceItem, timezone, index) {
+  return {
+    id: `${dayKey}-${index}`,
+    date: buildForecastDateFromDayKey(dayKey, timezone),
+    description: sourceItem?.description || 'Weather details unavailable',
+    main: sourceItem?.main || 'Weather',
+    minTemp: Number(sourceItem?.minTemp ?? 0),
+    maxTemp: Number(sourceItem?.maxTemp ?? 0),
+    rainChance: Number(sourceItem?.rainChance ?? 0),
+  };
+}
+
 function normalizeOpenWeatherDailyForecast(payload) {
   const timezone = Number(payload?.city?.timezone ?? 28800);
   if (!Array.isArray(payload?.list)) {
@@ -764,41 +851,42 @@ function normalizeOpenWeatherDailyForecast(payload) {
     groupedDays.get(dayKey).push(entry);
   });
 
+  const groupedDayEntries = Array.from(groupedDays.entries()).sort(([leftKey], [rightKey]) =>
+    leftKey.localeCompare(rightKey)
+  );
+  const weekdayItems = groupedDayEntries
+    .filter(([dayKey]) => isForecastWeekday(dayKey))
+    .map(([dayKey, entries], index) => buildOpenWeatherDayItem(dayKey, entries, timezone, index));
+  const items = weekdayItems.slice(0, 5);
+
+  if (items.length === 0 && groupedDayEntries.length === 0) {
+    return { timezone, items };
+  }
+
+  const fallbackSource =
+    items.at(-1) ||
+    (groupedDayEntries[0]
+      ? buildOpenWeatherDayItem(groupedDayEntries[0][0], groupedDayEntries[0][1], timezone, 0)
+      : null);
+  let nextDayKey = items.at(-1)?.id?.split('-').slice(0, 3).join('-') || groupedDayEntries[0]?.[0] || '';
+
+  while (items.length < 5 && nextDayKey) {
+    nextDayKey = getNextForecastWeekdayKey(nextDayKey);
+    if (!nextDayKey) {
+      break;
+    }
+
+    const existingEntries = groupedDays.get(nextDayKey);
+    const nextItem = existingEntries
+      ? buildOpenWeatherDayItem(nextDayKey, existingEntries, timezone, items.length)
+      : buildEstimatedForecastDayItem(nextDayKey, fallbackSource, timezone, items.length);
+
+    items.push(nextItem);
+  }
+
   return {
     timezone,
-    items: Array.from(groupedDays.entries())
-      .slice(0, 5)
-      .map(([dayKey, entries], index) => {
-        const representativeEntry =
-          [...entries].sort((left, right) => {
-            const leftDistance = Math.abs(getForecastLocalHour(left?.dt, timezone) - 12);
-            const rightDistance = Math.abs(getForecastLocalHour(right?.dt, timezone) - 12);
-            return leftDistance - rightDistance;
-          })[0] || entries[0];
-        const mainTemperatures = entries.map((entry) => Number(entry?.main?.temp ?? 0));
-        const minTemperatures = entries.map((entry) =>
-          Number(entry?.main?.temp_min ?? entry?.main?.temp ?? 0)
-        );
-        const maxTemperatures = entries.map((entry) =>
-          Number(entry?.main?.temp_max ?? entry?.main?.temp ?? 0)
-        );
-        const rainChance = Math.max(
-          0,
-          ...entries.map((entry) => Math.round(Number(entry?.pop ?? 0) * 100))
-        );
-
-        return {
-          id: `${dayKey}-${index}`,
-          date: representativeEntry?.dt
-            ? new Date(Number(representativeEntry.dt) * 1000).toISOString()
-            : null,
-          description: representativeEntry?.weather?.[0]?.description || 'Weather details unavailable',
-          main: representativeEntry?.weather?.[0]?.main || 'Weather',
-          minTemp: Math.min(...minTemperatures, ...mainTemperatures),
-          maxTemp: Math.max(...maxTemperatures, ...mainTemperatures),
-          rainChance,
-        };
-      }),
+    items,
   };
 }
 
@@ -1782,12 +1870,12 @@ export default function Predictions() {
             </div>
             <h2 className="mt-3 text-lg font-black text-slate-900">5-Day Weather Forecast</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Use this to adjust drinks, warm meals, and prep volume for the week.
+              Weekday outlook for adjusting drinks, warm meals, and prep volume for school days.
             </p>
           </div>
           <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-black text-slate-600">
             {weeklyWeatherForecast.length > 0
-              ? `${weeklyWeatherForecast.length} days loaded`
+              ? `${weeklyWeatherForecast.length} weekdays loaded`
               : OPENWEATHER_API_KEY
                 ? 'Use Current Weather'
                 : 'Weather sync unavailable'}
@@ -1839,7 +1927,7 @@ export default function Predictions() {
         ) : (
           <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm font-semibold text-slate-500">
             {OPENWEATHER_API_KEY
-              ? 'Click Use Current Weather to load the 5-day forecast.'
+              ? 'Click Use Current Weather to load the weekday forecast.'
               : 'Add an OpenWeatherMap API key to show the 5-day forecast.'}
           </div>
         )}

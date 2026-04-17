@@ -5,7 +5,7 @@ Run:  uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ─────────────────────────────────────────────────
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Query, Response
+from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Request, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -37,6 +37,103 @@ class TransactionValidationError(Exception):
     def __init__(self, message: str, status_code: int = 400):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _get_client_ip(request: Optional[Request] = None):
+    if not request:
+        return None
+
+    def clean_ip(value):
+        candidate = str(value or "").strip().strip('"')
+        if not candidate or candidate.lower() in {"unknown", "none", "null"}:
+            return None
+
+        if candidate.startswith("[") and "]" in candidate:
+            return candidate[1:candidate.index("]")]
+
+        if candidate.count(":") == 1 and "." in candidate:
+            candidate = candidate.split(":", 1)[0]
+
+        return candidate or None
+
+    for header_name in (
+        "cf-connecting-ip",
+        "true-client-ip",
+        "x-client-ip",
+        "x-forwarded-for",
+        "x-real-ip",
+    ):
+        header_value = request.headers.get(header_name)
+        if not header_value:
+            continue
+
+        for candidate in str(header_value).split(","):
+            ip_address = clean_ip(candidate)
+            if ip_address:
+                return ip_address
+
+    forwarded = request.headers.get("forwarded")
+    if forwarded:
+        for forwarded_entry in forwarded.split(","):
+            for part in forwarded_entry.split(";"):
+                key, _, value = part.strip().partition("=")
+                if key.lower() == "for":
+                    ip_address = clean_ip(value)
+                    if ip_address:
+                        return ip_address
+
+    return clean_ip(request.client.host if request.client else None)
+
+
+def _add_audit_log(
+    db: Session,
+    *,
+    action: str,
+    details: Optional[str] = None,
+    user_id: Optional[int] = None,
+    request: Optional[Request] = None,
+):
+    db.add(models.AuditLog(
+        user_id=user_id,
+        action=action,
+        details=details,
+        ip_address=_get_client_ip(request),
+    ))
+
+
+class RealtimeConnectionManager:
+    def __init__(self):
+        self._connections = set()
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self._connections.add(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self._connections.discard(websocket)
+
+    async def broadcast(self, message: dict):
+        for websocket in list(self._connections):
+            try:
+                await websocket.send_json(message)
+            except Exception:
+                self.disconnect(websocket)
+
+
+realtime_connections = RealtimeConnectionManager()
+
+
+async def _broadcast_realtime_event(event_type: str, payload: Optional[dict] = None):
+    await realtime_connections.broadcast({
+        "type": event_type,
+        "payload": payload or {},
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    })
+
+
+def _queue_stock_alert_refresh(background_tasks: BackgroundTasks, reason: str, **_payload):
+    details = {"reason": reason}
+    background_tasks.add_task(_broadcast_realtime_event, "alerts.changed", details)
 
 
 def _normalize_transaction_items(items) -> List[dict]:
@@ -113,6 +210,9 @@ def _persist_transaction(
             )
 
         product.stock -= item["quantity"]
+        if product.stock <= 0:
+            product.stock = 0
+            product.is_active = False
         db.add(models.TransactionItem(
             transaction_id=txn.id,
             product_id=item["product_id"],
@@ -230,6 +330,22 @@ def favicon():
     return Response(status_code=204)
 
 
+@app.websocket("/api/realtime/alerts")
+async def realtime_alerts(websocket: WebSocket):
+    await realtime_connections.connect(websocket)
+    try:
+        await websocket.send_json({
+            "type": "connected",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        })
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        realtime_connections.disconnect(websocket)
+    except Exception:
+        realtime_connections.disconnect(websocket)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # AUTH
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -240,20 +356,24 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
     user = db.query(models.User).filter(models.User.username == payload.username).first()
 
     if not user or not auth.verify_password(payload.password, user.password_hash):
-        db.add(models.AuditLog(
+        _add_audit_log(
+            db,
             action="LOGIN_FAILED",
             details=f"Username: {payload.username}",
-            ip_address=req.client.host,
-        ))
+            request=req,
+        )
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     token = auth.create_access_token({"sub": user.username})
 
-    db.add(models.AuditLog(
-        user_id=user.id, action="LOGIN",
-        details="Successful login", ip_address=req.client.host,
-    ))
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="LOGIN",
+        details="Successful login",
+        request=req,
+    )
     db.commit()
 
     return {
@@ -270,6 +390,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
 @app.post("/api/auth/register", tags=["Auth"])
 def register(
     data: schemas.UserCreate,
+    req: Request,
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
@@ -286,10 +407,12 @@ def register(
     db.commit()
     db.refresh(user)
 
-    db.add(models.AuditLog(
+    _add_audit_log(
+        db,
         user_id=current.id, action="USER_CREATED",
         details=f"Created user: {data.username} (role={data.role})",
-    ))
+        request=req,
+    )
     db.commit()
     return {"message": "User created", "id": user.id}
 
@@ -320,16 +443,31 @@ def list_products(
 @app.post("/api/products", response_model=schemas.ProductResponse, tags=["Products"])
 def create_product(
     data: schemas.ProductCreate,
+    req: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
     product = models.Product(**data.model_dump())
+    product.is_active = product.stock > 0
     db.add(product)
     db.commit()
     db.refresh(product)
-    db.add(models.AuditLog(user_id=current.id, action="PRODUCT_CREATED",
-                           details=f"Product: {data.name}"))
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PRODUCT_CREATED",
+        details=f"Product: {data.name}",
+        request=req,
+    )
     db.commit()
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "product-created",
+        product_id=product.id,
+        stock=product.stock,
+        is_active=product.is_active,
+    )
     return product
 
 
@@ -337,6 +475,8 @@ def create_product(
 def update_product(
     pid: int,
     data: schemas.ProductUpdate,
+    req: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
@@ -346,19 +486,34 @@ def update_product(
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(product, field, value)
+    product.is_active = product.stock > 0
     product.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(product)
 
-    db.add(models.AuditLog(user_id=current.id, action="PRODUCT_UPDATED",
-                           details=f"Product ID: {pid}"))
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PRODUCT_UPDATED",
+        details=f"Product ID: {pid}",
+        request=req,
+    )
     db.commit()
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "product-updated",
+        product_id=product.id,
+        stock=product.stock,
+        is_active=product.is_active,
+    )
     return product
 
 
 @app.delete("/api/products/{pid}", tags=["Products"])
 def delete_product(
     pid: int,
+    req: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
@@ -367,9 +522,20 @@ def delete_product(
         raise HTTPException(status_code=404, detail="Product not found")
     product.is_active = False
     db.commit()
-    db.add(models.AuditLog(user_id=current.id, action="PRODUCT_DELETED",
-                           details=f"Deactivated product ID: {pid}"))
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PRODUCT_DELETED",
+        details=f"Deactivated product ID: {pid}",
+        request=req,
+    )
     db.commit()
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "product-deleted",
+        product_id=pid,
+        is_active=False,
+    )
     return {"message": "Product deactivated"}
 
 
@@ -393,6 +559,8 @@ def low_stock(
 @app.post("/api/transactions", response_model=schemas.TransactionResponse, tags=["Transactions"])
 def create_transaction(
     data: schemas.TransactionCreate,
+    req: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.get_current_user),
 ):
@@ -406,7 +574,24 @@ def create_transaction(
             notes=data.notes,
             synced=True,
         )
+        _add_audit_log(
+            db,
+            user_id=current.id,
+            action="TRANSACTION_CREATED",
+            details=(
+                f"Transaction ID: {txn.id}; "
+                f"{len(data.items)} item(s); "
+                f"Total: PHP {txn.total:.2f}; "
+                f"Payment: {txn.payment_type}"
+            ),
+            request=req,
+        )
         db.commit()
+        _queue_stock_alert_refresh(
+            background_tasks,
+            "transaction-created",
+            transaction_id=txn.id,
+        )
     except TransactionValidationError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -446,6 +631,8 @@ def list_transactions(
 @app.post("/api/transactions/sync", tags=["Transactions"])
 def sync_offline(
     payload: schemas.OfflineSyncRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.get_current_user),
 ):
@@ -456,7 +643,7 @@ def sync_offline(
         local_id = t_data.get("local_id")
         try:
             with db.begin_nested():
-                _persist_transaction(
+                txn = _persist_transaction(
                     db,
                     user_id=current.id,
                     items=t_data.get("items", []),
@@ -466,6 +653,18 @@ def sync_offline(
                     created_at=normalize_client_timestamp(t_data.get("created_at")),
                     synced=True,
                 )
+                _add_audit_log(
+                    db,
+                    user_id=current.id,
+                    action="OFFLINE_TRANSACTION_SYNCED",
+                    details=(
+                        f"Transaction ID: {txn.id}; "
+                        f"Local ID: {local_id or 'N/A'}; "
+                        f"{len(t_data.get('items', []))} item(s); "
+                        f"Total: PHP {txn.total:.2f}"
+                    ),
+                    request=req,
+                )
             synced += 1
             synced_local_ids.append(local_id)
         except TransactionValidationError as exc:
@@ -474,6 +673,12 @@ def sync_offline(
             errors.append({"local_id": local_id, "message": f"Unexpected sync failure: {exc}"})
 
     db.commit()
+    if synced > 0:
+        _queue_stock_alert_refresh(
+            background_tasks,
+            "offline-transactions-synced",
+            synced=synced,
+        )
     return {
         "synced": synced,
         "synced_local_ids": synced_local_ids,

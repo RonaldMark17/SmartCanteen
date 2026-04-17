@@ -153,6 +153,20 @@ function resolveFallbackApiBase(primaryBase) {
 const API_BASE = resolveApiBase();
 const API_FALLBACK_BASE = resolveFallbackApiBase(API_BASE);
 
+export function getRealtimeAlertsUrl() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const apiBaseUrl = new URL(API_BASE || API_ROOT_PATH, window.location.origin);
+  apiBaseUrl.protocol = apiBaseUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  apiBaseUrl.pathname = `${trimTrailingSlash(apiBaseUrl.pathname)}/realtime/alerts`;
+  apiBaseUrl.search = '';
+  apiBaseUrl.hash = '';
+
+  return apiBaseUrl.toString();
+}
+
 export class OfflineError extends Error {
   constructor(message = 'You are offline.') {
     super(message);

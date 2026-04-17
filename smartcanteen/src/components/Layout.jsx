@@ -36,6 +36,7 @@ import {
   sendLowStockDeviceAlert,
 } from '../services/deviceAlerts';
 import { OFFLINE_QUEUE_EVENT, countOfflineTransactions } from '../services/offlineStore';
+import { ALERT_REFRESH_EVENT, connectRealtimeAlertStream } from '../services/realtimeAlerts';
 import { getAllowedRolesForPath, getDefaultRoute } from '../config/access';
 
 const LOW_STOCK_SIGNATURE_KEY = 'sc_low_stock_signature';
@@ -45,7 +46,7 @@ const DISMISSED_HIGH_DEMAND_ALERTS_KEY = 'sc_dismissed_high_demand_alerts';
 const READ_LOW_STOCK_ALERTS_KEY = 'sc_read_low_stock_alerts';
 const READ_HIGH_DEMAND_ALERTS_KEY = 'sc_read_high_demand_alerts';
 const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
-const LOW_STOCK_POLL_MS = 60000;
+const LOW_STOCK_POLL_MS = 10000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
 
 function getStoredUser() {
@@ -448,6 +449,7 @@ export default function Layout({ children, onLogout }) {
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [navSearch, _setNavSearch] = useState('');
   const alertsRequestInFlightRef = useRef(false);
+  const queuedAlertRefreshRef = useRef(null);
 
   const user = getStoredUser();
 
@@ -597,6 +599,9 @@ export default function Layout({ children, onLogout }) {
 
   async function loadAlertData({ notifyOnChange = true } = {}) {
     if (alertsRequestInFlightRef.current) {
+      queuedAlertRefreshRef.current = {
+        notifyOnChange: Boolean(queuedAlertRefreshRef.current?.notifyOnChange || notifyOnChange),
+      };
       return;
     }
 
@@ -605,8 +610,8 @@ export default function Layout({ children, onLogout }) {
 
     try {
       const [lowStockResult, highDemandResult] = await Promise.all([
-      loadLowStockAlerts({ notifyOnChange }),
-      loadHighDemandAlerts({ notifyOnChange }),
+        loadLowStockAlerts({ notifyOnChange }),
+        loadHighDemandAlerts({ notifyOnChange }),
       ]);
       const totalVisibleAlerts =
         lowStockResult.visibleItems.length + highDemandResult.visibleItems.length;
@@ -626,6 +631,12 @@ export default function Layout({ children, onLogout }) {
     } finally {
       alertsRequestInFlightRef.current = false;
       setAlertsLoading(false);
+
+      const queuedRefresh = queuedAlertRefreshRef.current;
+      queuedAlertRefreshRef.current = null;
+      if (queuedRefresh && navigator.onLine) {
+        window.setTimeout(() => loadAlertData(queuedRefresh), 0);
+      }
     }
   }
 
@@ -645,6 +656,9 @@ export default function Layout({ children, onLogout }) {
       }
 
       await API.primeOfflineData({ role: user.role });
+      if (syncResult.synced > 0) {
+        await loadAlertData({ notifyOnChange: true });
+      }
     } catch {
       setPendingSyncCount(countOfflineTransactions());
     }
@@ -825,9 +839,18 @@ export default function Layout({ children, onLogout }) {
       setPendingSyncCount(event.detail?.count ?? countOfflineTransactions());
     };
 
+    const handleAlertRefreshRequest = () => {
+      if (navigator.onLine) {
+        loadAlertData({ notifyOnChange: true });
+      }
+    };
+
+    const disconnectRealtimeAlerts = connectRealtimeAlertStream(handleAlertRefreshRequest);
+
     window.addEventListener('online', handleStatus);
     window.addEventListener('offline', handleStatus);
     window.addEventListener(OFFLINE_QUEUE_EVENT, handleOfflineQueueChange);
+    window.addEventListener(ALERT_REFRESH_EVENT, handleAlertRefreshRequest);
 
     const intervalId = window.setInterval(() => {
       if (navigator.onLine) {
@@ -841,6 +864,8 @@ export default function Layout({ children, onLogout }) {
       window.removeEventListener('online', handleStatus);
       window.removeEventListener('offline', handleStatus);
       window.removeEventListener(OFFLINE_QUEUE_EVENT, handleOfflineQueueChange);
+      window.removeEventListener(ALERT_REFRESH_EVENT, handleAlertRefreshRequest);
+      disconnectRealtimeAlerts();
     };
   }, []);
 

@@ -4,13 +4,36 @@ import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import { getPhilippineDateKey } from '../utils/dateTime';
-import { PlusIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import { requestAlertRefresh } from '../services/realtimeAlerts';
+import {
+  ArrowDownTrayIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PlusIcon,
+} from '@heroicons/react/24/outline';
+
+const INVENTORY_ITEMS_PER_PAGE = 10;
+const MAX_PAGE_BUTTONS = 5;
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString('en-PH');
+}
+
+function getInventoryPageNumbers(currentPage, totalPages) {
+  const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
+  let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
+  const end = Math.min(totalPages, start + visibleCount - 1);
+  start = Math.max(1, end - visibleCount + 1);
+
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
 
 export default function Inventory() {
   const location = useLocation();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notificationFocus, setNotificationFocus] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -19,7 +42,7 @@ export default function Inventory() {
 
   const user = JSON.parse(localStorage.getItem('sc_user') || '{}');
   const isAdmin = user?.role === 'admin';
-  const tableColumnCount = isAdmin ? 6 : 5;
+  const tableColumnCount = isAdmin ? 7 : 6;
 
   function initialFormState() {
     return { id: null, name: "", category: "Staple", price: "", stock: 0, min_stock: 5, barcode: "" };
@@ -28,12 +51,12 @@ export default function Inventory() {
   const fetchProducts = async () => {
     setLoading(true);
     try {
-      const data = await API.getProducts();
+      const data = await API.getProducts(false);
       
       // Sorting logic: Low stock items come first, then alphabetical by name
       const sortedData = data.sort((a, b) => {
-        const aIsLow = a.stock <= a.min_stock;
-        const bIsLow = b.stock <= b.min_stock;
+        const aIsLow = !isProductActive(a) || a.stock <= a.min_stock;
+        const bIsLow = !isProductActive(b) || b.stock <= b.min_stock;
 
         if (aIsLow && !bIsLow) return -1; // a comes first
         if (!aIsLow && bIsLow) return 1;  // b comes first
@@ -85,6 +108,7 @@ export default function Inventory() {
     if (!window.confirm("Are you sure you want to deactivate this product?")) return;
     try {
       await API.deleteProduct(id);
+      requestAlertRefresh({ source: 'inventory', reason: 'product-deleted' });
       fetchProducts();
     } catch (err) {
       console.error(err);
@@ -96,21 +120,27 @@ export default function Inventory() {
     e.preventDefault();
     setFormError("");
     try {
+      const parsedStock = parseInt(formData.stock);
       const payload = {
         name: formData.name,
         category: formData.category,
         price: parseFloat(formData.price),
-        stock: parseInt(formData.stock),
+        stock: parsedStock,
         min_stock: parseInt(formData.min_stock),
         barcode: formData.barcode || null
       };
 
       if (formData.id) {
+        payload.is_active = parsedStock > 0;
         await API.updateProduct(formData.id, payload);
       } else {
         await API.createProduct(payload);
       }
       setIsModalOpen(false);
+      requestAlertRefresh({
+        source: 'inventory',
+        reason: formData.id ? 'product-updated' : 'product-created',
+      });
       fetchProducts();
       window.showToast("Product saved successfully!", "success");
     } catch (err) {
@@ -131,7 +161,7 @@ export default function Inventory() {
         p.price.toFixed(2),
         p.stock,
         p.min_stock,
-        p.is_active ? "Active" : "Inactive"
+        isProductActive(p) ? "Active" : "Inactive"
       ];
       csvRows.push(row.join(","));
     });
@@ -159,6 +189,10 @@ export default function Inventory() {
     return product.name.toLowerCase() === notificationFocus.name.toLowerCase();
   };
 
+  function isProductActive(product) {
+    return product?.is_active !== false && Number(product?.stock || 0) > 0;
+  }
+
   const displayedProducts = notificationFocus
     ? [...products].sort((left, right) => {
         const leftMatch = isNotificationFocusMatch(left);
@@ -169,6 +203,27 @@ export default function Inventory() {
         return 0;
       })
     : products;
+
+  const totalPages = Math.max(1, Math.ceil(displayedProducts.length / INVENTORY_ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = displayedProducts.length === 0 ? 0 : (safeCurrentPage - 1) * INVENTORY_ITEMS_PER_PAGE;
+  const paginatedProducts = displayedProducts.slice(
+    pageStartIndex,
+    pageStartIndex + INVENTORY_ITEMS_PER_PAGE
+  );
+  const pageStartCount = displayedProducts.length === 0 ? 0 : pageStartIndex + 1;
+  const pageEndCount = Math.min(pageStartIndex + paginatedProducts.length, displayedProducts.length);
+  const pageNumbers = getInventoryPageNumbers(safeCurrentPage, totalPages);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [notificationFocus?.id, notificationFocus?.name]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col gap-6">
@@ -216,6 +271,7 @@ export default function Inventory() {
                 <th className="px-6 py-4">Category</th>
                 <th className="px-6 py-4">Price</th>
                 <th className="px-6 py-4">Stock</th>
+                <th className="px-6 py-4">Status</th>
                 {isAdmin && <th className="px-6 py-4 text-right">Actions</th>}
               </tr>
             </thead>
@@ -228,6 +284,7 @@ export default function Inventory() {
                     <td className="px-6 py-4"><Skeleton className="h-7 w-24 rounded-full" /></td>
                     <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
                     <td className="px-6 py-4"><Skeleton className="h-7 w-24 rounded-full" /></td>
+                    <td className="px-6 py-4"><Skeleton className="h-7 w-20 rounded-full" /></td>
                     {isAdmin && (
                       <td className="px-6 py-4 text-right">
                         <div className="flex justify-end gap-2">
@@ -238,13 +295,14 @@ export default function Inventory() {
                     )}
                   </tr>
                 ))
-              ) : products.length === 0 ? (
+              ) : displayedProducts.length === 0 ? (
                 <tr><td colSpan={tableColumnCount} className="text-center py-10">No products found.</td></tr>
-              ) : displayedProducts.map(p => {
+              ) : paginatedProducts.map(p => {
                 const isHighlighted = isNotificationFocusMatch(p);
+                const isActive = isProductActive(p);
 
                 return (
-                <tr key={p.id} className={`transition-colors ${isHighlighted ? 'bg-sky-50 ring-2 ring-inset ring-sky-200' : 'hover:bg-slate-50'} ${p.stock <= p.min_stock && !isHighlighted ? 'bg-red-50/50' : ''}`}>
+                <tr key={p.id} className={`transition-colors ${isHighlighted ? 'bg-sky-50 ring-2 ring-inset ring-sky-200' : 'hover:bg-slate-50'} ${!isActive && !isHighlighted ? 'bg-slate-50 opacity-80' : p.stock <= p.min_stock && !isHighlighted ? 'bg-red-50/50' : ''}`}>
                   <td className="px-6 py-4">{p.id}</td>
                   <td className="px-6 py-4 font-semibold text-slate-900">
                     <div className="flex flex-wrap items-center gap-2">
@@ -261,6 +319,12 @@ export default function Inventory() {
                   <td className="px-6 py-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${p.stock <= p.min_stock ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-emerald-100 text-emerald-700'}`}>
                       {p.stock} {p.stock <= p.min_stock && ' (LOW)'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold ${isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                      <span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                      {isActive ? 'Active' : 'Inactive'}
                     </span>
                   </td>
                   {isAdmin && (
@@ -293,14 +357,15 @@ export default function Inventory() {
                 </div>
               ))}
             </div>
-          ) : products.length === 0 ? (
+          ) : displayedProducts.length === 0 ? (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
               No products found.
             </div>
           ) : (
             <div className="space-y-3">
-              {displayedProducts.map((p) => {
+              {paginatedProducts.map((p) => {
                 const isHighlighted = isNotificationFocusMatch(p);
+                const isActive = isProductActive(p);
 
                 return (
                 <div
@@ -308,7 +373,9 @@ export default function Inventory() {
                   className={`rounded-2xl border p-4 shadow-sm ${
                     isHighlighted
                       ? 'border-sky-300 bg-sky-50/70 ring-2 ring-sky-100'
-                      : p.stock <= p.min_stock
+                      : !isActive
+                        ? 'border-slate-200 bg-slate-50/90 opacity-90'
+                        : p.stock <= p.min_stock
                         ? 'border-red-200 bg-red-50/60'
                         : 'border-slate-200 bg-white'
                   }`}
@@ -354,8 +421,8 @@ export default function Inventory() {
                       {p.stock <= p.min_stock ? 'Low stock' : 'Healthy stock'}
                     </span>
                     <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-600">
-                      <span className={`h-2 w-2 rounded-full ${p.is_active ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                      {p.is_active ? 'Active' : 'Inactive'}
+                      <span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                      {isActive ? 'Active' : 'Inactive'}
                     </span>
                   </div>
 
@@ -380,6 +447,56 @@ export default function Inventory() {
             </div>
           )}
         </div>
+
+        {!loading && displayedProducts.length > 0 && (
+          <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-semibold text-slate-600">
+              Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(displayedProducts.length)} products
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  disabled={safeCurrentPage === 1}
+                  aria-label="Previous inventory page"
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                  <span className="hidden sm:inline">Previous</span>
+                </button>
+
+                {pageNumbers.map((pageNumber) => (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    onClick={() => setCurrentPage(pageNumber)}
+                    aria-current={pageNumber === safeCurrentPage ? 'page' : undefined}
+                    className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
+                      pageNumber === safeCurrentPage
+                        ? 'bg-slate-900 text-white'
+                        : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {formatCount(pageNumber)}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                  aria-label="Next inventory page"
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ChevronRightIcon className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Modal Overlay */}

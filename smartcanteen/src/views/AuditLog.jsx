@@ -1,9 +1,30 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { API } from '../services/api';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
-import { ShieldCheckIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowPathIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ShieldCheckIcon,
+} from '@heroicons/react/24/outline';
 
 const PH_TIMEZONE = 'Asia/Manila';
+const AUDIT_REFRESH_INTERVAL_MS = 15000;
+const AUDIT_LOGS_PER_PAGE = 10;
+const MAX_PAGE_BUTTONS = 5;
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString('en-PH');
+}
+
+function getPageNumbers(currentPage, totalPages) {
+  const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
+  let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
+  const end = Math.min(totalPages, start + visibleCount - 1);
+  start = Math.max(1, end - visibleCount + 1);
+
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
 
 function parseAuditTimestamp(value) {
   if (!value) {
@@ -19,7 +40,7 @@ function parseAuditTimestamp(value) {
     return null;
   }
 
-  const normalizedValue = /(?:[zZ]|[+\-]\d{2}:\d{2})$/.test(rawValue)
+  const normalizedValue = /(?:[zZ]|[+-]\d{2}:\d{2})$/.test(rawValue)
     ? rawValue
     : `${rawValue}Z`;
   const date = new Date(normalizedValue);
@@ -47,21 +68,42 @@ function formatPhilippineDateTime(value) {
 export default function AuditLog() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [philippineNow, setPhilippineNow] = useState(() => formatPhilippineDateTime(new Date()));
 
-  useEffect(() => {
-    async function loadLogs() {
-      try {
-        const data = await API.getAuditLogs();
-        setLogs(data);
-      } catch (err) {
-        console.error("Audit Log error:", err);
-      } finally {
+  const loadLogs = useCallback(async ({ showLoading = false } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    }
+
+    setError('');
+    try {
+      const data = await API.getAuditLogs();
+      setLogs(Array.isArray(data) ? data : []);
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.error("Audit Log error:", err);
+      setError(err.message || 'Audit activity could not be loaded.');
+    } finally {
+      if (showLoading) {
         setLoading(false);
       }
     }
-    loadLogs();
   }, []);
+
+  useEffect(() => {
+    loadLogs({ showLoading: true });
+
+    const refreshId = window.setInterval(() => {
+      loadLogs();
+    }, AUDIT_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(refreshId);
+    };
+  }, [loadLogs]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -73,21 +115,51 @@ export default function AuditLog() {
     };
   }, []);
 
+  const totalPages = Math.max(1, Math.ceil(logs.length / AUDIT_LOGS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = logs.length === 0 ? 0 : (safeCurrentPage - 1) * AUDIT_LOGS_PER_PAGE;
+  const paginatedLogs = logs.slice(pageStartIndex, pageStartIndex + AUDIT_LOGS_PER_PAGE);
+  const pageStartCount = logs.length === 0 ? 0 : pageStartIndex + 1;
+  const pageEndCount = Math.min(pageStartIndex + paginatedLogs.length, logs.length);
+  const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <ShieldCheckIcon className="w-6 h-6 text-slate-700" /> Audit Log
         </h1>
-        <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-          <div className="font-bold">Philippine Time Now</div>
-          <div className="mt-1">{philippineNow}</div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+          <button
+            type="button"
+            onClick={() => loadLogs({ showLoading: true })}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+          >
+            <ArrowPathIcon className="h-5 w-5" />
+            Refresh
+          </button>
+
+          <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+            <div className="font-bold">Philippine Time Now</div>
+            <div className="mt-1">{philippineNow}</div>
+            {lastUpdated && (
+              <div className="mt-2 text-xs font-semibold text-sky-700">
+                Last updated: {formatPhilippineDateTime(lastUpdated)}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       <div>
         <p className="text-sm text-slate-500">System actions securely tracked for accountability. All timestamps below use Philippine time (UTC+8).</p>
       </div>
+
+      {error && (
+        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          {error}
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-auto md:block">
@@ -97,7 +169,7 @@ export default function AuditLog() {
                 <th className="px-6 py-4">Timestamp</th>
                 <th className="px-6 py-4">Action</th>
                 <th className="px-6 py-4">Details</th>
-                <th className="px-6 py-4">IP Address</th>
+                <th className="px-6 py-4">Real IP Address</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -112,8 +184,8 @@ export default function AuditLog() {
                 ))
               ) : logs.length === 0 ? (
                 <tr><td colSpan="4" className="text-center py-10">No logs found.</td></tr>
-              ) : logs.map((l, idx) => (
-                <tr key={idx} className="hover:bg-slate-50 transition-colors">
+              ) : paginatedLogs.map((l, idx) => (
+                <tr key={l.id || `${l.timestamp}-${idx}`} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap">{formatPhilippineDateTime(l.timestamp)}</td>
                   <td className="px-6 py-4">
                     <span className="font-mono text-xs font-bold bg-fuchsia-50 text-fuchsia-700 px-2 py-1 rounded">
@@ -146,8 +218,8 @@ export default function AuditLog() {
             </div>
           ) : (
             <div className="space-y-3">
-              {logs.map((l, idx) => (
-                <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              {paginatedLogs.map((l, idx) => (
+                <div key={l.id || `${l.timestamp}-${idx}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="text-xs font-bold uppercase tracking-widest text-slate-400">
                     {formatPhilippineDateTime(l.timestamp)}
                   </div>
@@ -156,7 +228,7 @@ export default function AuditLog() {
                   </div>
                   <div className="mt-3 text-sm text-slate-800">{l.details || 'N/A'}</div>
                   <div className="mt-3 text-xs text-slate-400">
-                    <span className="font-bold uppercase tracking-widest text-slate-400">IP</span>{' '}
+                    <span className="font-bold uppercase tracking-widest text-slate-400">Real IP</span>{' '}
                     <span className="font-mono">{l.ip_address || 'N/A'}</span>
                   </div>
                 </div>
@@ -164,6 +236,56 @@ export default function AuditLog() {
             </div>
           )}
         </div>
+
+        {!loading && logs.length > 0 && (
+          <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-semibold text-slate-600">
+              Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(logs.length)} activities
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+                  disabled={safeCurrentPage === 1}
+                  aria-label="Previous audit log page"
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                  <span className="hidden sm:inline">Previous</span>
+                </button>
+
+                {pageNumbers.map((pageNumber) => (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    onClick={() => setCurrentPage(pageNumber)}
+                    aria-current={pageNumber === safeCurrentPage ? 'page' : undefined}
+                    className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
+                      pageNumber === safeCurrentPage
+                        ? 'bg-slate-900 text-white'
+                        : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {formatCount(pageNumber)}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                  aria-label="Next audit log page"
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ChevronRightIcon className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

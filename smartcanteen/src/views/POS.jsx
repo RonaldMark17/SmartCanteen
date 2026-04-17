@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { API } from '../services/api';
 import { saveOfflineTransaction } from '../services/offlineStore';
+import { requestAlertRefresh } from '../services/realtimeAlerts';
 import {
   ArchiveBoxIcon,
   BanknotesIcon,
   BeakerIcon,
   BuildingStorefrontIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CheckCircleIcon,
   CubeIcon,
   DocumentTextIcon,
@@ -24,6 +27,22 @@ function formatCurrency(value) {
   return `PHP ${Number(value || 0).toFixed(2)}`;
 }
 
+function formatCount(value) {
+  return Number(value || 0).toLocaleString('en-PH');
+}
+
+const POS_ITEMS_PER_PAGE = 12;
+const MAX_PAGE_BUTTONS = 5;
+
+function getPageNumbers(currentPage, totalPages) {
+  const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
+  let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
+  const end = Math.min(totalPages, start + visibleCount - 1);
+  start = Math.max(1, end - visibleCount + 1);
+
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
+
 function sanitizeMoneyInput(value) {
   const digitsAndDots = String(value || '').replace(/[^\d.]/g, '');
   const [whole = '', ...decimalParts] = digitsAndDots.split('.');
@@ -32,7 +51,24 @@ function sanitizeMoneyInput(value) {
   return decimalParts.length > 0 ? `${whole}.${decimal}` : whole;
 }
 
+function sanitizeQuantityInput(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
 const MONEY_CONTROL_KEYS = new Set([
+  'Backspace',
+  'Delete',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'Tab',
+  'Enter',
+]);
+
+const QUANTITY_CONTROL_KEYS = new Set([
   'Backspace',
   'Delete',
   'ArrowLeft',
@@ -61,11 +97,24 @@ function preventInvalidMoneyKey(event) {
   event.preventDefault();
 }
 
+function preventInvalidQuantityKey(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey || QUANTITY_CONTROL_KEYS.has(event.key)) {
+    return;
+  }
+
+  if (/^\d$/.test(event.key)) {
+    return;
+  }
+
+  event.preventDefault();
+}
+
 export default function POS() {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Checkout State
   const [discount, setDiscount] = useState(0);
@@ -100,7 +149,9 @@ export default function POS() {
   };
 
   const updateQty = (id, newQty) => {
-    if (newQty <= 0) {
+    const numericQty = Number.parseInt(newQty, 10);
+
+    if (!Number.isFinite(numericQty) || numericQty <= 0) {
       const nextCart = cart.filter((item) => item.id !== id);
       setCart(nextCart);
       if (nextCart.length === 0) {
@@ -114,8 +165,29 @@ export default function POS() {
       return;
     }
 
-    const safeQty = Math.min(newQty, product.stock);
-    setCart((prev) => prev.map((item) => (item.id === id ? { ...item, qty: safeQty } : item)));
+    const safeQty = Math.min(numericQty, product.stock);
+    if (safeQty <= 0) {
+      return;
+    }
+
+    setCart((prev) => {
+      const existing = prev.find((item) => item.id === id);
+      if (!existing) {
+        return [...prev, { ...product, qty: safeQty }];
+      }
+
+      return prev.map((item) => (item.id === id ? { ...item, qty: safeQty } : item));
+    });
+  };
+
+  const handleQuantityInputChange = (id, value) => {
+    const numericText = sanitizeQuantityInput(value);
+
+    if (!numericText) {
+      return;
+    }
+
+    updateQty(id, numericText);
   };
 
   const clearCart = () => {
@@ -153,10 +225,18 @@ export default function POS() {
   const filteredProducts = products.filter(
     (p) =>
       p.is_active !== false &&
+      Number(p.stock || 0) > 0 &&
       (activeCategory === 'All' || p.category === activeCategory) &&
       (p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.category.toLowerCase().includes(search.toLowerCase()))
   );
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / POS_ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = filteredProducts.length === 0 ? 0 : (safeCurrentPage - 1) * POS_ITEMS_PER_PAGE;
+  const paginatedProducts = filteredProducts.slice(pageStartIndex, pageStartIndex + POS_ITEMS_PER_PAGE);
+  const pageStartCount = filteredProducts.length === 0 ? 0 : pageStartIndex + 1;
+  const pageEndCount = Math.min(pageStartIndex + paginatedProducts.length, filteredProducts.length);
+  const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
 
   // --- Checkout ---
   const handleCheckout = async () => {
@@ -180,7 +260,12 @@ export default function POS() {
       setProducts((prev) =>
         prev.map((p) => {
           const cartItem = cart.find((c) => c.id === p.id);
-          return cartItem ? { ...p, stock: Math.max(0, p.stock - cartItem.qty) } : p;
+          if (!cartItem) {
+            return p;
+          }
+
+          const nextStock = Math.max(0, p.stock - cartItem.qty);
+          return { ...p, stock: nextStock, is_active: nextStock > 0 };
         })
       );
       window.showToast('Saved offline. Will sync when back online.', 'warning');
@@ -200,10 +285,16 @@ export default function POS() {
       setProducts((prev) =>
         prev.map((p) => {
           const cartItem = cart.find((c) => c.id === p.id);
-          return cartItem ? { ...p, stock: Math.max(0, p.stock - cartItem.qty) } : p;
+          if (!cartItem) {
+            return p;
+          }
+
+          const nextStock = Math.max(0, p.stock - cartItem.qty);
+          return { ...p, stock: nextStock, is_active: nextStock > 0 };
         })
       );
 
+      requestAlertRefresh({ source: 'pos', reason: 'transaction-created' });
       window.showToast('Transaction complete!', 'success');
       setReceiptData({
         ...transactionPayload,
@@ -284,7 +375,10 @@ export default function POS() {
                 placeholder="Search products by name or barcode..."
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setCurrentPage(1);
+                }}
               />
             </div>
 
@@ -293,7 +387,10 @@ export default function POS() {
                 <button
                   key={cat}
                   type="button"
-                  onClick={() => setActiveCategory(cat)}
+                  onClick={() => {
+                    setActiveCategory(cat);
+                    setCurrentPage(1);
+                  }}
                   className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition-all ${
                     activeCategory === cat
                       ? 'bg-slate-900 text-white shadow-md'
@@ -307,7 +404,7 @@ export default function POS() {
           </div>
 
           <div className="custom-scrollbar grid flex-1 grid-cols-2 content-start gap-3 overflow-y-auto pr-2 md:grid-cols-3 lg:grid-cols-4">
-            {filteredProducts.map((product) => {
+            {paginatedProducts.map((product) => {
               const selectedQty = cartQtyByProductId[product.id] || 0;
               const isSelected = selectedQty > 0;
 
@@ -389,7 +486,17 @@ export default function POS() {
                       <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
                         Qty
                       </div>
-                      <div className="text-lg font-black text-slate-900">{selectedQty}</div>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={selectedQty}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onChange={(event) => handleQuantityInputChange(product.id, event.target.value)}
+                        onKeyDown={preventInvalidQuantityKey}
+                        aria-label={`Set ${product.name} quantity`}
+                        className="mx-auto block h-7 w-14 rounded-lg border border-transparent bg-transparent text-center text-lg font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
+                      />
                     </div>
 
                     <button
@@ -412,6 +519,56 @@ export default function POS() {
               </div>
             )}
           </div>
+
+          {filteredProducts.length > 0 && (
+            <div className="flex shrink-0 flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm font-semibold text-slate-600">
+                Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(filteredProducts.length)} products
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+                    disabled={safeCurrentPage === 1}
+                    aria-label="Previous product page"
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronLeftIcon className="h-4 w-4" />
+                    <span className="hidden sm:inline">Previous</span>
+                  </button>
+
+                  {pageNumbers.map((pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      onClick={() => setCurrentPage(pageNumber)}
+                      aria-current={pageNumber === safeCurrentPage ? 'page' : undefined}
+                      className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
+                        pageNumber === safeCurrentPage
+                          ? 'bg-slate-900 text-white'
+                          : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {formatCount(pageNumber)}
+                    </button>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+                    disabled={safeCurrentPage === totalPages}
+                    aria-label="Next product page"
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span className="hidden sm:inline">Next</span>
+                    <ChevronRightIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
       </div>
@@ -625,7 +782,17 @@ export default function POS() {
                                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
                                   Qty
                                 </div>
-                                <div className="text-lg font-black text-slate-900">{item.qty}</div>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={item.qty}
+                                  onFocus={(event) => event.currentTarget.select()}
+                                  onChange={(event) => handleQuantityInputChange(item.id, event.target.value)}
+                                  onKeyDown={preventInvalidQuantityKey}
+                                  aria-label={`Set ${item.name} quantity`}
+                                  className="mx-auto block h-7 w-14 rounded-lg border border-transparent bg-transparent text-center text-lg font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
+                                />
                               </div>
                               <button
                                 type="button"
@@ -884,7 +1051,17 @@ export default function POS() {
                             <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
                               Qty
                             </div>
-                            <div className="text-lg font-black text-slate-900">{item.qty}</div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={item.qty}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onChange={(event) => handleQuantityInputChange(item.id, event.target.value)}
+                              onKeyDown={preventInvalidQuantityKey}
+                              aria-label={`Set ${item.name} quantity`}
+                              className="mx-auto block h-7 w-14 rounded-lg border border-transparent bg-transparent text-center text-lg font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
+                            />
                           </div>
                           <button
                             type="button"
