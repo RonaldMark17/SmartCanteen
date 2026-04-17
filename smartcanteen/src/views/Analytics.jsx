@@ -2,8 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
-import { formatPhilippineDate, getPhilippineWeekday } from '../utils/dateTime';
 import {
+  formatPhilippineDate,
+  formatPhilippineDateTime,
+  getPhilippineDateKey,
+  getPhilippineDateParts,
+  getPhilippineWeekday,
+} from '../utils/dateTime';
+import {
+  ArrowDownTrayIcon,
   ArrowPathIcon,
   ArrowTrendingUpIcon,
   BanknotesIcon,
@@ -77,6 +84,18 @@ const HEATMAP_INTENSITY_CLASSES = [
   'border-slate-900 bg-slate-900 text-white',
 ];
 
+const PERIOD_OPTIONS = [
+  { key: 'day', label: 'Day' },
+  { key: 'month', label: 'Month' },
+  { key: 'year', label: 'Year' },
+];
+
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return Number(count) === 1 ? singular : plural;
+}
+
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -96,6 +115,10 @@ function formatNumber(value) {
   return toNumber(value).toLocaleString('en-PH');
 }
 
+function escapeCsvValue(value) {
+  return `"${String(value ?? '').replaceAll('"', '""')}"`;
+}
+
 function formatHour(hour) {
   if (hour === 0) {
     return '12 AM';
@@ -110,6 +133,308 @@ function formatHour(hour) {
   }
 
   return `${hour - 12} PM`;
+}
+
+function getDefaultMonth(parts) {
+  const safeParts = parts || getPhilippineDateParts(new Date());
+  const year = safeParts?.year || new Date().getFullYear();
+  const month = safeParts?.month || new Date().getMonth() + 1;
+
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+function getSafeDateInputValue(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))
+    ? value
+    : getPhilippineDateKey(new Date());
+}
+
+function getSafeMonthInputValue(value) {
+  return /^\d{4}-\d{2}$/.test(String(value || '')) ? value : getDefaultMonth();
+}
+
+function getSafeYearInputValue(value) {
+  const currentYear = getPhilippineDateParts(new Date())?.year || new Date().getFullYear();
+  return /^\d{4}$/.test(String(value || '')) ? String(value) : String(currentYear);
+}
+
+function getPeriodTitle(period) {
+  return PERIOD_OPTIONS.find((option) => option.key === period)?.label || 'Day';
+}
+
+function getPeriodDescription(period, referenceDate) {
+  if (period === 'year') {
+    return String(getPhilippineDateParts(referenceDate)?.year || new Date().getFullYear());
+  }
+
+  if (period === 'month') {
+    return formatPhilippineDate(referenceDate, {
+      month: 'long',
+      year: 'numeric',
+    });
+  }
+
+  return formatPhilippineDate(referenceDate, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function getRevenueTrendTitle(period, referenceDate) {
+  if (period === 'year') {
+    return `${getPeriodDescription(period, referenceDate)} Revenue Trend`;
+  }
+
+  if (period === 'month') {
+    return `${getPeriodDescription(period, referenceDate)} Revenue Trend`;
+  }
+
+  return `${formatPhilippineDate(referenceDate, {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })} Revenue Trend`;
+}
+
+function buildAnalyticsRange(period, selectedDate, selectedMonth, selectedYear) {
+  if (period === 'year') {
+    const year = getSafeYearInputValue(selectedYear);
+
+    return {
+      startDate: `${year}-01-01`,
+      endDate: `${year}-12-31`,
+    };
+  }
+
+  if (period === 'month') {
+    const monthValue = getSafeMonthInputValue(selectedMonth);
+    const [rawYear, rawMonth] = monthValue.split('-');
+    const year = Number(rawYear);
+    const month = Number(rawMonth);
+    const lastDay = year && month ? new Date(year, month, 0).getDate() : 31;
+
+    return {
+      startDate: `${monthValue}-01`,
+      endDate: `${monthValue}-${String(lastDay).padStart(2, '0')}`,
+    };
+  }
+
+  const dateValue = getSafeDateInputValue(selectedDate);
+
+  return {
+    startDate: dateValue,
+    endDate: dateValue,
+  };
+}
+
+function buildReferenceDate(period, selectedDate, selectedMonth, selectedYear) {
+  if (period === 'year') {
+    return new Date(`${getSafeYearInputValue(selectedYear)}-01-01T12:00:00+08:00`);
+  }
+
+  if (period === 'month') {
+    return new Date(`${getSafeMonthInputValue(selectedMonth)}-01T12:00:00+08:00`);
+  }
+
+  return new Date(`${getSafeDateInputValue(selectedDate)}T12:00:00+08:00`);
+}
+
+function getExportFilterKey(period, selectedDate, selectedMonth, selectedYear) {
+  if (period === 'year') {
+    return getSafeYearInputValue(selectedYear);
+  }
+
+  if (period === 'month') {
+    return getSafeMonthInputValue(selectedMonth);
+  }
+
+  return getSafeDateInputValue(selectedDate);
+}
+
+function buildDateKeysInRange(startDate, endDate) {
+  const [startYear, startMonth, startDay] = String(startDate || '').split('-').map(Number);
+  const [endYear, endMonth, endDay] = String(endDate || '').split('-').map(Number);
+
+  if (!startYear || !startMonth || !startDay || !endYear || !endMonth || !endDay) {
+    return [];
+  }
+
+  const dayKeys = [];
+  const cursor = new Date(Date.UTC(startYear, startMonth - 1, startDay, 12));
+  const end = new Date(Date.UTC(endYear, endMonth - 1, endDay, 12));
+
+  while (cursor <= end) {
+    const year = cursor.getUTCFullYear();
+    const month = String(cursor.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(cursor.getUTCDate()).padStart(2, '0');
+    dayKeys.push(`${year}-${month}-${day}`);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dayKeys;
+}
+
+function buildYearOptions(selectedYear) {
+  const currentYear = getPhilippineDateParts(new Date())?.year || new Date().getFullYear();
+  const years = Array.from({ length: 8 }, (_, index) => String(currentYear - index));
+
+  if (selectedYear && !years.includes(String(selectedYear))) {
+    years.push(String(selectedYear));
+  }
+
+  return years.sort((left, right) => Number(right) - Number(left));
+}
+
+function buildTransactionTrendPoints(transactions, period, selectedRange) {
+  if (period === 'day') {
+    const buckets = EMPTY_HEATMAP.map((item) => ({
+      label: formatHour(item.hour),
+      hour: item.hour,
+      revenue: 0,
+      transactions: 0,
+    }));
+
+    transactions.forEach((transaction) => {
+      const hour = getPhilippineDateParts(transaction.created_at)?.hour;
+      const bucket = buckets.find((item) => item.hour === hour);
+
+      if (!bucket) {
+        return;
+      }
+
+      bucket.revenue += transaction.total;
+      bucket.transactions += 1;
+    });
+
+    return {
+      labels: buckets.map((item) => item.label),
+      values: buckets.map((item) => Number(item.revenue.toFixed(2))),
+      counts: buckets.map((item) => item.transactions),
+    };
+  }
+
+  if (period === 'year') {
+    const revenueByMonth = Array.from({ length: 12 }, () => 0);
+    const transactionsByMonth = Array.from({ length: 12 }, () => 0);
+
+    transactions.forEach((transaction) => {
+      const parts = getPhilippineDateParts(transaction.created_at);
+      if (!parts?.month) {
+        return;
+      }
+
+      revenueByMonth[parts.month - 1] += transaction.total;
+      transactionsByMonth[parts.month - 1] += 1;
+    });
+
+    return {
+      labels: MONTH_LABELS,
+      values: revenueByMonth.map((value) => Number(value.toFixed(2))),
+      counts: transactionsByMonth,
+    };
+  }
+
+  const dayKeys = buildDateKeysInRange(selectedRange.startDate, selectedRange.endDate).filter(isSchoolDay);
+  const revenueByDay = new Map(dayKeys.map((dayKey) => [dayKey, 0]));
+  const transactionsByDay = new Map(dayKeys.map((dayKey) => [dayKey, 0]));
+
+  transactions.forEach((transaction) => {
+    const dayKey = getPhilippineDateKey(transaction.created_at);
+
+    if (!revenueByDay.has(dayKey)) {
+      return;
+    }
+
+    revenueByDay.set(dayKey, revenueByDay.get(dayKey) + transaction.total);
+    transactionsByDay.set(dayKey, transactionsByDay.get(dayKey) + 1);
+  });
+
+  return {
+    labels: dayKeys.map((dayKey) =>
+      formatPhilippineDate(dayKey, {
+        month: 'short',
+        day: 'numeric',
+      })
+    ),
+    values: dayKeys.map((dayKey) => Number((revenueByDay.get(dayKey) || 0).toFixed(2))),
+    counts: dayKeys.map((dayKey) => transactionsByDay.get(dayKey) || 0),
+  };
+}
+
+function buildSalesHeatmapBuckets(transactions, period, selectedRange) {
+  if (period === 'day') {
+    const buckets = EMPTY_HEATMAP.map((item) => ({
+      key: `hour-${item.hour}`,
+      label: formatHour(item.hour),
+      sales: 0,
+      transactions: 0,
+    }));
+
+    transactions.forEach((transaction) => {
+      const hour = getPhilippineDateParts(transaction.created_at)?.hour;
+      const bucket = buckets.find((item) => item.key === `hour-${hour}`);
+
+      if (!bucket) {
+        return;
+      }
+
+      bucket.sales += transaction.total;
+      bucket.transactions += 1;
+    });
+
+    return buckets.map((item) => ({ ...item, sales: Number(item.sales.toFixed(2)) }));
+  }
+
+  if (period === 'year') {
+    const buckets = MONTH_LABELS.map((label, index) => ({
+      key: `month-${index + 1}`,
+      label,
+      sales: 0,
+      transactions: 0,
+    }));
+
+    transactions.forEach((transaction) => {
+      const month = getPhilippineDateParts(transaction.created_at)?.month;
+      const bucket = buckets[Number(month || 0) - 1];
+
+      if (!bucket) {
+        return;
+      }
+
+      bucket.sales += transaction.total;
+      bucket.transactions += 1;
+    });
+
+    return buckets.map((item) => ({ ...item, sales: Number(item.sales.toFixed(2)) }));
+  }
+
+  const dayKeys = buildDateKeysInRange(selectedRange.startDate, selectedRange.endDate).filter(isSchoolDay);
+  const buckets = dayKeys.map((dayKey) => ({
+    key: dayKey,
+    label: formatPhilippineDate(dayKey, {
+      month: 'short',
+      day: 'numeric',
+    }),
+    sales: 0,
+    transactions: 0,
+  }));
+  const byKey = new Map(buckets.map((item) => [item.key, item]));
+
+  transactions.forEach((transaction) => {
+    const dayKey = getPhilippineDateKey(transaction.created_at);
+    const bucket = byKey.get(dayKey);
+
+    if (!bucket) {
+      return;
+    }
+
+    bucket.sales += transaction.total;
+    bucket.transactions += 1;
+  });
+
+  return buckets.map((item) => ({ ...item, sales: Number(item.sales.toFixed(2)) }));
 }
 
 function getHeatmapIntensity(sales, maxSales) {
@@ -170,6 +495,21 @@ function normalizeHeatmap(value) {
   );
 
   return EMPTY_HEATMAP.map((item) => byHour.get(item.hour) || item);
+}
+
+function normalizeTransactions(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((transaction) => ({
+      ...transaction,
+      created_at: transaction?.created_at || '',
+      total: toNumber(transaction?.total),
+      items: Array.isArray(transaction?.items) ? transaction.items : [],
+    }))
+    .filter((transaction) => transaction.created_at);
 }
 
 function getErrorMessage(result, fallback) {
@@ -321,13 +661,26 @@ function AnalyticsSkeleton() {
 }
 
 export default function Analytics() {
+  const todayKey = getPhilippineDateKey(new Date());
+  const todayParts = getPhilippineDateParts(new Date());
+  const defaultMonth = getDefaultMonth(todayParts);
+  const defaultYear = String(todayParts?.year || new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState('');
+  const [period, setPeriod] = useState('day');
+  const [selectedDate, setSelectedDate] = useState(todayKey);
+  const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
+  const [selectedYear, setSelectedYear] = useState(defaultYear);
+  const selectedRange = useMemo(
+    () => buildAnalyticsRange(period, selectedDate, selectedMonth, selectedYear),
+    [period, selectedDate, selectedMonth, selectedYear]
+  );
   const [data, setData] = useState({
     daily: [],
     top: [],
     heatmap: EMPTY_HEATMAP,
+    transactions: [],
   });
 
   useEffect(() => {
@@ -336,11 +689,16 @@ export default function Analytics() {
     async function loadData() {
       setLoading(true);
       setError('');
+      const queryOptions = {
+        startDate: selectedRange.startDate,
+        endDate: selectedRange.endDate,
+      };
 
-      const [dailyResult, topResult, heatmapResult] = await Promise.allSettled([
-        API.getDailySales(14),
-        API.getTopProducts(14),
-        API.getHourlyHeatmap(),
+      const [dailyResult, topResult, heatmapResult, transactionsResult] = await Promise.allSettled([
+        API.getDailySales(queryOptions),
+        API.getTopProducts(queryOptions),
+        API.getHourlyHeatmap(queryOptions),
+        API.getTransactions(selectedRange.startDate, selectedRange.endDate, { limit: 5000 }),
       ]);
 
       if (cancelled) {
@@ -360,6 +718,10 @@ export default function Analytics() {
           heatmapResult.status === 'fulfilled'
             ? normalizeHeatmap(heatmapResult.value)
             : EMPTY_HEATMAP,
+        transactions:
+          transactionsResult.status === 'fulfilled'
+            ? normalizeTransactions(transactionsResult.value)
+            : [],
       };
 
       setData(nextData);
@@ -368,10 +730,11 @@ export default function Analytics() {
         getErrorMessage(dailyResult, 'Failed to load revenue trend.'),
         getErrorMessage(topResult, 'Failed to load top products.'),
         getErrorMessage(heatmapResult, 'Failed to load hourly heatmap.'),
+        getErrorMessage(transactionsResult, 'Failed to load transactions.'),
       ].filter(Boolean);
 
       if (failures.length > 0) {
-        const allFailed = failures.length === 3;
+        const allFailed = failures.length === 4;
         setError(
           allFailed
             ? failures[0]
@@ -387,25 +750,39 @@ export default function Analytics() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [reloadKey, selectedRange]);
 
-  const hasDailyData = data.daily.length > 0;
+  const referenceDate = buildReferenceDate(period, selectedDate, selectedMonth, selectedYear);
+  const periodTitle = getPeriodTitle(period);
+  const periodDescription = getPeriodDescription(period, referenceDate);
+  const revenueTrendTitle = getRevenueTrendTitle(period, referenceDate);
+  const yearOptions = buildYearOptions(selectedYear);
+  const trendPoints = useMemo(
+    () => buildTransactionTrendPoints(data.transactions, period, selectedRange),
+    [data.transactions, period, selectedRange]
+  );
+  const heatmapBuckets = useMemo(
+    () => buildSalesHeatmapBuckets(data.transactions, period, selectedRange),
+    [data.transactions, period, selectedRange]
+  );
+  const hasTrendData =
+    trendPoints.values.some((value) => value > 0) ||
+    trendPoints.counts.some((count) => count > 0);
   const hasTopData = data.top.length > 0;
-  const hasHeatmapData = data.heatmap.some((item) => item.sales > 0);
+  const hasHeatmapData = heatmapBuckets.some((item) => item.sales > 0);
   const summary = useMemo(() => {
-    const totalRevenue = data.daily.reduce((sum, item) => sum + item.revenue, 0);
-    const totalTransactions = data.daily.reduce((sum, item) => sum + item.transactions, 0);
-    const activeSchoolDays = data.daily.filter(
-      (item) => item.revenue > 0 || item.transactions > 0
-    ).length;
+    const totalRevenue = data.transactions.reduce(
+      (sum, transaction) => sum + transaction.total,
+      0
+    );
+    const totalTransactions = data.transactions.length;
+    const activeSchoolDays = new Set(
+      data.transactions.map((transaction) => getPhilippineDateKey(transaction.created_at))
+    ).size;
     const trackedSchoolDays = data.daily.length;
     const averageTicket = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
     const averageDailyRevenue =
       trackedSchoolDays > 0 ? totalRevenue / trackedSchoolDays : 0;
-    const peakHour = data.heatmap.reduce(
-      (peak, item) => (item.sales > peak.sales ? item : peak),
-      EMPTY_HEATMAP[0]
-    );
     const topProduct = data.top[0] || null;
 
     return {
@@ -415,25 +792,17 @@ export default function Analytics() {
       trackedSchoolDays,
       averageTicket,
       averageDailyRevenue,
-      peakHour,
       topProduct,
     };
-  }, [data.daily, data.heatmap, data.top]);
+  }, [data.daily.length, data.top, data.transactions]);
 
   const lineChartData = useMemo(
     () => ({
-      labels: data.daily.map((item) =>
-        item.date
-          ? formatPhilippineDate(item.date, {
-              month: 'short',
-              day: 'numeric',
-            })
-          : ''
-      ),
+      labels: trendPoints.labels,
       datasets: [
         {
           label: 'Revenue',
-          data: data.daily.map((item) => item.revenue),
+          data: trendPoints.values,
           borderColor: '#0f766e',
           backgroundColor: 'rgba(20, 184, 166, 0.12)',
           pointBackgroundColor: '#0f766e',
@@ -446,7 +815,7 @@ export default function Analytics() {
         },
       ],
     }),
-    [data.daily]
+    [trendPoints]
   );
 
   const barChartData = useMemo(
@@ -485,6 +854,10 @@ export default function Analytics() {
           titleColor: '#ffffff',
           callbacks: {
             label: (context) => `Revenue: ${formatCurrency(context.parsed.y)}`,
+            afterLabel: (context) => {
+              const count = trendPoints.counts[context.dataIndex] || 0;
+              return `${formatNumber(count)} ${pluralize(count, 'transaction')}`;
+            },
           },
         },
       },
@@ -504,7 +877,7 @@ export default function Analytics() {
         },
       },
     }),
-    []
+    [trendPoints]
   );
 
   const barChartOptions = useMemo(
@@ -553,10 +926,119 @@ export default function Analytics() {
     []
   );
 
-  const maxHeatmapSales = Math.max(0, ...data.heatmap.map((item) => item.sales));
+  const maxHeatmapSales = Math.max(0, ...heatmapBuckets.map((item) => item.sales));
   const heatmapScale = Math.max(1, maxHeatmapSales);
+  const heatmapPeak = heatmapBuckets.reduce(
+    (peak, item) => (item.sales > peak.sales ? item : peak),
+    heatmapBuckets[0] || { label: 'No peak yet', sales: 0, transactions: 0 }
+  );
   const heatmapPeakLabel =
-    summary.peakHour?.sales > 0 ? formatHour(summary.peakHour.hour) : 'No peak yet';
+    heatmapPeak?.sales > 0 ? heatmapPeak.label : 'No peak yet';
+  const heatmapMetricTitle =
+    period === 'year' ? 'Peak Month' : period === 'month' ? 'Peak Day' : 'Peak Hour';
+  const heatmapTitle =
+    period === 'year'
+      ? 'School-Day Sales Heatmap by Month'
+      : period === 'month'
+        ? 'School-Day Sales Heatmap by Day'
+        : 'School-Day Sales Heatmap by Hour';
+  const heatmapDescription =
+    period === 'year'
+      ? `${periodDescription} monthly canteen activity`
+      : period === 'month'
+        ? `${periodDescription} daily canteen activity`
+        : '7 AM through 5 PM canteen activity';
+  const heatmapEmptyMessage =
+    period === 'year'
+      ? 'No monthly sales activity found for this year yet.'
+      : period === 'month'
+        ? 'No daily sales activity found for this month yet.'
+        : 'No hourly sales activity found for school hours yet.';
+  const heatmapGridClass =
+    period === 'year'
+      ? 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-12'
+      : period === 'month'
+        ? 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7'
+        : 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-11';
+  const trendMeta =
+    period === 'day'
+      ? `${formatNumber(summary.totalTransactions)} ${pluralize(summary.totalTransactions, 'transaction')} across school hours`
+      : `${formatNumber(summary.totalTransactions)} ${pluralize(summary.totalTransactions, 'transaction')} in the selected period`;
+
+  function handleExportAnalytics() {
+    const exportKey = getExportFilterKey(period, selectedDate, selectedMonth, selectedYear);
+    const trendLabel = period === 'day' ? 'Hour' : period === 'year' ? 'Month' : 'Date';
+    const rows = [
+      ['SmartCanteen Analytics Report'],
+      [],
+      ['Generated At', formatPhilippineDateTime(new Date())],
+      ['Filter', `${periodTitle} - ${periodDescription}`],
+      ['Date Range', `${selectedRange.startDate} to ${selectedRange.endDate}`],
+      [],
+      ['Summary'],
+      ['Revenue', formatCurrency(summary.totalRevenue)],
+      ['Transactions', summary.totalTransactions],
+      ['School Days Tracked', summary.trackedSchoolDays],
+      ['Days With Activity', summary.activeSchoolDays],
+      ['Average Ticket', formatCurrency(summary.averageTicket)],
+      ['Average Daily Revenue', formatCurrency(summary.averageDailyRevenue)],
+      [heatmapMetricTitle, heatmapPeakLabel],
+      ['Top Product', summary.topProduct?.product_name || 'N/A'],
+      [],
+      [revenueTrendTitle],
+      [trendLabel, 'Revenue (PHP)', 'Transactions'],
+      ...(trendPoints.labels.length > 0
+        ? trendPoints.labels.map((label, index) => [
+            label,
+            toNumber(trendPoints.values[index]).toFixed(2),
+            trendPoints.counts[index] || 0,
+          ])
+        : [['No revenue trend data available', '', '']]),
+      [],
+      ['Daily Sales'],
+      ['Date', 'Revenue (PHP)', 'Transactions'],
+      ...(data.daily.length > 0
+        ? data.daily.map((item) => [
+            item.date,
+            item.revenue.toFixed(2),
+            item.transactions,
+          ])
+        : [['No daily sales data available', '', '']]),
+      [],
+      ['Top Products'],
+      ['Rank', 'Product', 'Units Sold'],
+      ...(data.top.length > 0
+        ? data.top.map((item, index) => [
+            index + 1,
+            item.product_name,
+            item.total_qty,
+          ])
+        : [['No top product data available', '', '']]),
+      [],
+      [heatmapTitle],
+      [period === 'year' ? 'Month' : period === 'month' ? 'Day' : 'Hour', 'Sales (PHP)', 'Transactions'],
+      ...(heatmapBuckets.length > 0
+        ? heatmapBuckets.map((item) => [
+            item.label,
+            item.sales.toFixed(2),
+            item.transactions,
+          ])
+        : [['No heatmap sales data available', '', '']]),
+    ];
+    const csv = rows.map((row) => row.map(escapeCsvValue).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = `SmartCanteen_Analytics_${period}_${exportKey}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    window.showToast?.('Analytics report exported.', 'success');
+  }
 
   if (loading) {
     return <AnalyticsSkeleton />;
@@ -574,14 +1056,92 @@ export default function Analytics() {
             Analytics
           </h1>
           <p className="mt-1 text-sm font-medium text-slate-500">
-            Sales performance across school days and canteen hours
+            Sales performance for {periodDescription}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.18em] text-slate-500 shadow-sm">
-            7 AM-5 PM
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
+          <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+            {PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setPeriod(option.key)}
+                className={`rounded-lg px-4 py-2 text-sm font-black transition-all ${
+                  period === option.key
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
+
+          {period === 'day' && (
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600 shadow-sm">
+              <span>Pick day</span>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(event) => {
+                  const nextDate = event.target.value;
+                  const [year, month] = nextDate.split('-');
+                  setSelectedDate(nextDate);
+                  if (year && month) {
+                    setSelectedMonth(`${year}-${month}`);
+                    setSelectedYear(year);
+                  }
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
+              />
+            </label>
+          )}
+
+          {period === 'month' && (
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600 shadow-sm">
+              <span>Pick month</span>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(event) => {
+                  const nextMonth = event.target.value;
+                  const [year] = nextMonth.split('-');
+                  setSelectedMonth(nextMonth);
+                  if (year) {
+                    setSelectedYear(year);
+                  }
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
+              />
+            </label>
+          )}
+
+          {period === 'year' && (
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600 shadow-sm">
+              <span>Pick year</span>
+              <select
+                value={selectedYear}
+                onChange={(event) => setSelectedYear(event.target.value)}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
+              >
+                {yearOptions.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <button
+            type="button"
+            onClick={handleExportAnalytics}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            <ArrowDownTrayIcon className="h-4 w-4" />
+            Export CSV
+          </button>
           <button
             type="button"
             onClick={() => setReloadKey((value) => value + 1)}
@@ -622,11 +1182,11 @@ export default function Analytics() {
           tone="amber"
         />
         <MetricCard
-          title="Peak Hour"
+          title={heatmapMetricTitle}
           value={heatmapPeakLabel}
           detail={
-            summary.peakHour?.sales > 0
-              ? formatCurrency(summary.peakHour.sales)
+            heatmapPeak?.sales > 0
+              ? `${formatCurrency(heatmapPeak.sales)} | ${formatNumber(heatmapPeak.transactions)} ${pluralize(heatmapPeak.transactions, 'transaction')}`
               : 'No sales activity yet'
           }
           icon={ClockIcon}
@@ -637,18 +1197,18 @@ export default function Analytics() {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         <Panel
           icon={ArrowTrendingUpIcon}
-          title="School-Day Revenue Trend"
-          meta={`Average ${formatCurrency(summary.averageDailyRevenue)} per school day`}
+          title={revenueTrendTitle}
+          meta={trendMeta}
           className="xl:col-span-3"
         >
           <div className="h-[300px]">
-            {hasDailyData ? (
+            {hasTrendData ? (
               <Line data={lineChartData} options={lineChartOptions} />
             ) : (
               <EmptyPanel
                 icon={ArrowTrendingUpIcon}
-                title="No school-day sales"
-                message="Revenue will appear here after completed school-day transactions."
+                title="No sales in this period"
+                message="Revenue will appear here after completed transactions for the selected filter."
               />
             )}
           </div>
@@ -686,10 +1246,10 @@ export default function Analytics() {
             </div>
             <div>
               <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-800">
-                School-Day Sales Heatmap by Hour
+                {heatmapTitle}
               </h3>
               <p className="mt-1 text-sm text-slate-500">
-                7 AM through 5 PM canteen activity
+                {heatmapDescription}
               </p>
             </div>
           </div>
@@ -706,29 +1266,31 @@ export default function Analytics() {
 
         {!hasHeatmapData && (
           <div className="mb-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-500">
-            No hourly sales activity found for school hours yet.
+            {heatmapEmptyMessage}
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-11">
-          {data.heatmap.map((item) => {
+        <div className={heatmapGridClass}>
+          {heatmapBuckets.map((item) => {
             const intensity = getHeatmapIntensity(item.sales, heatmapScale);
-            const label = formatHour(item.hour);
-            const isPeak = hasHeatmapData && item.hour === summary.peakHour?.hour;
+            const isPeak = hasHeatmapData && item.key === heatmapPeak?.key;
             const share = item.sales > 0 ? Math.max(10, (item.sales / heatmapScale) * 100) : 0;
 
             return (
               <article
-                key={item.hour}
+                key={item.key}
                 className={`min-h-24 rounded-xl border p-3 transition hover:-translate-y-0.5 hover:shadow-md ${HEATMAP_INTENSITY_CLASSES[intensity]}`}
-                title={`${label}: ${formatCurrency(item.sales)}`}
+                title={`${item.label}: ${formatCurrency(item.sales)} from ${formatNumber(item.transactions)} ${pluralize(item.transactions, 'transaction')}`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-black">{label}</div>
+                  <div className="text-sm font-black">{item.label}</div>
                   {isPeak && <FireIcon className="h-4 w-4 shrink-0" />}
                 </div>
                 <div className="mt-3 truncate text-sm font-black">
                   {formatCurrency(item.sales)}
+                </div>
+                <div className="mt-1 truncate text-[11px] font-bold opacity-80">
+                  {formatNumber(item.transactions)} {pluralize(item.transactions, 'txn')}
                 </div>
                 <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/45">
                   <div

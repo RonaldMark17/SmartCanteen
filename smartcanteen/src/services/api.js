@@ -191,6 +191,19 @@ function toQuery(params) {
   return serialized ? `?${serialized}` : '';
 }
 
+function toAnalyticsQuery(options = 7) {
+  if (typeof options === 'number') {
+    return toQuery({ days: options });
+  }
+
+  return toQuery({
+    days: options.days,
+    start_date: options.startDate || options.start_date,
+    end_date: options.endDate || options.end_date,
+    limit: options.limit,
+  });
+}
+
 function isCacheableRequest(method, path) {
   return (
     String(method || '').toUpperCase() === 'GET' &&
@@ -554,9 +567,9 @@ export const API = {
   syncOffline: (data) => request('POST', '/transactions/sync', data),
 
   getSummary: () => request('GET', '/analytics/summary'),
-  getDailySales: (days = 7) => request('GET', `/analytics/daily-sales${toQuery({ days })}`),
-  getTopProducts: (days = 7) => request('GET', `/analytics/top-products${toQuery({ days })}`),
-  getHourlyHeatmap: () => request('GET', '/analytics/hourly-heatmap'),
+  getDailySales: (options = 7) => request('GET', `/analytics/daily-sales${toAnalyticsQuery(options)}`),
+  getTopProducts: (options = 7) => request('GET', `/analytics/top-products${toAnalyticsQuery(options)}`),
+  getHourlyHeatmap: (options = {}) => request('GET', `/analytics/hourly-heatmap${toAnalyticsQuery(options)}`),
 
   getPredictions: ({ algorithm = 'XGBoost', weather = 'clear', event = 'none' } = {}) =>
     request(

@@ -764,6 +764,48 @@ def sync_offline(
 # ANALYTICS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _resolve_analytics_date_range(
+    days: int = 7,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    if bool(start_date) != bool(end_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide both start_date and end_date for analytics filters.",
+        )
+
+    if start_date and end_date:
+        try:
+            start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+            start, end = build_ph_date_range_bounds(start_date, end_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid analytics date filter.") from exc
+
+        if end_day < start_day:
+            raise HTTPException(status_code=400, detail="end_date must be on or after start_date.")
+
+        day_count = (end_day - start_day).days + 1
+        return {
+            "days": day_count,
+            "start": start,
+            "end": end,
+            "day_keys": [
+                (start_day + timedelta(days=offset)).isoformat()
+                for offset in range(day_count)
+            ],
+        }
+
+    safe_days = max(1, min(int(days or 7), 3660))
+    return {
+        "days": safe_days,
+        "start": get_ph_recent_cutoff_utc_naive(safe_days),
+        "end": None,
+        "day_keys": build_recent_ph_day_keys(safe_days),
+    }
+
+
 @app.get("/api/analytics/summary", tags=["Analytics"])
 def summary(
     db: Session = Depends(get_db),
@@ -792,12 +834,20 @@ def summary(
 @app.get("/api/analytics/daily-sales", tags=["Analytics"])
 def daily_sales(
     days: int = 7,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    cutoff = get_ph_recent_cutoff_utc_naive(days)
-    txns   = db.query(models.Transaction).filter(
-        models.Transaction.created_at >= cutoff).all()
+    date_range = _resolve_analytics_date_range(days, start_date, end_date)
+    query = db.query(models.Transaction).filter(
+        models.Transaction.created_at >= date_range["start"]
+    )
+
+    if date_range["end"] is not None:
+        query = query.filter(models.Transaction.created_at <= date_range["end"])
+
+    txns = query.all()
 
     bucket: dict = {}
     for t in txns:
@@ -807,7 +857,7 @@ def daily_sales(
         bucket[k]["transactions"] += 1
 
     result = []
-    for d in build_recent_ph_day_keys(days):
+    for d in date_range["day_keys"]:
         entry = bucket.get(d, {"date": d, "revenue": 0.0, "transactions": 0})
         entry["revenue"] = round(entry["revenue"], 2)
         result.append(entry)
@@ -817,18 +867,35 @@ def daily_sales(
 @app.get("/api/analytics/top-products", tags=["Analytics"])
 def top_products(
     days: int = 7,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    return analytics_helpers.get_top_products(db, days)
+    date_range = _resolve_analytics_date_range(days, start_date, end_date)
+    return analytics_helpers.get_top_products(
+        db,
+        date_range["days"],
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @app.get("/api/analytics/hourly-heatmap", tags=["Analytics"])
 def hourly_heatmap(
+    days: int = 30,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    return analytics_helpers.get_hourly_heatmap(db)
+    date_range = _resolve_analytics_date_range(days, start_date, end_date)
+    return analytics_helpers.get_hourly_heatmap(
+        db,
+        date_range["days"],
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
