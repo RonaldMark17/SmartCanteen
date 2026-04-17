@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List, Optional
+import ipaddress
 import os
 import subprocess
 
@@ -55,7 +56,33 @@ def _get_client_ip(request: Optional[Request] = None):
         if candidate.count(":") == 1 and "." in candidate:
             candidate = candidate.split(":", 1)[0]
 
-        return candidate or None
+        try:
+            parsed_ip = ipaddress.ip_address(candidate)
+        except ValueError:
+            return None
+
+        if getattr(parsed_ip, "ipv4_mapped", None):
+            parsed_ip = parsed_ip.ipv4_mapped
+
+        return str(parsed_ip)
+
+    def is_device_network_ip(value):
+        try:
+            parsed_ip = ipaddress.ip_address(value)
+        except ValueError:
+            return False
+
+        return (
+            (parsed_ip.is_private or parsed_ip.is_link_local)
+            and not parsed_ip.is_loopback
+            and not parsed_ip.is_unspecified
+        )
+
+    direct_ip = clean_ip(request.client.host if request.client else None)
+    if direct_ip and is_device_network_ip(direct_ip):
+        return direct_ip
+
+    forwarded_ips = []
 
     for header_name in (
         "cf-connecting-ip",
@@ -71,7 +98,7 @@ def _get_client_ip(request: Optional[Request] = None):
         for candidate in str(header_value).split(","):
             ip_address = clean_ip(candidate)
             if ip_address:
-                return ip_address
+                forwarded_ips.append(ip_address)
 
     forwarded = request.headers.get("forwarded")
     if forwarded:
@@ -81,9 +108,16 @@ def _get_client_ip(request: Optional[Request] = None):
                 if key.lower() == "for":
                     ip_address = clean_ip(value)
                     if ip_address:
-                        return ip_address
+                        forwarded_ips.append(ip_address)
 
-    return clean_ip(request.client.host if request.client else None)
+    for ip_address in forwarded_ips:
+        if is_device_network_ip(ip_address):
+            return ip_address
+
+    if direct_ip:
+        return direct_ip
+
+    return forwarded_ips[0] if forwarded_ips else None
 
 
 def _add_audit_log(
