@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List, Optional
 import os
+import subprocess
 
 import backend.models as models
 import backend.schemas as schemas
@@ -164,6 +165,8 @@ app.add_middleware(
 # Serve the PWA frontend
 BACKEND_DIR = os.path.abspath(os.path.dirname(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
+FRONTEND_BUILD_ATTEMPTED = False
+FRONTEND_BUILD_ERROR = None
 
 
 def _find_frontend_dir():
@@ -190,6 +193,54 @@ def _find_frontend_dir():
     return None
 
 
+def _find_frontend_source_dir():
+    configured_dir = os.environ.get("SMARTCANTEEN_FRONTEND_SOURCE_DIR")
+    candidates = [
+        configured_dir,
+        os.path.join(PROJECT_ROOT, "smartcanteen"),
+        os.path.join(os.getcwd(), "smartcanteen"),
+    ]
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        frontend_source_dir = os.path.abspath(candidate)
+        if os.path.isfile(os.path.join(frontend_source_dir, "package.json")):
+            return frontend_source_dir
+
+    return None
+
+
+def _frontend_auto_build_enabled():
+    value = os.environ.get("SMARTCANTEEN_AUTO_BUILD_FRONTEND", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _build_frontend_dist_once():
+    global FRONTEND_BUILD_ATTEMPTED, FRONTEND_BUILD_ERROR
+
+    if FRONTEND_BUILD_ATTEMPTED or not _frontend_auto_build_enabled():
+        return
+
+    FRONTEND_BUILD_ATTEMPTED = True
+    frontend_source_dir = _find_frontend_source_dir()
+    if not frontend_source_dir:
+        FRONTEND_BUILD_ERROR = "Frontend source directory not found."
+        return
+
+    npm_command = "npm.cmd" if os.name == "nt" else "npm"
+    try:
+        subprocess.run(
+            [npm_command, "run", "build", "--", "--configLoader", "native"],
+            cwd=frontend_source_dir,
+            check=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        FRONTEND_BUILD_ERROR = str(exc)
+
+
 FRONTEND_DIR = _find_frontend_dir()
 RESERVED_FRONTEND_PREFIXES = {"api", "docs", "redoc", "openapi.json"}
 
@@ -200,6 +251,11 @@ def _get_frontend_dir():
     if FRONTEND_DIR and os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
         return FRONTEND_DIR
 
+    FRONTEND_DIR = _find_frontend_dir()
+    if FRONTEND_DIR:
+        return FRONTEND_DIR
+
+    _build_frontend_dist_once()
     FRONTEND_DIR = _find_frontend_dir()
     return FRONTEND_DIR
 
@@ -223,8 +279,13 @@ def _frontend_index_response():
     index_file = _resolve_frontend_file("index.html")
     if index_file:
         return FileResponse(index_file)
-    return {"message": "SmartCanteen AI API is running. Visit /docs for Swagger UI."}
+    message = "SmartCanteen AI API is running. Frontend build not found."
+    if FRONTEND_BUILD_ERROR:
+        message = f"{message} Auto-build failed: {FRONTEND_BUILD_ERROR}"
+    return {"message": message, "docs": "/docs"}
 
+
+FRONTEND_DIR = _get_frontend_dir()
 
 if FRONTEND_DIR:
     app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
@@ -655,6 +716,19 @@ def health():
     return {"status": "online", "timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"}
 
 
+@app.get("/api/frontend-status", tags=["System"])
+def frontend_status():
+    frontend_dir = _get_frontend_dir()
+    index_file = _resolve_frontend_file("index.html") if frontend_dir else None
+    return {
+        "frontend_dir": frontend_dir,
+        "index_file": index_file,
+        "index_exists": bool(index_file),
+        "auto_build_attempted": FRONTEND_BUILD_ATTEMPTED,
+        "auto_build_error": FRONTEND_BUILD_ERROR,
+    }
+
+
 @app.post("/api/seed", tags=["System"])
 def seed(db: Session = Depends(get_db)):
     """One-time demo data seeder. Idempotent."""
@@ -700,7 +774,7 @@ def seed(db: Session = Depends(get_db)):
 
 @app.get("/{full_path:path}", include_in_schema=False)
 def frontend_catch_all(full_path: str):
-    if not FRONTEND_DIR:
+    if not _get_frontend_dir():
         raise HTTPException(status_code=404, detail="Not found")
 
     top_level = full_path.split("/", 1)[0]

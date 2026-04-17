@@ -24,6 +24,43 @@ function formatCurrency(value) {
   return `PHP ${Number(value || 0).toFixed(2)}`;
 }
 
+function sanitizeMoneyInput(value) {
+  const digitsAndDots = String(value || '').replace(/[^\d.]/g, '');
+  const [whole = '', ...decimalParts] = digitsAndDots.split('.');
+  const decimal = decimalParts.join('').slice(0, 2);
+
+  return decimalParts.length > 0 ? `${whole}.${decimal}` : whole;
+}
+
+const MONEY_CONTROL_KEYS = new Set([
+  'Backspace',
+  'Delete',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'Tab',
+  'Enter',
+]);
+
+function preventInvalidMoneyKey(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey || MONEY_CONTROL_KEYS.has(event.key)) {
+    return;
+  }
+
+  if (/^\d$/.test(event.key)) {
+    return;
+  }
+
+  if (event.key === '.' && !event.currentTarget.value.includes('.')) {
+    return;
+  }
+
+  event.preventDefault();
+}
+
 export default function POS() {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
@@ -34,7 +71,6 @@ export default function POS() {
   const [discount, setDiscount] = useState(0);
   const [paymentType, setPaymentType] = useState('cash');
   const [amountReceived, setAmountReceived] = useState('');
-  const [notes, setNotes] = useState('');
 
   // Receipt Modal State
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -86,7 +122,6 @@ export default function POS() {
     if (window.confirm('Are you sure you want to clear the cart?')) {
       setCart([]);
       setDiscount(0);
-      setNotes('');
       setAmountReceived('');
       setShowOrderModal(false);
     }
@@ -108,6 +143,10 @@ export default function POS() {
   }, {});
 
   const isCheckoutDisabled = !hasCartItems || (paymentType === 'cash' && remainingBalance > 0);
+
+  const handleAmountReceivedChange = (event) => {
+    setAmountReceived(sanitizeMoneyInput(event.target.value));
+  };
 
   // --- Filtering ---
   const categories = ['All', ...new Set(products.map((p) => p.category))].sort();
@@ -133,7 +172,6 @@ export default function POS() {
       })),
       discount: numericDiscount,
       payment_type: paymentType,
-      notes: notes.trim() || null,
     };
 
     if (!navigator.onLine) {
@@ -184,7 +222,6 @@ export default function POS() {
     setCart([]);
     setDiscount(0);
     setAmountReceived('');
-    setNotes('');
     setShowOrderModal(false);
   };
 
@@ -418,7 +455,7 @@ export default function POS() {
                   </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="mt-3 grid grid-cols-2 gap-2">
                   <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
                     <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
                       Items
@@ -431,11 +468,23 @@ export default function POS() {
                     </div>
                     <div className="mt-1 text-base font-black">{totalUnits}</div>
                   </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
+                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
+                      Subtotal
+                    </div>
+                    <div className="mt-1 text-sm font-black">{formatCurrency(subtotal)}</div>
+                  </div>
                   <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5">
                     <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-100">
                       Total
                     </div>
                     <div className="mt-1 text-sm font-black">{formatCurrency(cartTotal)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-sky-400/20 bg-sky-400/10 px-3 py-2.5">
+                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-sky-100">
+                      Change
+                    </div>
+                    <div className="mt-1 text-sm font-black">{formatCurrency(change)}</div>
                   </div>
                 </div>
               </div>
@@ -476,7 +525,7 @@ export default function POS() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-4">
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-5">
                   <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
                     <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
                       Items
@@ -500,6 +549,12 @@ export default function POS() {
                       Total Due
                     </div>
                     <div className="mt-1 text-base font-black">{formatCurrency(cartTotal)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-sky-100">
+                      Change
+                    </div>
+                    <div className="mt-1 text-base font-black">{formatCurrency(change)}</div>
                   </div>
                 </div>
               </div>
@@ -603,7 +658,7 @@ export default function POS() {
                       Order details
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Add notes, apply a discount, and choose how the customer will pay.
+                      Apply a discount and choose how the customer will pay.
                     </p>
 
                     <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -652,18 +707,6 @@ export default function POS() {
                       </div>
                     </div>
 
-                    <label className="mt-3 block">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                        Notes
-                      </span>
-                      <textarea
-                        rows="3"
-                        placeholder="Add order notes for the kitchen or cashier"
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none transition focus:border-primary focus:bg-white"
-                      />
-                    </label>
                   </div>
 
                   {paymentType === 'cash' && (
@@ -674,11 +717,14 @@ export default function POS() {
                       </div>
 
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
+                        pattern="[0-9]*[.]?[0-9]*"
                         min={cartTotal}
                         step="0.01"
                         value={amountReceived}
-                        onChange={(e) => setAmountReceived(e.target.value)}
+                        onChange={handleAmountReceivedChange}
+                        onKeyDown={preventInvalidMoneyKey}
                         className="mt-3 w-full rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
                         placeholder="0.00"
                       />
@@ -871,21 +917,8 @@ export default function POS() {
                       Order details
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Add cashier notes, apply discounts, and choose how the customer will pay.
+                      Apply discounts and choose how the customer will pay.
                     </p>
-
-                    <label className="mt-4 block">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                        Notes
-                      </span>
-                      <textarea
-                        rows="3"
-                        placeholder="Add order notes for the kitchen or cashier"
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none transition focus:border-primary focus:bg-white"
-                      />
-                    </label>
 
                     <div className="mt-4 grid grid-cols-1 gap-4">
                       <label>
@@ -950,11 +983,14 @@ export default function POS() {
                       </div>
 
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
+                        pattern="[0-9]*[.]?[0-9]*"
                         min={cartTotal}
                         step="0.01"
                         value={amountReceived}
-                        onChange={(e) => setAmountReceived(e.target.value)}
+                        onChange={handleAmountReceivedChange}
+                        onKeyDown={preventInvalidMoneyKey}
                         className="mt-3 w-full rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
                         placeholder="0.00"
                       />
@@ -1104,14 +1140,6 @@ export default function POS() {
                     {receiptData.payment_type}
                   </span>
                 </div>
-                {receiptData.notes && (
-                  <div className="flex justify-between">
-                    <span>Notes:</span>
-                    <span className="max-w-[150px] truncate font-bold text-slate-700">
-                      {receiptData.notes}
-                    </span>
-                  </div>
-                )}
                 {receiptData.isOffline && (
                   <div className="mt-2 flex items-center justify-center gap-1 border-t border-slate-200 pt-2 font-bold text-amber-600">
                     Saved offline - pending sync

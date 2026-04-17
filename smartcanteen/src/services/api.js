@@ -119,6 +119,10 @@ function resolveApiBase() {
     return normalizeApiBase(NATIVE_API_BASE);
   }
 
+  if (isLocalWebHost()) {
+    return normalizeApiBase(`${window.location.origin}${API_ROOT_PATH}`);
+  }
+
   const secureWebApiBase = resolveSecureWebApiBase();
   if (secureWebApiBase) {
     return secureWebApiBase;
@@ -126,10 +130,6 @@ function resolveApiBase() {
 
   if (import.meta.env.DEV && isProxyRelativeApiBase(envApiBase)) {
     return API_ROOT_PATH;
-  }
-
-  if (isLocalWebHost() && isProxyRelativeApiBase(envApiBase)) {
-    return resolveLocalWebApiBase();
   }
 
   return normalizeApiBase(envApiBase || DEFAULT_REMOTE_API_BASE);
