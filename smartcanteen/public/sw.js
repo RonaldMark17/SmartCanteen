@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'smartcanteen-shell-v8';
+const SHELL_CACHE = 'smartcanteen-shell-v9';
 const SHELL_ASSETS = ['/', '/index.html', '/favicon.svg', '/icons.svg'];
 
 self.addEventListener('install', (event) => {

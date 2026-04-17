@@ -170,7 +170,6 @@ def _find_frontend_dir():
     configured_dir = os.environ.get("SMARTCANTEEN_FRONTEND_DIR")
     candidates = [
         configured_dir,
-        "/var/www/smartcanteen/dist",
         os.path.join(PROJECT_ROOT, "smartcanteen", "dist"),
         os.path.join(PROJECT_ROOT, "dist"),
         os.path.join(BACKEND_DIR, "smartcanteen", "dist"),
@@ -194,23 +193,12 @@ FRONTEND_DIR = _find_frontend_dir()
 RESERVED_FRONTEND_PREFIXES = {"api", "docs", "redoc", "openapi.json"}
 
 
-def _get_frontend_dir():
-    global FRONTEND_DIR
-
-    if FRONTEND_DIR and os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
-        return FRONTEND_DIR
-
-    FRONTEND_DIR = _find_frontend_dir()
-    return FRONTEND_DIR
-
-
 def _resolve_frontend_file(path: str):
-    frontend_dir = _get_frontend_dir()
-    if not frontend_dir:
+    if not FRONTEND_DIR:
         return None
 
     relative_path = os.path.normpath(path).lstrip("\\/")
-    absolute_root = os.path.abspath(frontend_dir)
+    absolute_root = os.path.abspath(FRONTEND_DIR)
     absolute_path = os.path.abspath(os.path.join(absolute_root, relative_path))
 
     if os.path.commonpath([absolute_root, absolute_path]) != absolute_root:

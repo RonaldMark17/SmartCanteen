@@ -91,7 +91,7 @@ function resolveSecureWebApiBase() {
     }
   }
 
-  return normalizeApiBase(`${window.location.origin}${API_ROOT_PATH}`);
+  return normalizeApiBase(DEFAULT_REMOTE_API_BASE);
 }
 
 export function formatLocalDateInputValue(value = new Date()) {
