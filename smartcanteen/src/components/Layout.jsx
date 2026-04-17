@@ -42,6 +42,8 @@ const LOW_STOCK_SIGNATURE_KEY = 'sc_low_stock_signature';
 const HIGH_DEMAND_SIGNATURE_KEY = 'sc_high_demand_signature';
 const DISMISSED_LOW_STOCK_ALERTS_KEY = 'sc_dismissed_low_stock_alerts';
 const DISMISSED_HIGH_DEMAND_ALERTS_KEY = 'sc_dismissed_high_demand_alerts';
+const READ_LOW_STOCK_ALERTS_KEY = 'sc_read_low_stock_alerts';
+const READ_HIGH_DEMAND_ALERTS_KEY = 'sc_read_high_demand_alerts';
 const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
 const LOW_STOCK_POLL_MS = 60000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
@@ -72,24 +74,24 @@ function getStoredUnreadAlerts() {
 
 function buildLowStockSignature(items) {
   return items
-    .map((item) => buildLowStockItemSignature(item))
+    .map((item) => buildLowStockAlertKey(item))
     .sort()
     .join('|');
 }
 
 function buildHighDemandSignature(items) {
   return items
-    .map((item) => buildHighDemandItemSignature(item))
+    .map((item) => buildHighDemandAlertKey(item))
     .sort()
     .join('|');
 }
 
-function buildLowStockItemSignature(item) {
-  return `${item.id}:${item.stock}:${item.min_stock}`;
+function buildLowStockAlertKey(item) {
+  return String(item?.id ?? item?.name ?? '');
 }
 
-function buildHighDemandItemSignature(item) {
-  return `${item.product_id}:${item.predicted_quantity}:${item.stock_gap}`;
+function buildHighDemandAlertKey(item) {
+  return String(item?.product_id ?? item?.product_name ?? '');
 }
 
 function persistAlertSignature(storageKey, signature) {
@@ -132,18 +134,47 @@ function saveDismissedAlertSignatures(storageKey, signatures) {
   localStorage.setItem(storageKey, JSON.stringify([...signatures]));
 }
 
-function filterDismissedAlerts(items, storageKey, buildSignature) {
-  const dismissedSignatures = readDismissedAlertSignatures(storageKey);
-  const activeSignatures = new Set(items.map((item) => buildSignature(item)));
-  const currentDismissed = new Set(
-    [...dismissedSignatures].filter((signature) => activeSignatures.has(signature))
+function pruneStoredAlertSignatures(storageKey, activeSignatures) {
+  const storedSignatures = readDismissedAlertSignatures(storageKey);
+  const currentSignatures = new Set(
+    [...storedSignatures].filter((signature) => activeSignatures.has(signature))
   );
 
-  if (currentDismissed.size !== dismissedSignatures.size) {
-    saveDismissedAlertSignatures(storageKey, currentDismissed);
+  if (currentSignatures.size !== storedSignatures.size) {
+    saveDismissedAlertSignatures(storageKey, currentSignatures);
   }
 
+  return currentSignatures;
+}
+
+function filterDismissedAlerts(items, storageKey, buildSignature) {
+  const activeSignatures = new Set(items.map((item) => buildSignature(item)));
+  const currentDismissed = pruneStoredAlertSignatures(storageKey, activeSignatures);
+
   return items.filter((item) => !currentDismissed.has(buildSignature(item)));
+}
+
+function filterUnreadAlerts(items, storageKey, buildSignature) {
+  const activeSignatures = new Set(items.map((item) => buildSignature(item)));
+  const readSignatures = pruneStoredAlertSignatures(storageKey, activeSignatures);
+
+  return items.filter((item) => !readSignatures.has(buildSignature(item)));
+}
+
+function markAlertItemsRead(storageKey, items, buildSignature) {
+  const readSignatures = readDismissedAlertSignatures(storageKey);
+
+  items.forEach((item) => {
+    readSignatures.add(buildSignature(item));
+  });
+
+  saveDismissedAlertSignatures(storageKey, readSignatures);
+}
+
+function getFreshAlertItems(items, previousSignature, buildSignature) {
+  const previousEntries = signatureToSet(previousSignature);
+
+  return items.filter((item) => !previousEntries.has(buildSignature(item)));
 }
 
 function normalizeHighDemandItems(response) {
@@ -415,7 +446,7 @@ export default function Layout({ children, onLogout }) {
   const [pendingSyncCount, setPendingSyncCount] = useState(countOfflineTransactions());
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  const [navSearch, setNavSearch] = useState('');
+  const [navSearch, _setNavSearch] = useState('');
   const alertsRequestInFlightRef = useRef(false);
 
   const user = getStoredUser();
@@ -435,21 +466,21 @@ export default function Layout({ children, onLogout }) {
   );
   const isActive = (path) => location.pathname === path;
   const totalAlertCount = lowStockItems.length + highDemandItems.length;
-  const pageMeta = getPageMeta(location.pathname);
-  const defaultRoute = getDefaultRoute(user.role);
-  const roleFocus = getRoleFocus(user.role);
+  const _pageMeta = getPageMeta(location.pathname);
+  const _defaultRoute = getDefaultRoute(user.role);
+  const _roleFocus = getRoleFocus(user.role);
   const displayName = user.full_name || user.username || 'SmartCanteen user';
-  const userInitials = getUserInitials(displayName);
-  const greeting = getGreeting(currentTime);
+  const _userInitials = getUserInitials(displayName);
+  const _greeting = getGreeting(currentTime);
   const formattedDate = formatWorkspaceDate(currentTime);
   const formattedTime = formatWorkspaceTime(currentTime);
   const workspaceStatus = isSynced ? 'Online and ready' : 'Offline cache active';
-  const alertSummary =
+  const _alertSummary =
     totalAlertCount > 0
       ? `${totalAlertCount} active alert${totalAlertCount > 1 ? 's' : ''}`
       : 'No active alerts';
   const navQuery = navSearch.trim().toLowerCase();
-  const filteredNavItems = visibleNavItems.filter((item) => {
+  const _filteredNavItems = visibleNavItems.filter((item) => {
     if (!navQuery) {
       return true;
     }
@@ -469,27 +500,47 @@ export default function Layout({ children, onLogout }) {
       const visibleItems = filterDismissedAlerts(
         items,
         DISMISSED_LOW_STOCK_ALERTS_KEY,
-        buildLowStockItemSignature
+        buildLowStockAlertKey
+      );
+      const unreadItems = filterUnreadAlerts(
+        visibleItems,
+        READ_LOW_STOCK_ALERTS_KEY,
+        buildLowStockAlertKey
       );
 
       setLowStockItems(visibleItems);
 
-      const nextSignature = buildLowStockSignature(visibleItems);
+      const nextSignature = buildLowStockSignature(unreadItems);
       const previousSignature = localStorage.getItem(LOW_STOCK_SIGNATURE_KEY) || '';
       const hasFreshEntries = hasNewSignatureEntries(previousSignature, nextSignature);
 
       persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, nextSignature);
 
       if (notifyOnChange && hasFreshEntries) {
-        const countLabel = visibleItems.length === 1 ? 'item is' : 'items are';
-        window.showToast?.(`${visibleItems.length} low stock ${countLabel} below alert level.`, 'warning');
-        await sendLowStockDeviceAlert(visibleItems);
+        const freshItems = getFreshAlertItems(
+          unreadItems,
+          previousSignature,
+          buildLowStockAlertKey
+        );
+        if (freshItems.length > 0) {
+          const countLabel = freshItems.length === 1 ? 'item is' : 'items are';
+          window.showToast?.(`${freshItems.length} low stock ${countLabel} below alert level.`, 'warning');
+          await sendLowStockDeviceAlert(freshItems);
+        }
       }
 
-      return { visibleItems, hasFreshEntries };
+      return { visibleItems, unreadItems, hasFreshEntries };
     } catch {
       // Keep the last successful alert state if refresh fails.
-      return { visibleItems: lowStockItems, hasFreshEntries: false };
+      return {
+        visibleItems: lowStockItems,
+        unreadItems: filterUnreadAlerts(
+          lowStockItems,
+          READ_LOW_STOCK_ALERTS_KEY,
+          buildLowStockAlertKey
+        ),
+        hasFreshEntries: false,
+      };
     }
   }
 
@@ -500,27 +551,47 @@ export default function Layout({ children, onLogout }) {
       const visibleItems = filterDismissedAlerts(
         items,
         DISMISSED_HIGH_DEMAND_ALERTS_KEY,
-        buildHighDemandItemSignature
+        buildHighDemandAlertKey
+      );
+      const unreadItems = filterUnreadAlerts(
+        visibleItems,
+        READ_HIGH_DEMAND_ALERTS_KEY,
+        buildHighDemandAlertKey
       );
 
       setHighDemandItems(visibleItems);
 
-      const nextSignature = buildHighDemandSignature(visibleItems);
+      const nextSignature = buildHighDemandSignature(unreadItems);
       const previousSignature = localStorage.getItem(HIGH_DEMAND_SIGNATURE_KEY) || '';
       const hasFreshEntries = hasNewSignatureEntries(previousSignature, nextSignature);
 
       persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, nextSignature);
 
       if (notifyOnChange && hasFreshEntries) {
-        const countLabel = visibleItems.length === 1 ? 'item may' : 'items may';
-        window.showToast?.(`${visibleItems.length} high demand ${countLabel} sell fast tomorrow.`, 'warning');
-        await sendHighDemandDeviceAlert(visibleItems);
+        const freshItems = getFreshAlertItems(
+          unreadItems,
+          previousSignature,
+          buildHighDemandAlertKey
+        );
+        if (freshItems.length > 0) {
+          const countLabel = freshItems.length === 1 ? 'item may' : 'items may';
+          window.showToast?.(`${freshItems.length} high demand ${countLabel} sell fast tomorrow.`, 'warning');
+          await sendHighDemandDeviceAlert(freshItems);
+        }
       }
 
-      return { visibleItems, hasFreshEntries };
+      return { visibleItems, unreadItems, hasFreshEntries };
     } catch {
       // Keep the last successful forecast alert state if refresh fails.
-      return { visibleItems: highDemandItems, hasFreshEntries: false };
+      return {
+        visibleItems: highDemandItems,
+        unreadItems: filterUnreadAlerts(
+          highDemandItems,
+          READ_HIGH_DEMAND_ALERTS_KEY,
+          buildHighDemandAlertKey
+        ),
+        hasFreshEntries: false,
+      };
     }
   }
 
@@ -539,15 +610,17 @@ export default function Layout({ children, onLogout }) {
       ]);
       const totalVisibleAlerts =
         lowStockResult.visibleItems.length + highDemandResult.visibleItems.length;
+      const totalUnreadAlerts =
+        lowStockResult.unreadItems.length + highDemandResult.unreadItems.length;
       const hasFreshAlerts =
         lowStockResult.hasFreshEntries || highDemandResult.hasFreshEntries;
 
       setHasUnreadAlerts((currentValue) => {
-        if (totalVisibleAlerts === 0) {
+        if (totalVisibleAlerts === 0 || totalUnreadAlerts === 0) {
           return false;
         }
 
-        return hasFreshAlerts ? true : currentValue;
+        return notifyOnChange && hasFreshAlerts ? true : currentValue;
       });
       setLastAlertCheck(new Date().toISOString());
     } finally {
@@ -582,12 +655,23 @@ export default function Layout({ children, onLogout }) {
     setAlertPermission(permission);
 
     if (permission === 'granted') {
+      const unreadLowStockItems = filterUnreadAlerts(
+        lowStockItems,
+        READ_LOW_STOCK_ALERTS_KEY,
+        buildLowStockAlertKey
+      );
+      const unreadHighDemandItems = filterUnreadAlerts(
+        highDemandItems,
+        READ_HIGH_DEMAND_ALERTS_KEY,
+        buildHighDemandAlertKey
+      );
+
       window.showToast?.('Phone alerts enabled for stock and demand warnings.', 'success');
-      if (lowStockItems.length > 0) {
-        await sendLowStockDeviceAlert(lowStockItems);
+      if (unreadLowStockItems.length > 0) {
+        await sendLowStockDeviceAlert(unreadLowStockItems);
       }
-      if (highDemandItems.length > 0) {
-        await sendHighDemandDeviceAlert(highDemandItems);
+      if (unreadHighDemandItems.length > 0) {
+        await sendHighDemandDeviceAlert(unreadHighDemandItems);
       }
       return;
     }
@@ -602,6 +686,7 @@ export default function Layout({ children, onLogout }) {
 
   function openNotifications() {
     setNotificationsOpen(true);
+    markAllNotificationsRead();
   }
 
   async function handleWorkspaceRefresh() {
@@ -628,37 +713,63 @@ export default function Layout({ children, onLogout }) {
   }
 
   function markAllNotificationsRead() {
+    markAlertItemsRead(READ_LOW_STOCK_ALERTS_KEY, lowStockItems, buildLowStockAlertKey);
+    markAlertItemsRead(READ_HIGH_DEMAND_ALERTS_KEY, highDemandItems, buildHighDemandAlertKey);
+    persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, '');
+    persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, '');
     setHasUnreadAlerts(false);
   }
 
   function dismissLowStockAlert(item) {
-    const signature = buildLowStockItemSignature(item);
+    const signature = buildLowStockAlertKey(item);
     const dismissed = readDismissedAlertSignatures(DISMISSED_LOW_STOCK_ALERTS_KEY);
     dismissed.add(signature);
     saveDismissedAlertSignatures(DISMISSED_LOW_STOCK_ALERTS_KEY, dismissed);
+    markAlertItemsRead(READ_LOW_STOCK_ALERTS_KEY, [item], buildLowStockAlertKey);
 
     const remainingLowStockItems = lowStockItems.filter(
-      (entry) => buildLowStockItemSignature(entry) !== signature
+      (entry) => buildLowStockAlertKey(entry) !== signature
     );
     setLowStockItems(remainingLowStockItems);
-    persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, buildLowStockSignature(remainingLowStockItems));
-    const remainingAlertCount = remainingLowStockItems.length + highDemandItems.length;
-    setHasUnreadAlerts((currentValue) => (remainingAlertCount === 0 ? false : currentValue));
+    const remainingUnreadLowStockItems = filterUnreadAlerts(
+      remainingLowStockItems,
+      READ_LOW_STOCK_ALERTS_KEY,
+      buildLowStockAlertKey
+    );
+    const unreadHighDemandItems = filterUnreadAlerts(
+      highDemandItems,
+      READ_HIGH_DEMAND_ALERTS_KEY,
+      buildHighDemandAlertKey
+    );
+    persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, buildLowStockSignature(remainingUnreadLowStockItems));
+    const remainingUnreadCount = remainingUnreadLowStockItems.length + unreadHighDemandItems.length;
+    setHasUnreadAlerts((currentValue) => (remainingUnreadCount === 0 ? false : currentValue));
   }
 
   function dismissHighDemandAlert(item) {
-    const signature = buildHighDemandItemSignature(item);
+    const signature = buildHighDemandAlertKey(item);
     const dismissed = readDismissedAlertSignatures(DISMISSED_HIGH_DEMAND_ALERTS_KEY);
     dismissed.add(signature);
     saveDismissedAlertSignatures(DISMISSED_HIGH_DEMAND_ALERTS_KEY, dismissed);
+    markAlertItemsRead(READ_HIGH_DEMAND_ALERTS_KEY, [item], buildHighDemandAlertKey);
 
     const remainingHighDemandItems = highDemandItems.filter(
-      (entry) => buildHighDemandItemSignature(entry) !== signature
+      (entry) => buildHighDemandAlertKey(entry) !== signature
     );
     setHighDemandItems(remainingHighDemandItems);
-    persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, buildHighDemandSignature(remainingHighDemandItems));
-    const remainingAlertCount = lowStockItems.length + remainingHighDemandItems.length;
-    setHasUnreadAlerts((currentValue) => (remainingAlertCount === 0 ? false : currentValue));
+    const remainingUnreadHighDemandItems = filterUnreadAlerts(
+      remainingHighDemandItems,
+      READ_HIGH_DEMAND_ALERTS_KEY,
+      buildHighDemandAlertKey
+    );
+    const unreadLowStockItems = filterUnreadAlerts(
+      lowStockItems,
+      READ_LOW_STOCK_ALERTS_KEY,
+      buildLowStockAlertKey
+    );
+    persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, buildHighDemandSignature(remainingUnreadHighDemandItems));
+    const remainingUnreadCount = unreadLowStockItems.length + remainingUnreadHighDemandItems.length;
+    setHasUnreadAlerts((currentValue) => (remainingUnreadCount === 0 ? false : currentValue));
   }
 
   function openLowStockAlert(item) {
@@ -758,7 +869,7 @@ export default function Layout({ children, onLogout }) {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const pulseCards = [
+  const _pulseCards = [
     {
       title: 'Workspace status',
       value: workspaceStatus,

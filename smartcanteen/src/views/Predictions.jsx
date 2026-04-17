@@ -4,7 +4,6 @@ import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
-  formatPhilippineDate,
   formatPhilippineDateTime,
   getPhilippineDateKey,
   getPhilippineWeekday,
@@ -13,19 +12,13 @@ import {
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
-  BeakerIcon,
-  BoltIcon,
   ChartBarIcon,
-  CheckBadgeIcon,
   CheckCircleIcon,
   CloudIcon,
-  CpuChipIcon,
   ExclamationTriangleIcon,
   FunnelIcon,
-  LightBulbIcon,
   MagnifyingGlassIcon,
   SparklesIcon,
-  SunIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -42,7 +35,7 @@ import { Line } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
-const ALGORITHM_OPTIONS = ['XGBoost', 'Random Forest', 'LSTM'];
+const DEFAULT_ALGORITHM = 'XGBoost';
 const OPENWEATHER_API_KEY = import.meta.env.VITE_OPENWEATHERMAP_API_KEY?.trim() || '';
 const OPENWEATHER_LAT = import.meta.env.VITE_OPENWEATHERMAP_LAT?.trim() || '';
 const OPENWEATHER_LON = import.meta.env.VITE_OPENWEATHERMAP_LON?.trim() || '';
@@ -96,31 +89,31 @@ const STATUS_OPTIONS = [
   { value: 'actionable', label: 'Recommended only' },
   { value: 'all', label: 'All products' },
   { value: 'restock', label: 'Restock' },
-  { value: 'reduce_waste', label: 'Reduce waste' },
-  { value: 'healthy', label: 'Healthy stock' },
-  { value: 'low_demand', label: 'Low demand' },
+  { value: 'reduce_waste', label: 'Use first' },
+  { value: 'healthy', label: 'Enough stock' },
+  { value: 'low_demand', label: 'Prep light' },
 ];
 const SORT_OPTIONS = [
   { value: 'priority', label: 'Priority' },
   { value: 'demand', label: 'Highest demand' },
-  { value: 'revenue', label: 'Highest revenue' },
-  { value: 'stock_gap', label: 'Largest stock gap' },
+  { value: 'revenue', label: 'Highest sales value' },
+  { value: 'stock_gap', label: 'Most items short' },
   { value: 'name', label: 'Product name' },
 ];
 const STATUS_META = {
   restock: { label: 'Restock', chip: 'bg-red-100 text-red-700', card: 'border-red-200 bg-red-50/70' },
   reduce_waste: {
-    label: 'Reduce Waste',
+    label: 'Use First',
     chip: 'bg-amber-100 text-amber-700',
     card: 'border-amber-200 bg-amber-50/70',
   },
   healthy: {
-    label: 'Healthy',
+    label: 'Enough Stock',
     chip: 'bg-emerald-100 text-emerald-700',
     card: 'border-emerald-200 bg-emerald-50/70',
   },
   low_demand: {
-    label: 'Low Demand',
+    label: 'Prep Light',
     chip: 'bg-slate-200 text-slate-700',
     card: 'border-slate-200 bg-slate-50/70',
   },
@@ -137,12 +130,23 @@ const ALGORITHM_REFERENCE_METRICS = {
 };
 const DEFAULT_METRICS = ALGORITHM_REFERENCE_METRICS.XGBoost;
 const SCHOOL_WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-const RECOMMENDATIONS_PER_PAGE = 6;
-const SAMPLE_ALGORITHM_METRICS = {
-  XGBoost: { accuracy: '91.4%', rmse: '4.38', mape: '8.6%', r2: '0.88' },
-  'Random Forest': { accuracy: '90.7%', rmse: '4.92', mape: '9.3%', r2: '0.84' },
-  LSTM: { accuracy: '88.9%', rmse: '5.34', mape: '11.1%', r2: '0.78' },
+const SCHOOL_WEEKDAY_SALES_WEIGHTS = {
+  Mon: 0.94,
+  Tue: 0.98,
+  Wed: 1,
+  Thu: 1.03,
+  Fri: 1.08,
 };
+const SCHOOL_WEEKDAY_FULL_NAMES = {
+  Mon: 'Monday',
+  Tue: 'Tuesday',
+  Wed: 'Wednesday',
+  Thu: 'Thursday',
+  Fri: 'Friday',
+};
+const SALES_OUTLOOK_EVENT = 'none';
+const SALES_OUTLOOK_EVENT_LABEL = 'regular class';
+const RECOMMENDATIONS_PER_PAGE = 6;
 const DEFAULT_FEATURE_SUMMARY = {
   modelFeatureGroups: [
     'recent sales lags',
@@ -169,78 +173,6 @@ const DEFAULT_FEATURE_SUMMARY = {
     eventSources: [],
   },
 };
-const SAMPLE_FORECAST_BLUEPRINTS = [
-  {
-    product_id: 'sample-1',
-    product_name: 'Chicken Tinola',
-    category: 'Soup',
-    current_stock: 14,
-    min_stock: 10,
-    base_quantity: 18,
-    historical_average: 16.5,
-    days_observed: 28,
-    unit_price: 50,
-    confidence: 'high',
-    recommendation_type: 'restock',
-    recommendation: 'Restock before lunch service because demand is projected to outpace stock.',
-  },
-  {
-    product_id: 'sample-2',
-    product_name: 'Soft Drinks (small)',
-    category: 'Drinks',
-    current_stock: 45,
-    min_stock: 20,
-    base_quantity: 32,
-    historical_average: 30.2,
-    days_observed: 32,
-    unit_price: 20,
-    confidence: 'high',
-    recommendation_type: 'healthy',
-    recommendation: 'Current stock can cover expected demand comfortably.',
-  },
-  {
-    product_id: 'sample-3',
-    product_name: 'Mango Float (slice)',
-    category: 'Dessert',
-    current_stock: 18,
-    min_stock: 5,
-    base_quantity: 8,
-    historical_average: 7.1,
-    days_observed: 18,
-    unit_price: 30,
-    confidence: 'medium',
-    recommendation_type: 'reduce_waste',
-    recommendation: 'Use the existing dessert stock first to reduce spoilage risk.',
-  },
-  {
-    product_id: 'sample-4',
-    product_name: 'Banana Cue',
-    category: 'Snacks',
-    current_stock: 10,
-    min_stock: 15,
-    base_quantity: 12,
-    historical_average: 11.4,
-    days_observed: 14,
-    unit_price: 15,
-    confidence: 'medium',
-    recommendation_type: 'restock',
-    recommendation: 'Prepare a small top-up batch before the afternoon rush.',
-  },
-  {
-    product_id: 'sample-5',
-    product_name: 'Biko (per slice)',
-    category: 'Dessert',
-    current_stock: 12,
-    min_stock: 4,
-    base_quantity: 4,
-    historical_average: 4.2,
-    days_observed: 9,
-    unit_price: 25,
-    confidence: 'low',
-    recommendation_type: 'low_demand',
-    recommendation: 'Demand looks light. Avoid over-prepping this item tomorrow.',
-  },
-];
 
 function formatCurrency(value) {
   return `PHP ${Number(value || 0).toFixed(2)}`;
@@ -290,15 +222,6 @@ function formatGeneratedAt(value) {
   });
 }
 
-function formatShortDate(value) {
-  if (!value) return 'No sales history';
-  return formatPhilippineDate(value, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
 function normalizeConfidence(value) {
   return value === 'high' || value === 'medium' || value === 'low' ? value : 'low';
 }
@@ -331,7 +254,7 @@ function normalizePrediction(prediction, index) {
     : Math.max(0, currentStock - predictedQuantity);
 
   const normalized = {
-    product_id: prediction?.product_id ?? `sample-${index}`,
+    product_id: prediction?.product_id ?? `prediction-${index}`,
     product_name: prediction?.product_name || `Product ${index + 1}`,
     category: prediction?.category || 'Uncategorized',
     current_stock: currentStock,
@@ -399,22 +322,6 @@ function normalizeFeatureSummary(summary) {
   };
 }
 
-function formatPredictionSourceLabel(source) {
-  if (source === 'ml+heuristic') return 'ML + heuristic blend';
-  if (source === 'category-assisted') return 'Category-assisted fallback';
-  if (source === 'catalog-fallback') return 'Catalog fallback';
-  if (source === 'sample') return 'Sample forecast';
-  return 'Heuristic fallback';
-}
-
-function getPredictionSourceClasses(source) {
-  if (source === 'ml+heuristic') return 'bg-sky-100 text-sky-700';
-  if (source === 'category-assisted') return 'bg-teal-100 text-teal-700';
-  if (source === 'catalog-fallback') return 'bg-violet-100 text-violet-700';
-  if (source === 'sample') return 'bg-indigo-100 text-indigo-700';
-  return 'bg-slate-200 text-slate-700';
-}
-
 function formatWeatherFetchedAt(value) {
   if (!value) return 'Not synced yet';
   return formatPhilippineDateTime(value, {
@@ -427,9 +334,9 @@ function formatWeatherFetchedAt(value) {
 }
 
 function formatWeatherDayLabel(value, timezone = 'Asia/Manila') {
-  if (!value) return 'Unknown day';
+  if (!value) return 'Forecast day';
   const date = parseBackendDateTime(value);
-  if (!date) return 'Unknown day';
+  if (!date) return 'Forecast day';
 
   if (typeof timezone === 'number' && Number.isFinite(timezone)) {
     const shiftedDate = new Date(date.getTime() + timezone * 1000);
@@ -447,58 +354,6 @@ function formatWeatherDayLabel(value, timezone = 'Asia/Manila') {
     day: 'numeric',
     timeZone: timezone,
   });
-}
-
-function getWeatherCardTheme(main) {
-  const normalized = String(main || '').toLowerCase();
-
-  if (normalized.includes('thunder') || normalized.includes('storm')) {
-    return {
-      Icon: BoltIcon,
-      card:
-        'border-violet-400/20 bg-[radial-gradient(circle_at_top,_rgba(168,85,247,0.26),_transparent_36%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(46,16,101,0.95))]',
-      iconWrap: 'border-violet-300/20 bg-violet-400/10 text-violet-100',
-      chip: 'bg-violet-400/15 text-violet-100 border border-violet-300/20',
-    };
-  }
-
-  if (normalized.includes('rain') || normalized.includes('drizzle')) {
-    return {
-      Icon: CloudIcon,
-      card:
-        'border-sky-400/20 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.22),_transparent_38%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(14,116,144,0.95))]',
-      iconWrap: 'border-sky-200/20 bg-sky-400/10 text-sky-100',
-      chip: 'bg-sky-400/15 text-sky-100 border border-sky-200/20',
-    };
-  }
-
-  if (normalized.includes('cloud')) {
-    return {
-      Icon: CloudIcon,
-      card:
-        'border-slate-400/20 bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.2),_transparent_38%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(51,65,85,0.95))]',
-      iconWrap: 'border-slate-200/20 bg-slate-400/10 text-slate-100',
-      chip: 'bg-slate-400/15 text-slate-100 border border-slate-200/20',
-    };
-  }
-
-  if (normalized.includes('clear') || normalized.includes('sun')) {
-    return {
-      Icon: SunIcon,
-      card:
-        'border-amber-400/20 bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.22),_transparent_40%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(120,53,15,0.95))]',
-      iconWrap: 'border-amber-200/20 bg-amber-400/10 text-amber-100',
-      chip: 'bg-amber-400/15 text-amber-100 border border-amber-200/20',
-    };
-  }
-
-  return {
-    Icon: SparklesIcon,
-    card:
-      'border-cyan-400/20 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.2),_transparent_38%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(30,41,59,0.96))]',
-    iconWrap: 'border-cyan-200/20 bg-cyan-400/10 text-cyan-100',
-    chip: 'bg-cyan-400/15 text-cyan-100 border border-cyan-200/20',
-  };
 }
 
 function getSchoolDayLabel(value) {
@@ -552,6 +407,116 @@ function normalizeTrend(trend) {
     });
 
   return SCHOOL_WEEK_LABELS.map((label) => trendByLabel.get(label) || { date: label, predicted_sales: 0 });
+}
+
+function inferForecastDayWeather(day) {
+  const description = `${day?.main || ''} ${day?.description || ''}`.toLowerCase();
+  const rainChance = Number(day?.rainChance || 0);
+  const maxTemp = Number(day?.maxTemp ?? Number.NaN);
+
+  if (description.includes('thunder') || description.includes('storm')) {
+    return 'thunderstorm';
+  }
+  if (description.includes('rain') || description.includes('drizzle') || rainChance >= 45) {
+    return 'rainy_monsoon';
+  }
+  if (description.includes('cloud') || (Number.isFinite(maxTemp) && maxTemp <= 27)) {
+    return 'cool_breezy';
+  }
+  return 'hot_dry';
+}
+
+function getForecastWeatherByWeekday(weatherForecast) {
+  const weatherByWeekday = new Map();
+
+  if (!Array.isArray(weatherForecast)) {
+    return weatherByWeekday;
+  }
+
+  weatherForecast.forEach((day) => {
+    const label = getSchoolDayLabel(day?.date);
+    if (label && SCHOOL_WEEK_LABELS.includes(label) && !weatherByWeekday.has(label)) {
+      weatherByWeekday.set(label, inferForecastDayWeather(day));
+    }
+  });
+
+  return weatherByWeekday;
+}
+
+function buildSchoolWeekSalesOutlook(
+  weeklyTrend,
+  expectedRevenue,
+  selectedWeather,
+  selectedEvent,
+  weatherForecast = []
+) {
+  const normalizedTrend = normalizeTrend(weeklyTrend);
+  const hasBackendTrend = normalizedTrend.some((item) => item.predicted_sales > 0);
+  const selectedScenarioModifier = Math.max(0.01, getScenarioModifier(selectedWeather, selectedEvent));
+  const weatherByWeekday = getForecastWeatherByWeekday(weatherForecast);
+  const baseRevenue = Math.max(0, Number(expectedRevenue || 0));
+
+  return SCHOOL_WEEK_LABELS.map((label) => {
+    const forecastWeather = weatherByWeekday.get(label);
+    const outlookWeather = forecastWeather || selectedWeather;
+    const dayModifier = getScenarioModifier(outlookWeather, SALES_OUTLOOK_EVENT);
+    const trendItem = normalizedTrend.find((item) => item.date === label);
+    const unadjustedSales = hasBackendTrend
+      ? Number(trendItem?.predicted_sales || 0) / selectedScenarioModifier
+      : (baseRevenue / selectedScenarioModifier) * (SCHOOL_WEEKDAY_SALES_WEIGHTS[label] || 1);
+
+    return {
+      date: label,
+      predicted_sales: Number(Math.max(0, unadjustedSales * dayModifier).toFixed(2)),
+      weather: outlookWeather,
+      weatherLabel: getWeatherProfile(outlookWeather).label,
+      usesForecastWeather: Boolean(forecastWeather),
+    };
+  });
+}
+
+function getWeekdayFullName(label) {
+  return SCHOOL_WEEKDAY_FULL_NAMES[label] || label;
+}
+
+function describeSchoolWeekSalesOutlook(outlook) {
+  const salesDays = outlook.filter((item) => item.predicted_sales > 0);
+  if (salesDays.length === 0) {
+    return 'The diagram will explain which school days are expected to be busier once sales data is available.';
+  }
+
+  const firstDay = salesDays[0];
+  const lastDay = salesDays[salesDays.length - 1];
+  const peakDay = salesDays.reduce(
+    (peak, item) => (item.predicted_sales > peak.predicted_sales ? item : peak),
+    salesDays[0]
+  );
+  const quietDay = salesDays.reduce(
+    (quietest, item) => (item.predicted_sales < quietest.predicted_sales ? item : quietest),
+    salesDays[0]
+  );
+
+  const firstName = getWeekdayFullName(firstDay.date);
+  const lastName = getWeekdayFullName(lastDay.date);
+  const peakName = getWeekdayFullName(peakDay.date);
+  const quietName = getWeekdayFullName(quietDay.date);
+
+  const movement =
+    lastDay.predicted_sales > firstDay.predicted_sales
+      ? `Sales are expected to go higher from ${firstName} (${formatCurrency(firstDay.predicted_sales)}) to ${lastName} (${formatCurrency(lastDay.predicted_sales)}).`
+      : lastDay.predicted_sales < firstDay.predicted_sales
+        ? `Sales are expected to go lower from ${firstName} (${formatCurrency(firstDay.predicted_sales)}) to ${lastName} (${formatCurrency(lastDay.predicted_sales)}).`
+        : `Sales are expected to stay steady from ${firstName} to ${lastName}.`;
+
+  const peakSummary = `${peakName} is the busiest day in the diagram at ${formatCurrency(peakDay.predicted_sales)} with ${peakDay.weatherLabel.toLowerCase()} weather.`;
+  const quietSummary =
+    quietDay.date !== peakDay.date
+      ? `${quietName} is the quietest day at ${formatCurrency(quietDay.predicted_sales)} with ${quietDay.weatherLabel.toLowerCase()} weather.`
+      : '';
+
+  return [movement, peakSummary, quietSummary, 'This diagram assumes regular class for the whole school week.']
+    .filter(Boolean)
+    .join(' ');
 }
 
 function deriveSummary(predictions) {
@@ -796,7 +761,6 @@ function normalizeOpenWeatherDailyForecast(payload) {
     if (!groupedDays.has(dayKey)) {
       groupedDays.set(dayKey, []);
     }
-
     groupedDays.get(dayKey).push(entry);
   });
 
@@ -805,41 +769,34 @@ function normalizeOpenWeatherDailyForecast(payload) {
     items: Array.from(groupedDays.entries())
       .slice(0, 5)
       .map(([dayKey, entries], index) => {
-        const representativeEntry = [...entries].sort((left, right) => {
-          const leftDistance = Math.abs(getForecastLocalHour(left?.dt, timezone) - 12);
-          const rightDistance = Math.abs(getForecastLocalHour(right?.dt, timezone) - 12);
-          return leftDistance - rightDistance;
-        })[0] || entries[0];
+        const representativeEntry =
+          [...entries].sort((left, right) => {
+            const leftDistance = Math.abs(getForecastLocalHour(left?.dt, timezone) - 12);
+            const rightDistance = Math.abs(getForecastLocalHour(right?.dt, timezone) - 12);
+            return leftDistance - rightDistance;
+          })[0] || entries[0];
         const mainTemperatures = entries.map((entry) => Number(entry?.main?.temp ?? 0));
-        const minTemperatures = entries.map((entry) => Number(entry?.main?.temp_min ?? entry?.main?.temp ?? 0));
-        const maxTemperatures = entries.map((entry) => Number(entry?.main?.temp_max ?? entry?.main?.temp ?? 0));
-        const humidityValues = entries.map((entry) => Number(entry?.main?.humidity ?? 0));
+        const minTemperatures = entries.map((entry) =>
+          Number(entry?.main?.temp_min ?? entry?.main?.temp ?? 0)
+        );
+        const maxTemperatures = entries.map((entry) =>
+          Number(entry?.main?.temp_max ?? entry?.main?.temp ?? 0)
+        );
         const rainChance = Math.max(
           0,
           ...entries.map((entry) => Math.round(Number(entry?.pop ?? 0) * 100))
         );
-        const windSpeed = Math.max(0, ...entries.map((entry) => Number(entry?.wind?.speed ?? 0)));
-        const averageHumidity =
-          humidityValues.length > 0
-            ? Math.round(humidityValues.reduce((sum, value) => sum + value, 0) / humidityValues.length)
-            : 0;
 
         return {
           id: `${dayKey}-${index}`,
           date: representativeEntry?.dt
             ? new Date(Number(representativeEntry.dt) * 1000).toISOString()
             : null,
-          summary:
-            rainChance > 0
-              ? `Peak rain chance ${rainChance}% across ${entries.length} forecast intervals.`
-              : `${entries.length} forecast intervals from the free 5-day feed.`,
           description: representativeEntry?.weather?.[0]?.description || 'Weather details unavailable',
           main: representativeEntry?.weather?.[0]?.main || 'Weather',
           minTemp: Math.min(...minTemperatures, ...mainTemperatures),
           maxTemp: Math.max(...maxTemperatures, ...mainTemperatures),
           rainChance,
-          humidity: Math.max(0, averageHumidity),
-          windSpeed,
         };
       }),
   };
@@ -883,15 +840,6 @@ function normalizeCatalogProducts(products) {
 
 function getCatalogFallbackMessaging(dataSource) {
   const source = String(dataSource || '').toLowerCase();
-
-  if (source.includes('sample')) {
-    return {
-      fallbackReason:
-        'This product is using catalog-based sample coverage because sample mode does not include a dedicated forecast row for it.',
-      recommendation:
-        'This product used a stock-based catalog estimate while sample mode is active.',
-    };
-  }
 
   if (!source || source === 'catalog-fallback' || source === 'error') {
     return {
@@ -976,9 +924,7 @@ function ensureForecastCoverage(baseForecast, catalogProducts, weather, event) {
     dataSource:
       baseForecast.dataSource === 'ml+heuristic'
         ? 'ml+heuristic+catalog'
-        : baseForecast.dataSource === 'sample'
-          ? 'sample+catalog'
-          : 'catalog-fallback',
+        : 'catalog-fallback',
     missingPredictionCount: missingPredictions.length,
   };
 }
@@ -1009,60 +955,6 @@ function buildCatalogOnlyForecast(catalogProducts, weather, event) {
     generatedAt: new Date().toISOString(),
     backendError: 'Using catalog fallback coverage.',
     missingPredictionCount: predictions.length,
-  };
-}
-
-function buildSampleForecast(weather, event, algorithm) {
-  const modifier = getScenarioModifier(weather, event);
-  const generatedAt = new Date().toISOString();
-
-  const predictions = SAMPLE_FORECAST_BLUEPRINTS.map((item) => {
-    const predictedQuantity = Math.round(item.base_quantity * modifier);
-    const stockGap = item.recommendation_type === 'restock'
-      ? Math.max(0, predictedQuantity - item.current_stock)
-      : 0;
-
-    return normalizePrediction({
-      product_id: item.product_id,
-      product_name: item.product_name,
-      category: item.category,
-      current_stock: item.current_stock,
-      min_stock: item.min_stock,
-      predicted_quantity: predictedQuantity,
-      historical_average: item.historical_average,
-      days_observed: item.days_observed,
-      estimated_revenue: Number((item.unit_price * predictedQuantity).toFixed(2)),
-      confidence: item.confidence,
-      prediction_source: 'sample',
-      active_feature_groups: DEFAULT_FEATURE_SUMMARY.modelFeatureGroups,
-      fallback_reason: '',
-      recommendation_type: item.recommendation_type,
-      stock_gap: stockGap,
-      overstock_units: Math.max(0, item.current_stock - predictedQuantity - stockGap),
-      last_sold_on: generatedAt,
-      recommendation: item.recommendation,
-    });
-  });
-
-  const weeklyTrend = normalizeTrend([
-    { date: 'Mon', predicted_sales: 4100 * modifier },
-    { date: 'Tue', predicted_sales: 4350 * modifier },
-    { date: 'Wed', predicted_sales: 4200 * modifier },
-    { date: 'Thu', predicted_sales: 4520 * modifier },
-    { date: 'Fri', predicted_sales: 4980 * modifier },
-  ]);
-  const summary = deriveSummary(predictions);
-
-  return {
-    metrics: SAMPLE_ALGORITHM_METRICS[algorithm] || SAMPLE_ALGORITHM_METRICS.XGBoost,
-    featureSummary: DEFAULT_FEATURE_SUMMARY,
-    predictions,
-    weeklyTrend,
-    summary,
-    insights: deriveInsights(predictions, summary, 'sample'),
-    dataSource: 'sample',
-    generatedAt,
-    backendError: '',
   };
 }
 
@@ -1213,12 +1105,6 @@ function getStatusMeta(type) {
   return STATUS_META[type] || STATUS_META.healthy;
 }
 
-function getConfidenceClasses(confidence) {
-  if (confidence === 'high') return 'bg-emerald-100 text-emerald-700';
-  if (confidence === 'medium') return 'bg-amber-100 text-amber-700';
-  return 'bg-slate-200 text-slate-700';
-}
-
 function isActionablePrediction(prediction) {
   return (
     prediction.recommendation_type === 'restock' ||
@@ -1264,23 +1150,6 @@ function MetricCard({ title, value, subtitle, accent }) {
   );
 }
 
-function RiskCard({ title, level, value, subtitle }) {
-  const meta = getRiskMeta(level);
-
-  return (
-    <div className={`rounded-2xl border p-5 shadow-sm ${meta.card}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{title}</div>
-        <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${meta.chip}`}>
-          {meta.label}
-        </span>
-      </div>
-      <div className="mt-3 text-2xl font-black text-slate-900">{value}</div>
-      <div className="mt-1 text-sm text-slate-600">{subtitle}</div>
-    </div>
-  );
-}
-
 function PredictionMetricCardsSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1289,27 +1158,6 @@ function PredictionMetricCardsSkeleton() {
           <SkeletonText lines={['h-3 w-24', 'h-8 w-28', 'h-4 w-36']} />
         </div>
       ))}
-    </div>
-  );
-}
-
-function PredictionRiskSkeleton() {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <SkeletonText lines={['h-7 w-36', 'h-4 w-80']} />
-        <Skeleton className="h-8 w-32 rounded-full" />
-      </div>
-      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-36 rounded-2xl" />
-        ))}
-      </div>
-      <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-3">
-        {Array.from({ length: 3 }, (_, index) => (
-          <Skeleton key={index} className="h-24 rounded-2xl" />
-        ))}
-      </div>
     </div>
   );
 }
@@ -1376,7 +1224,7 @@ function PredictionRecommendationsSkeleton() {
 
 export default function Predictions() {
   const location = useLocation();
-  const [algorithm, setAlgorithm] = useState('XGBoost');
+  const algorithm = DEFAULT_ALGORITHM;
   const [weather, setWeather] = useState('hot_dry');
   const [event, setEvent] = useState('none');
   const [search, setSearch] = useState('');
@@ -1387,8 +1235,6 @@ export default function Predictions() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [notificationFocus, setNotificationFocus] = useState(null);
-  const [showHelp, setShowHelp] = useState(false);
-  const [usingSampleData, setUsingSampleData] = useState(false);
   const [weatherSyncing, setWeatherSyncing] = useState(false);
   const [liveWeather, setLiveWeather] = useState(null);
   const [openWeatherIssue, setOpenWeatherIssue] = useState('');
@@ -1416,7 +1262,6 @@ export default function Predictions() {
   }
 
   async function loadForecast({
-    sample = false,
     algorithmOverride = algorithm,
     weatherOverride = weather,
     eventOverride = event,
@@ -1430,34 +1275,6 @@ export default function Predictions() {
     setLoading(true);
     setError('');
     setNotice('');
-
-    if (sample) {
-      try {
-        const catalogProducts = normalizeCatalogProducts(await API.getProducts());
-        const sampleForecast = ensureForecastCoverage(
-          buildSampleForecast(activeWeather, activeEvent, activeAlgorithm),
-          catalogProducts,
-          activeWeather,
-          activeEvent
-        );
-
-        setForecast(sampleForecast);
-        setUsingSampleData(true);
-        const sampleNotice =
-          sampleForecast.missingPredictionCount > 0
-            ? `Sample forecast loaded. ${sampleForecast.missingPredictionCount} additional product${sampleForecast.missingPredictionCount > 1 ? 's were' : ' was'} filled from the active catalog.`
-            : 'Sample forecast loaded. Use Refresh Forecast to switch back to live server data.';
-        setNotice(leadingNotice ? `${leadingNotice} ${sampleNotice}` : sampleNotice);
-      } catch {
-        setForecast(buildSampleForecast(activeWeather, activeEvent, activeAlgorithm));
-        setUsingSampleData(true);
-        const sampleNotice = 'Sample forecast loaded. Use Refresh Forecast to switch back to live server data.';
-        setNotice(leadingNotice ? `${leadingNotice} ${sampleNotice}` : sampleNotice);
-      }
-
-      setLoading(false);
-      return;
-    }
 
     try {
       const [predictionResult, productsResult] = await Promise.allSettled([
@@ -1489,7 +1306,6 @@ export default function Predictions() {
       }
 
       setForecast(normalized);
-      setUsingSampleData(false);
 
       const notices = leadingNotice ? [leadingNotice] : [];
       if (normalized.backendError) {
@@ -1517,10 +1333,6 @@ export default function Predictions() {
     }
   }
 
-  async function loadSampleForecast() {
-    await loadForecast({ sample: true });
-  }
-
   async function syncWeatherFromOpenWeatherMap() {
     if (!OPENWEATHER_API_KEY) {
       setOpenWeatherIssue(
@@ -1543,24 +1355,24 @@ export default function Predictions() {
 
     try {
       const forecastRequestUrl = buildOpenWeatherForecastUrl(coordinates);
-      const [currentResponse, forecastResponse] = await Promise.allSettled([
+      const [currentResult, forecastResult] = await Promise.allSettled([
         fetch(requestUrl),
         forecastRequestUrl ? fetch(forecastRequestUrl) : Promise.resolve(null),
       ]);
 
-      if (currentResponse.status !== 'fulfilled') {
+      if (currentResult.status !== 'fulfilled') {
         throw new Error('Unable to reach OpenWeatherMap right now.');
       }
 
-      if (!currentResponse.value.ok) {
+      if (!currentResult.value.ok) {
         const statusMessage = await readOpenWeatherError(
-          currentResponse.value,
-          `OpenWeatherMap returned HTTP ${currentResponse.value.status}.`
+          currentResult.value,
+          `OpenWeatherMap returned HTTP ${currentResult.value.status}.`
         );
         throw new Error(statusMessage);
       }
 
-      const payload = await currentResponse.value.json();
+      const payload = await currentResult.value.json();
       const mappedWeather = mapOpenWeatherToScenario(payload);
       const mappedProfile = getWeatherProfile(mappedWeather);
       const locationLabel =
@@ -1590,16 +1402,16 @@ export default function Predictions() {
       });
       setWeather(mappedWeather);
 
-      if (forecastResponse.status === 'fulfilled' && forecastResponse.value) {
-        if (forecastResponse.value.ok) {
-          const forecastPayload = await forecastResponse.value.json();
-          const normalizedDaily = normalizeOpenWeatherDailyForecast(forecastPayload);
-          setWeeklyWeatherForecast(normalizedDaily.items);
-          setWeatherForecastTimezone(normalizedDaily.timezone);
+      if (forecastResult.status === 'fulfilled' && forecastResult.value) {
+        if (forecastResult.value.ok) {
+          const forecastPayload = await forecastResult.value.json();
+          const normalizedForecast = normalizeOpenWeatherDailyForecast(forecastPayload);
+          setWeeklyWeatherForecast(normalizedForecast.items);
+          setWeatherForecastTimezone(normalizedForecast.timezone);
         } else {
           const forecastMessage = await readOpenWeatherError(
-            forecastResponse.value,
-            `OpenWeatherMap returned HTTP ${forecastResponse.value.status}.`
+            forecastResult.value,
+            `OpenWeatherMap returned HTTP ${forecastResult.value.status}.`
           );
           setWeeklyWeatherForecast([]);
           setWeatherForecastTimezone('Asia/Manila');
@@ -1608,21 +1420,19 @@ export default function Predictions() {
       } else {
         setWeeklyWeatherForecast([]);
         setWeatherForecastTimezone('Asia/Manila');
-        setWeatherForecastError(
-          '5-day forecast could not be loaded from OpenWeatherMap free forecast.'
-        );
+        setWeatherForecastError('5-day weather forecast is unavailable right now.');
       }
 
       await loadForecast({
         weatherOverride: mappedWeather,
-        leadingNotice: `OpenWeatherMap synced for ${locationLabel} using ${coordinates.source}. Using the ${mappedProfile.label} scenario for this forecast.`,
+        leadingNotice: `Weather updated from ${locationLabel}. Forecast is using ${mappedProfile.label}.`,
       });
     } catch (err) {
       setLiveWeather(null);
       setWeeklyWeatherForecast([]);
       setWeatherForecastTimezone('Asia/Manila');
       setOpenWeatherIssue(err.message || 'Unable to sync current weather from OpenWeatherMap.');
-      setWeatherForecastError(err.message || '5-day forecast is unavailable until OpenWeatherMap weather sync succeeds.');
+      setWeatherForecastError(err.message || '5-day weather forecast is unavailable right now.');
       await loadForecast();
     } finally {
       setWeatherSyncing(false);
@@ -1668,7 +1478,7 @@ export default function Predictions() {
         scrollToRecommendations();
       });
     });
-  }, [location.key]);
+  }, [location.key, location.state]);
 
   function isNotificationFocusMatch(prediction) {
     if (!notificationFocus) {
@@ -1736,18 +1546,13 @@ export default function Predictions() {
     const headers = [
       'Product',
       'Category',
-      'Status',
-      'Predicted Quantity',
+      'Recommended Action',
+      'Prepare',
       'Current Stock',
-      'Min Stock',
-      'Historical Average',
-      'Estimated Revenue',
-      'Confidence',
-      'Recommendation',
-      'Prediction Source',
-      'Fallback Reason',
-      'Active Feature Groups',
-      'Last Sold On',
+      'Need More',
+      'Use First',
+      'Expected Sales',
+      'Note',
     ];
 
     const rows = filteredPredictions.map((item) => [
@@ -1756,15 +1561,10 @@ export default function Predictions() {
       getStatusMeta(item.recommendation_type).label,
       item.predicted_quantity,
       item.current_stock,
-      item.min_stock,
-      item.historical_average,
+      item.stock_gap,
+      item.overstock_units,
       item.estimated_revenue,
-      item.confidence,
       item.recommendation,
-      item.prediction_source,
-      item.fallback_reason,
-      item.active_feature_groups.join(' | '),
-      item.last_sold_on || '',
     ]);
 
     const csv = [headers, ...rows]
@@ -1780,12 +1580,19 @@ export default function Predictions() {
     setNotice('Prediction export downloaded.');
   }
 
+  const schoolWeekSalesOutlook = buildSchoolWeekSalesOutlook(
+    forecast.weeklyTrend,
+    forecast.summary.expected_revenue,
+    weather,
+    event,
+    weeklyWeatherForecast
+  );
   const chartData = {
-    labels: forecast.weeklyTrend.map((item) => item.date),
+    labels: schoolWeekSalesOutlook.map((item) => item.date),
     datasets: [
       {
         label: 'Projected Revenue',
-        data: forecast.weeklyTrend.map((item) => item.predicted_sales),
+        data: schoolWeekSalesOutlook.map((item) => item.predicted_sales),
         borderColor: '#0f172a',
         backgroundColor: 'rgba(59, 130, 246, 0.15)',
         fill: true,
@@ -1796,163 +1603,128 @@ export default function Predictions() {
     ],
   };
 
-  const hasTrendData = forecast.weeklyTrend.some((item) => item.predicted_sales > 0);
-  const dataSourceLabel =
-    forecast.dataSource === 'ml+heuristic'
-      ? 'Hybrid ML forecast'
-      : forecast.dataSource === 'ml+heuristic+catalog'
-        ? 'Hybrid ML forecast with full catalog coverage'
-      : forecast.dataSource === 'sample'
-        ? 'Sample forecast'
-        : forecast.dataSource === 'sample+catalog'
-          ? 'Sample forecast with full catalog coverage'
-          : forecast.dataSource === 'catalog-fallback'
-            ? 'Catalog fallback forecast'
-        : 'Heuristic forecast';
+  const hasTrendData = schoolWeekSalesOutlook.some((item) => item.predicted_sales > 0);
+  const salesOutlookExplanation = describeSchoolWeekSalesOutlook(schoolWeekSalesOutlook);
+  const salesOutlookUsesForecastWeather = schoolWeekSalesOutlook.some(
+    (item) => item.usesForecastWeather
+  );
+  const eventLabel = EVENT_OPTIONS.find((option) => option.value === event)?.label || 'Regular Day';
+  const recommendationCountLabel =
+    statusFilter === 'actionable'
+      ? `${formatCount(pageStartCount)}-${formatCount(pageEndCount)} of ${formatCount(actionablePredictionsCount)} to check`
+      : `${formatCount(pageStartCount)}-${formatCount(pageEndCount)} of ${formatCount(filteredPredictions.length)} products`;
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto pb-8 pr-2 custom-scrollbar">
-      <div className="rounded-3xl bg-gradient-to-br from-slate-900 via-slate-900 to-blue-900 p-6 text-white shadow-xl">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div className="max-w-2xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-blue-100">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-emerald-700">
               <SparklesIcon className="h-4 w-4" />
-              Tomorrow Forecast
+              Tomorrow Prep
             </div>
-            <h1 className="mt-4 text-3xl font-black tracking-tight">AI Prediction Center</h1>
-            <p className="mt-3 text-sm text-slate-300">
-              Review demand, restock pressure, and waste risk before the next service window. The page keeps the last good forecast on screen if the API has a temporary problem.
+            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950">
+              Tomorrow Canteen Plan
+            </h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
+              A simple list of what to prepare, restock, or use first for the next school day.
             </p>
-            <div className="mt-4 flex flex-wrap gap-3 text-xs font-semibold text-slate-200">
+            <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold text-slate-600">
               {loading ? (
                 <>
-                  <Skeleton className="h-7 w-32 rounded-full bg-white/15" />
-                  <Skeleton className="h-7 w-40 rounded-full bg-white/15" />
-                  <Skeleton className="h-7 w-28 rounded-full bg-white/15" />
-                  <Skeleton className="h-7 w-28 rounded-full bg-white/15" />
+                  <Skeleton className="h-7 w-36 rounded-full" />
+                  <Skeleton className="h-7 w-28 rounded-full" />
+                  <Skeleton className="h-7 w-28 rounded-full" />
                 </>
               ) : (
                 <>
-                  <span className="rounded-full bg-white/10 px-3 py-1">Source: {dataSourceLabel}</span>
-                  <span className="rounded-full bg-white/10 px-3 py-1">Generated: {formatGeneratedAt(forecast.generatedAt)}</span>
-                  <span className="rounded-full bg-white/10 px-3 py-1">Algorithm: {algorithm}</span>
-                  <span className="rounded-full bg-white/10 px-3 py-1">Weather: {weatherProfile.label}</span>
-                  {liveWeather && (
-                    <span className="rounded-full bg-white/10 px-3 py-1">
-                      Weather Source: OpenWeatherMap
-                    </span>
-                  )}
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                    Updated {formatGeneratedAt(forecast.generatedAt)}
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                    {weatherProfile.label}
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                    {eventLabel}
+                  </span>
                 </>
               )}
             </div>
           </div>
 
-          <div className="grid w-full max-w-xl grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-slate-300">Algorithm</div>
+          <div className="grid w-full max-w-2xl grid-cols-1 gap-3 md:grid-cols-2">
+            <label className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                Weather
+              </div>
               <select
-                value={algorithm}
-                onChange={(eventTarget) => setAlgorithm(eventTarget.target.value)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900/40 px-3 py-2 text-sm font-semibold text-white outline-none"
-              >
-                {ALGORITHM_OPTIONS.map((option) => (
-                  <option key={option} value={option} className="text-slate-900">
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="rounded-2xl border border-white/10 bg-white/10 p-3">
-                <div className="text-[11px] font-bold uppercase tracking-widest text-slate-300">Weather</div>
-                <select
                 value={weather}
                 onChange={(eventTarget) => setWeather(eventTarget.target.value)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900/40 px-3 py-2 text-sm font-semibold text-white outline-none"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-800 outline-none transition focus:border-primary"
               >
                 {WEATHER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value} className="text-slate-900">
+                  <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
-                </select>
-                <div className="mt-2 text-xs text-slate-300">{weatherProfile.note}</div>
+              </select>
+              <div className="mt-2 text-xs leading-5 text-slate-500">{weatherProfile.note}</div>
+              {OPENWEATHER_API_KEY && (
                 <button
                   type="button"
                   onClick={syncWeatherFromOpenWeatherMap}
                   disabled={weatherSyncing}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-900/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {weatherSyncing ? (
                     <>
-                      <Skeleton className="h-4 w-4 rounded-md bg-white/30" />
-                      Syncing OpenWeatherMap...
+                      <Skeleton className="h-4 w-4 rounded-md" />
+                      Checking weather...
                     </>
                   ) : (
                     <>
                       <CloudIcon className="h-4 w-4" />
-                      Use OpenWeatherMap
+                      Use Current Weather
                     </>
                   )}
                 </button>
-                <div className="mt-2 text-[11px] text-slate-300/90">
-                  {OPENWEATHER_API_KEY
-                    ? `OpenWeatherMap uses your device location when permission is granted. If location is unavailable, it falls back to ${OPENWEATHER_LAT && OPENWEATHER_LON ? `${OPENWEATHER_LAT}, ${OPENWEATHER_LON}` : DEFAULT_OPENWEATHER_LOCATION_LABEL}.`
-                    : 'Set VITE_OPENWEATHERMAP_API_KEY to enable live OpenWeatherMap weather syncing.'}
-                </div>
+              )}
             </label>
 
-            <label className="rounded-2xl border border-white/10 bg-white/10 p-3 sm:col-span-2">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-slate-300">Campus Event</div>
+            <label className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                School Day
+              </div>
               <select
                 value={event}
                 onChange={(eventTarget) => setEvent(eventTarget.target.value)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900/40 px-3 py-2 text-sm font-semibold text-white outline-none"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-800 outline-none transition focus:border-primary"
               >
                 {EVENT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value} className="text-slate-900">
+                  <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
               </select>
-            </label>
-
-            <div className="flex flex-wrap gap-2 sm:col-span-2">
               <button
                 type="button"
                 onClick={() => loadForecast()}
                 disabled={loading}
-                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-black text-slate-900 transition hover:bg-slate-100"
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? (
                   <>
-                    <Skeleton className="h-4 w-4 rounded-md bg-slate-300" />
-                    Refreshing...
+                    <Skeleton className="h-4 w-4 rounded-md bg-white/30" />
+                    Updating...
                   </>
                 ) : (
                   <>
                     <ArrowPathIcon className="h-4 w-4" />
-                    Refresh Forecast
+                    Update Plan
                   </>
                 )}
               </button>
-              <button
-                type="button"
-                onClick={loadSampleForecast}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-black text-white transition hover:bg-white/15"
-              >
-                <BeakerIcon className="h-4 w-4" />
-                Load Sample
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowHelp(true)}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-black text-white transition hover:bg-white/15"
-              >
-                <LightBulbIcon className="h-4 w-4" />
-                How it works
-              </button>
-            </div>
+            </label>
           </div>
         </div>
       </div>
@@ -1967,13 +1739,13 @@ export default function Predictions() {
         />
       )}
 
-      {(notice || usingSampleData) && (
+      {notice && (
         <InlineAlert
-          resetKey={`${notice}-${usingSampleData}`}
+          resetKey={notice}
           tone="amber"
-          title={usingSampleData ? 'Sample forecast mode' : 'Forecast notice'}
+          title="Forecast notice"
           icon={CloudIcon}
-          body={notice || 'Sample data is on screen. Refresh the forecast to request live data again.'}
+          body={notice}
         />
       )}
 
@@ -1981,10 +1753,10 @@ export default function Predictions() {
         <InlineAlert
           resetKey={openWeatherIssue}
           tone="amber"
-          title="OpenWeatherMap setup issue"
+          title="Weather update unavailable"
           icon={CloudIcon}
           body={openWeatherIssue}
-          helperText="Predictions are still running with the selected weather profile."
+          helperText="The plan is still using the weather selected above."
           helperToneClassName="text-amber-700"
         />
       )}
@@ -1993,160 +1765,85 @@ export default function Predictions() {
         <InlineAlert
           resetKey={`${liveWeather.fetchedAt}-${liveWeather.summary}`}
           tone="sky"
-          title="OpenWeatherMap weather sync"
+          title="Current weather applied"
           icon={CloudIcon}
           body={`${liveWeather.location} | ${liveWeather.summary}`}
-          helperText={`Synced ${formatWeatherFetchedAt(liveWeather.fetchedAt)} | Coordinates: ${liveWeather.coordinatesLabel} from ${liveWeather.coordinateSource} | Forecast scenario: ${getWeatherProfile(liveWeather.mappedWeather).label}`}
+          helperText={`Checked ${formatWeatherFetchedAt(liveWeather.fetchedAt)}. Plan is using ${getWeatherProfile(liveWeather.mappedWeather).label}.`}
           helperToneClassName="text-sky-700"
         />
       )}
 
-      <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-sky-700">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-sky-700">
               <CloudIcon className="h-4 w-4" />
-              Free Weather Feed
+              Weather
             </div>
-            <h2 className="mt-3 text-xl font-black tracking-tight text-slate-900 sm:text-2xl">
-              5-Day Weather Forecast
-            </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              Use OpenWeatherMap&apos;s free forecast feed to preview the next 5 days of weather and support planning beyond tomorrow&apos;s sales forecast.
+            <h2 className="mt-3 text-lg font-black text-slate-900">5-Day Weather Forecast</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Use this to adjust drinks, warm meals, and prep volume for the week.
             </p>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-            <div className="rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.24em] text-white">
-              {weeklyWeatherForecast.length > 0
-                ? 'OpenWeatherMap loaded'
-                : OPENWEATHER_API_KEY
-                  ? 'Manual weather sync'
-                  : 'Weather sync disabled'}
-            </div>
-            {liveWeather?.location && (
-              <div className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[11px] font-bold text-slate-600">
-                {liveWeather.location}
-              </div>
-            )}
+          <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-black text-slate-600">
+            {weeklyWeatherForecast.length > 0
+              ? `${weeklyWeatherForecast.length} days loaded`
+              : OPENWEATHER_API_KEY
+                ? 'Use Current Weather'
+                : 'Weather sync unavailable'}
           </div>
         </div>
 
-        {weeklyWeatherForecast.length > 0 ? (
-          <div className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50 p-3 sm:p-4">
-            <div className="mb-4 flex flex-col gap-2 border-b border-slate-200/80 pb-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-xs font-semibold text-slate-500">
-                Synced {formatWeatherFetchedAt(liveWeather?.fetchedAt)} for {liveWeather?.location || DEFAULT_OPENWEATHER_LOCATION_LABEL}
-              </div>
-              <div className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400 sm:hidden">
-                Mobile-friendly stacked forecast
-              </div>
-              <div className="hidden text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400 sm:block">
-                Responsive forecast overview
-              </div>
-            </div>
-
-            <div className="mb-4 flex flex-wrap gap-2">
-              <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600">
-                {weeklyWeatherForecast.length} forecast days
-              </div>
-              {liveWeather?.coordinateSource && (
-                <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600">
-                  Source: {liveWeather.coordinateSource}
-                </div>
-              )}
-              <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600">
-                Scenario: {getWeatherProfile(liveWeather?.mappedWeather || weather).label}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                {weeklyWeatherForecast.map((day) => {
-                  const theme = getWeatherCardTheme(day.main);
-                  const WeatherIcon = theme.Icon;
-
-                  return (
-                  <article
-                    key={day.id}
-                    className={`w-full rounded-[26px] border p-4 text-white shadow-lg shadow-slate-900/10 ${theme.card}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-400">
-                          {formatWeatherDayLabel(day.date, weatherForecastTimezone)}
-                        </div>
-                        <div className="mt-2 text-lg font-black tracking-tight text-white">
-                          {day.main}
-                        </div>
-                        <div className="mt-1 text-sm text-slate-300">{day.description}</div>
-                      </div>
-                      <div className={`rounded-2xl p-3 ${theme.iconWrap}`}>
-                        <WeatherIcon className="h-5 w-5" />
-                      </div>
-                    </div>
-
-                    {day.summary && (
-                      <div className="mt-3 min-h-[3.5rem] rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs leading-5 text-slate-300">
-                        {day.summary}
-                      </div>
-                    )}
-
-                    <div className={`mt-3 inline-flex rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] ${theme.chip}`}>
-                      {day.main}
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
-                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">High</div>
-                        <div className="mt-1 text-base font-black text-white">
-                          {day.maxTemp.toFixed(1)}C
-                        </div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
-                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">Low</div>
-                        <div className="mt-1 text-base font-black text-white">
-                          {day.minTemp.toFixed(1)}C
-                        </div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
-                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">Rain</div>
-                        <div className="mt-1 text-base font-black text-white">{day.rainChance}%</div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3">
-                        <div className="font-bold uppercase tracking-[0.24em] text-slate-400">Wind</div>
-                        <div className="mt-1 text-base font-black text-white">
-                          {day.windSpeed.toFixed(1)} m/s
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                )})}
-            </div>
-          </div>
-        ) : weatherForecastError ? (
-          <InlineAlert
-            resetKey={weatherForecastError}
-            tone="amber"
-            title="5-day forecast unavailable"
-            className="mt-5 rounded-[24px] px-4 py-4 sm:px-5"
-            body={<div className="leading-6">{weatherForecastError}</div>}
-            helperText="The free tier uses OpenWeatherMap's 5-day / 3-hour forecast feed instead of the paid One Call daily API."
-            helperToneClassName="text-amber-700"
-          />
-        ) : (
-          <div className="mt-5 rounded-[24px] border border-dashed border-slate-200 bg-white/70 px-4 py-8 text-center sm:px-5">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
-              <CloudIcon className="h-6 w-6" />
-            </div>
-            <div className="mt-4 text-sm font-bold text-slate-700">No 5-day weather forecast yet</div>
-            <div className="mt-1 text-sm leading-6 text-slate-500">
-              {OPENWEATHER_API_KEY
-                ? 'Use OpenWeatherMap to load the next 5 days for your current location using the free forecast API.'
-                : 'Add a valid OpenWeatherMap API key to enable optional 5-day weather syncing.'}
-            </div>
+        {weatherForecastError && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+            {weatherForecastError}
           </div>
         )}
-      </div>
+
+        {weeklyWeatherForecast.length > 0 ? (
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {weeklyWeatherForecast.map((day) => (
+              <article
+                key={day.id}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                      {formatWeatherDayLabel(day.date, weatherForecastTimezone)}
+                    </div>
+                    <div className="mt-2 text-base font-black text-slate-900">{day.main}</div>
+                    <div className="mt-1 text-sm capitalize text-slate-500">{day.description}</div>
+                  </div>
+                  <div className="rounded-xl bg-white p-2 text-sky-600 shadow-sm">
+                    <CloudIcon className="h-5 w-5" />
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="rounded-xl bg-white px-2 py-2">
+                    <div className="font-bold uppercase tracking-widest text-slate-400">High</div>
+                    <div className="mt-1 font-black text-slate-900">{day.maxTemp.toFixed(1)}C</div>
+                  </div>
+                  <div className="rounded-xl bg-white px-2 py-2">
+                    <div className="font-bold uppercase tracking-widest text-slate-400">Low</div>
+                    <div className="mt-1 font-black text-slate-900">{day.minTemp.toFixed(1)}C</div>
+                  </div>
+                  <div className="rounded-xl bg-white px-2 py-2">
+                    <div className="font-bold uppercase tracking-widest text-slate-400">Rain</div>
+                    <div className="mt-1 font-black text-slate-900">{day.rainChance}%</div>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm font-semibold text-slate-500">
+            {OPENWEATHER_API_KEY
+              ? 'Click Use Current Weather to load the 5-day forecast.'
+              : 'Add an OpenWeatherMap API key to show the 5-day forecast.'}
+          </div>
+        )}
+      </section>
 
       {notificationFocus && (
         <InlineAlert
@@ -2160,85 +1857,131 @@ export default function Predictions() {
       {loading ? (
         <>
           <PredictionMetricCardsSkeleton />
-          <PredictionRiskSkeleton />
           <PredictionOverviewSkeleton />
         </>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard title="Expected Revenue" value={formatCurrency(forecast.summary.expected_revenue)} subtitle={`${formatCount(forecast.summary.total_products)} products in forecast`} accent="border-slate-200 bg-white" />
-            <MetricCard title="Expected Units" value={formatCount(forecast.summary.expected_units)} subtitle="Projected items to prepare tomorrow" accent="border-slate-200 bg-white" />
-            <MetricCard title="Restock Needed" value={formatCount(forecast.summary.restock_count)} subtitle="Products forecast to run short" accent="border-red-200 bg-red-50/60" />
-            <MetricCard title="Waste Risk" value={formatCount(forecast.summary.waste_risk_count)} subtitle="Products carrying extra stock" accent="border-amber-200 bg-amber-50/60" />
+            <MetricCard
+              title="Expected Sales"
+              value={formatCurrency(forecast.summary.expected_revenue)}
+              subtitle="Projected revenue for the next plan"
+              accent="border-slate-200 bg-white"
+            />
+            <MetricCard
+              title="Items to Prepare"
+              value={formatCount(forecast.summary.expected_units)}
+              subtitle={`${formatCount(forecast.summary.total_products)} products checked`}
+              accent="border-slate-200 bg-white"
+            />
+            <MetricCard
+              title="Need Restock"
+              value={formatCount(forecast.summary.restock_count)}
+              subtitle="Products that may run short"
+              accent="border-red-200 bg-red-50/60"
+            />
+            <MetricCard
+              title="Use First"
+              value={formatCount(forecast.summary.waste_risk_count)}
+              subtitle="Products with extra stock"
+              accent="border-amber-200 bg-amber-50/60"
+            />
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <h2 className="text-lg font-black text-slate-900">Risk Analysis</h2>
+                <h2 className="text-lg font-black text-slate-900">Risk Analysis Summary</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Simple risk checks based on stock gaps, weather, event impact, and forecast quality.
+                  Quick checks for stock, waste, and school-day conditions before service starts.
                 </p>
               </div>
-              <div className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${getRiskMeta(riskAnalysis.overallLevel).chip}`}>
+              <span
+                className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1.5 text-xs font-black uppercase tracking-widest ${getRiskMeta(riskAnalysis.overallLevel).chip}`}
+              >
                 <ExclamationTriangleIcon className="h-4 w-4" />
-                {getRiskMeta(riskAnalysis.overallLevel).label} overall risk
+                {getRiskMeta(riskAnalysis.overallLevel).label} risk
+              </span>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className={`rounded-2xl border p-4 ${getRiskMeta(riskAnalysis.overallLevel).card}`}>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                  Overall
+                </div>
+                <div className="mt-2 text-lg font-black text-slate-900">
+                  {getRiskMeta(riskAnalysis.overallLevel).label}
+                </div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">
+                  {riskAnalysis.overallMessage}
+                </div>
+              </div>
+
+              <div className={`rounded-2xl border p-4 ${getRiskMeta(riskAnalysis.supplyLevel).card}`}>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                  Supply
+                </div>
+                <div className="mt-2 text-lg font-black text-slate-900">
+                  {formatCount(forecast.summary.restock_count)} item
+                  {forecast.summary.restock_count === 1 ? '' : 's'}
+                </div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">
+                  {formatCount(riskAnalysis.totalStockGap)} total units may be short.
+                </div>
+              </div>
+
+              <div className={`rounded-2xl border p-4 ${getRiskMeta(riskAnalysis.wasteLevel).card}`}>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                  Use First
+                </div>
+                <div className="mt-2 text-lg font-black text-slate-900">
+                  {formatCount(forecast.summary.waste_risk_count)} item
+                  {forecast.summary.waste_risk_count === 1 ? '' : 's'}
+                </div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">
+                  {formatCount(riskAnalysis.totalOverstockUnits)} units have extra stock.
+                </div>
+              </div>
+
+              <div className={`rounded-2xl border p-4 ${getRiskMeta(riskAnalysis.weatherLevel).card}`}>
+                <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                  Weather
+                </div>
+                <div className="mt-2 text-lg font-black text-slate-900">
+                  {weatherProfile.label}
+                </div>
+                <div className="mt-1 text-sm leading-6 text-slate-600">
+                  {getWeatherRiskMessage(weather)}
+                </div>
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <RiskCard
-                title="Overall Risk"
-                level={riskAnalysis.overallLevel}
-                value={getRiskMeta(riskAnalysis.overallLevel).label}
-                subtitle={riskAnalysis.overallMessage}
-              />
-              <RiskCard
-                title="Supply Risk"
-                level={riskAnalysis.supplyLevel}
-                value={`${formatCount(forecast.summary.restock_count)} item${forecast.summary.restock_count !== 1 ? 's' : ''}`}
-                subtitle={`${formatCount(riskAnalysis.totalStockGap)} total units may be short.`}
-              />
-              <RiskCard
-                title="Weather Risk"
-                level={riskAnalysis.weatherLevel}
-                value={weatherProfile.label}
-                subtitle={getWeatherRiskMessage(weather)}
-              />
-              <RiskCard
-                title="Forecast Risk"
-                level={riskAnalysis.forecastLevel}
-                value={`${formatCount(riskAnalysis.lowConfidenceCount)} low-confidence`}
-                subtitle={`${formatCount(forecast.summary.heuristic_predictions)} heuristic forecast rows need extra review.`}
-              />
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-3">
-              {riskAnalysis.alerts.map((alert, index) => {
-                const meta = getRiskMeta(alert.level);
-
-                return (
-                  <div key={`${alert.title}-${index}`} className={`rounded-2xl border p-4 ${meta.card}`}>
-                    <div className="text-xs font-black uppercase tracking-widest text-slate-500">{alert.title}</div>
-                    <div className="mt-2 text-sm text-slate-700">{alert.message}</div>
+            <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+              {riskAnalysis.alerts.slice(0, 3).map((alert, index) => (
+                <div
+                  key={`${alert.title}-${index}`}
+                  className={`rounded-2xl border px-4 py-3 ${getRiskMeta(alert.level).card}`}
+                >
+                  <div className="text-xs font-black uppercase tracking-widest text-slate-500">
+                    {alert.title}
                   </div>
-                );
-              })}
+                  <div className="mt-1 text-sm leading-6 text-slate-700">{alert.message}</div>
+                </div>
+              ))}
             </div>
-          </div>
+          </section>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-2">
               <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-black text-slate-900">Projected 5-Day School Revenue Trend</h2>
-                  <p className="mt-1 text-sm text-slate-500">Revenue outlook for the Monday to Friday school week, based on your saved transaction data and adjusted by weather and event assumptions.</p>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-right text-xs font-semibold text-slate-500 sm:grid-cols-4">
-                  <div className="rounded-xl bg-slate-50 px-3 py-2"><div>Accuracy</div><div className="mt-1 text-sm font-black text-slate-900">{forecast.metrics.accuracy}</div></div>
-                  <div className="rounded-xl bg-slate-50 px-3 py-2"><div>RMSE</div><div className="mt-1 text-sm font-black text-slate-900">{forecast.metrics.rmse}</div></div>
-                  <div className="rounded-xl bg-slate-50 px-3 py-2"><div>MAPE</div><div className="mt-1 text-sm font-black text-slate-900">{forecast.metrics.mape}</div></div>
-                  <div className="rounded-xl bg-slate-50 px-3 py-2"><div>R2</div><div className="mt-1 text-sm font-black text-slate-900">{forecast.metrics.r2}</div></div>
+                  <h2 className="text-lg font-black text-slate-900">School Week Sales Outlook</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Predicted expected sales from Monday to Friday using {salesOutlookUsesForecastWeather ? 'the 5-day weather forecast' : weatherProfile.label.toLowerCase()} and {SALES_OUTLOOK_EVENT_LABEL}.
+                  </p>
+                  <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">
+                    {salesOutlookExplanation}
+                  </p>
                 </div>
               </div>
 
@@ -2257,22 +2000,51 @@ export default function Predictions() {
                 ) : (
                   <EmptyState
                     title="No trend data yet"
-                    message="The forecast engine has not produced a school-week revenue trend yet. Try refreshing the live data or load the sample forecast to preview the page behavior."
+                    message="The weekly sales chart will appear after the forecast has sales values to show."
                   />
                 )}
               </div>
+
+              {hasTrendData && (
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  {schoolWeekSalesOutlook.map((item) => (
+                    <div key={`sales-outlook-${item.date}`} className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                        {item.date}
+                      </div>
+                      <div className="mt-1 text-sm font-black text-slate-900">
+                        {formatCurrency(item.predicted_sales)}
+                      </div>
+                      <div className="mt-1 truncate text-[11px] font-bold text-slate-500">
+                        {item.weatherLabel}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-black text-slate-900">Forecast Insights</h2>
-                  <p className="mt-1 text-sm text-slate-500">Quick takeaways pulled from the current prediction run.</p>
+                  <h2 className="text-lg font-black text-slate-900">Things to Check</h2>
+                  <p className="mt-1 text-sm text-slate-500">Short notes for tomorrow&apos;s prep.</p>
                 </div>
-                <CheckBadgeIcon className="h-6 w-6 text-primary" />
+                <CheckCircleIcon className="h-6 w-6 text-primary" />
               </div>
 
               <div className="mt-5 space-y-3">
+                <div className={`rounded-2xl border p-4 ${getRiskMeta(riskAnalysis.overallLevel).card}`}>
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500">
+                    <ExclamationTriangleIcon className="h-4 w-4" />
+                    Service Note
+                  </div>
+                  <div className="mt-2 text-sm font-black text-slate-900">
+                    {getRiskMeta(riskAnalysis.overallLevel).label} attention
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">{riskAnalysis.overallMessage}</div>
+                </div>
+
                 {forecast.insights.map((insight, index) => {
                   const meta = getStatusMeta(insight.type);
                   return (
@@ -2284,82 +2056,6 @@ export default function Predictions() {
                   );
                 })}
               </div>
-
-              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                <div className="flex items-center gap-2 font-black text-slate-900">
-                  <CpuChipIcon className="h-5 w-5 text-slate-400" />
-                  Forecast coverage
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-xl bg-white px-3 py-2">
-                    <div className="text-slate-500">Model-backed</div>
-                    <div className="mt-1 text-sm font-black text-slate-900">{formatCount(forecast.summary.model_backed_predictions)}</div>
-                  </div>
-                  <div className="rounded-xl bg-white px-3 py-2">
-                    <div className="text-slate-500">Heuristic</div>
-                    <div className="mt-1 text-sm font-black text-slate-900">{formatCount(forecast.summary.heuristic_predictions)}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                <div className="flex items-center gap-2 font-black text-slate-900">
-                  <BoltIcon className="h-5 w-5 text-slate-400" />
-                  Active forecast inputs
-                </div>
-                <div className="mt-3 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                  ML feature groups
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {forecast.featureSummary.modelFeatureGroups.map((group) => (
-                    <span
-                      key={`ml-${group}`}
-                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-sky-700"
-                    >
-                      {group}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="mt-4 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                  Heuristic fallback groups
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {forecast.featureSummary.heuristicFeatureGroups.map((group) => (
-                    <span
-                      key={`heuristic-${group}`}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-widest text-slate-700"
-                    >
-                      {group}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-xl bg-white px-3 py-2">
-                    <div className="text-slate-500">Weather history rows</div>
-                    <div className="mt-1 text-sm font-black text-slate-900">
-                      {formatCount(forecast.featureSummary.historicalDrivers.weatherDays)}
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-white px-3 py-2">
-                    <div className="text-slate-500">School-event rows</div>
-                    <div className="mt-1 text-sm font-black text-slate-900">
-                      {formatCount(forecast.featureSummary.historicalDrivers.eventDays)}
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-white px-3 py-2 col-span-2">
-                    <div className="text-slate-500">Driver history range</div>
-                    <div className="mt-1 text-sm font-black text-slate-900">
-                      {forecast.featureSummary.historicalDrivers.startDate
-                        ? `${formatShortDate(forecast.featureSummary.historicalDrivers.startDate)} to ${formatShortDate(
-                            forecast.featureSummary.historicalDrivers.endDate
-                          )}`
-                        : 'Not available'}
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </>
@@ -2368,8 +2064,10 @@ export default function Predictions() {
       <div ref={recommendationsRef} className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-4 border-b border-slate-100 p-6 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h2 className="text-lg font-black text-slate-900">Product Recommendations</h2>
-            <p className="mt-1 text-sm text-slate-500">Filter, sort, and export the recommendations that matter most to the team.</p>
+            <h2 className="text-lg font-black text-slate-900">Tomorrow Prep List</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Focus on what needs action before service starts.
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -2379,31 +2077,31 @@ export default function Predictions() {
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-50"
             >
               <ArrowDownTrayIcon className="h-4 w-4" />
-              Export CSV
+              Download List
             </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearch('');
-                  setStatusFilter('actionable');
-                  setSortBy('priority');
-                  setCurrentPage(1);
-                }}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-50"
-              >
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('');
+                setStatusFilter('actionable');
+                setSortBy('priority');
+                setCurrentPage(1);
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+            >
               <XMarkIcon className="h-4 w-4" />
-              Reset Filters
+              Clear
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 border-b border-slate-100 p-6 lg:grid-cols-[1.3fr,0.9fr,0.9fr,0.9fr]">
+        <div className="grid grid-cols-1 gap-3 border-b border-slate-100 p-6 lg:grid-cols-[1.3fr,0.9fr,0.9fr,0.8fr]">
           <label className="relative">
             <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
             <input
               value={search}
               onChange={(eventTarget) => setSearch(eventTarget.target.value)}
-              placeholder="Search product, category, or recommendation"
+              placeholder="Search product or category"
               className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm font-medium text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
             />
           </label>
@@ -2439,9 +2137,7 @@ export default function Predictions() {
           </label>
 
           <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-600">
-            {statusFilter === 'actionable'
-              ? `Showing ${formatCount(pageStartCount)}-${formatCount(pageEndCount)} of ${formatCount(actionablePredictionsCount)} actionable recommendations`
-              : `Showing ${formatCount(pageStartCount)}-${formatCount(pageEndCount)} of ${formatCount(forecast.predictions.length)} products`}
+            {recommendationCountLabel}
           </div>
         </div>
 
@@ -2450,21 +2146,11 @@ export default function Predictions() {
             <PredictionRecommendationsSkeleton />
           ) : filteredPredictions.length === 0 ? (
             <EmptyState
-              title="No recommendation rows match"
+              title="No products match"
               message={
                 statusFilter === 'actionable'
-                  ? 'No products need action right now. Switch the filter to All products if you want to review the full forecast.'
-                  : 'Try a different status filter, clear the search field, or refresh the forecast with different assumptions.'
-              }
-              action={
-                <button
-                  type="button"
-                  onClick={loadSampleForecast}
-                  className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-black text-white transition hover:bg-slate-800"
-                >
-                  <BeakerIcon className="h-4 w-4" />
-                  Preview Sample Forecast
-                </button>
+                  ? 'No products need action right now. Switch Show to All products to review everything.'
+                  : 'Try another filter, clear the search field, or update the plan.'
               }
             />
           ) : (
@@ -2472,6 +2158,22 @@ export default function Predictions() {
               {paginatedPredictions.map((item) => {
                 const meta = getStatusMeta(item.recommendation_type);
                 const isHighlighted = isNotificationFocusMatch(item);
+                const actionTitle =
+                  item.stock_gap > 0
+                    ? 'Need More'
+                    : item.overstock_units > 0
+                      ? 'Use First'
+                      : item.recommendation_type === 'low_demand'
+                        ? 'Prep Light'
+                        : 'Status';
+                const actionValue =
+                  item.stock_gap > 0
+                    ? formatCount(item.stock_gap)
+                    : item.overstock_units > 0
+                      ? formatCount(item.overstock_units)
+                      : item.recommendation_type === 'low_demand'
+                        ? 'Low'
+                        : 'OK';
 
                 return (
                   <div
@@ -2494,65 +2196,45 @@ export default function Predictions() {
                           <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${meta.chip}`}>
                             {meta.label}
                           </span>
-                          <span
-                            className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${getConfidenceClasses(item.confidence)}`}
-                          >
-                            {item.confidence} confidence
-                          </span>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-sm text-slate-500">
                           <span>Category: {item.category}</span>
-                          <span>Last sold: {formatShortDate(item.last_sold_on)}</span>
-                          <span>Observed days: {formatCount(item.days_observed)}</span>
-                          <span>Source: {formatPredictionSourceLabel(item.prediction_source)}</span>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <span
-                            className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${getPredictionSourceClasses(item.prediction_source)}`}
-                          >
-                            {formatPredictionSourceLabel(item.prediction_source)}
-                          </span>
-                          {item.active_feature_groups.map((group) => (
-                            <span
-                              key={`${item.product_id}-${group}`}
-                              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-widest text-slate-600"
-                            >
-                              {group}
-                            </span>
-                          ))}
-                        </div>
-                        {item.fallback_reason && (
-                          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                            {item.fallback_reason}
-                          </div>
-                        )}
-                        <p className="mt-3 max-w-3xl text-sm text-slate-700">{item.recommendation}</p>
+                        <p className="mt-3 max-w-3xl rounded-xl bg-white px-3 py-2 text-sm leading-6 text-slate-700 shadow-sm">
+                          {item.recommendation}
+                        </p>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 xl:min-w-[340px] xl:grid-cols-3">
+                      <div className="grid grid-cols-2 gap-3 xl:min-w-[360px]">
                         <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
-                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Forecast</div>
-                          <div className="mt-1 text-lg font-black text-slate-900">{formatCount(item.predicted_quantity)}</div>
+                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                            Prepare
+                          </div>
+                          <div className="mt-1 text-lg font-black text-slate-900">
+                            {formatCount(item.predicted_quantity)}
+                          </div>
                         </div>
                         <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
-                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Stock</div>
-                          <div className="mt-1 text-lg font-black text-slate-900">{formatCount(item.current_stock)}</div>
+                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                            On Hand
+                          </div>
+                          <div className="mt-1 text-lg font-black text-slate-900">
+                            {formatCount(item.current_stock)}
+                          </div>
                         </div>
                         <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
-                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Revenue</div>
-                          <div className="mt-1 text-lg font-black text-slate-900">{formatCurrency(item.estimated_revenue)}</div>
+                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                            {actionTitle}
+                          </div>
+                          <div className="mt-1 text-lg font-black text-slate-900">{actionValue}</div>
                         </div>
                         <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
-                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Avg sales</div>
-                          <div className="mt-1 text-lg font-black text-slate-900">{Number(item.historical_average || 0).toFixed(1)}</div>
-                        </div>
-                        <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
-                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Stock gap</div>
-                          <div className="mt-1 text-lg font-black text-slate-900">{formatCount(item.stock_gap)}</div>
-                        </div>
-                        <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
-                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Min stock</div>
-                          <div className="mt-1 text-lg font-black text-slate-900">{formatCount(item.min_stock)}</div>
+                          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                            Sales
+                          </div>
+                          <div className="mt-1 text-lg font-black text-slate-900">
+                            {formatCurrency(item.estimated_revenue)}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2607,69 +2289,6 @@ export default function Predictions() {
         </div>
       </div>
 
-      {showHelp && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-black text-slate-900">How this forecast works</h2>
-                <p className="mt-2 text-sm text-slate-500">
-                  The page combines prediction metrics, product-level recommendations, and a revenue trend. If live data is unavailable, you can load a sample dataset to keep reviewing the interface.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowHelp(false)}
-                className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50"
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-                  <CpuChipIcon className="h-5 w-5 text-slate-400" />
-                  Algorithm and assumptions
-                </div>
-                <p className="mt-2 text-sm text-slate-600">
-                  Choose an algorithm, weather condition, and event profile, then refresh the forecast to request a new Monday to Friday school-week prediction run from the backend.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-                  <CheckCircleIcon className="h-5 w-5 text-slate-400" />
-                  Reliability behavior
-                </div>
-                <p className="mt-2 text-sm text-slate-600">
-                  The page keeps the last successful forecast on screen if a later request fails, and it shows a clear warning instead of wiping out the whole view.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-                  <FunnelIcon className="h-5 w-5 text-slate-400" />
-                  Filters and export
-                </div>
-                <p className="mt-2 text-sm text-slate-600">
-                  Search by product, filter by recommendation type, sort by urgency or demand, and export the filtered rows to CSV for operations review.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-                  <BeakerIcon className="h-5 w-5 text-slate-400" />
-                  Sample mode
-                </div>
-                <p className="mt-2 text-sm text-slate-600">
-                  Load sample data any time to preview the screen or keep discussions moving while the backend is still being prepared.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
