@@ -13,13 +13,14 @@ import {
 const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
 const OFFLINE_SESSION_STORAGE_KEY = 'sc_offline_session';
-const DEFAULT_REMOTE_API_ORIGIN = 'http://3.27.146.231';
+const DEFAULT_REMOTE_API_ORIGIN = 'https://smartcanteen.duckdns.org';
 const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
 const NATIVE_API_BASE = DEFAULT_REMOTE_API_BASE;
 const DEFAULT_LOCAL_API_PORT = String(import.meta.env.VITE_API_PORT || '8000').trim();
 
 const envApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
+const envApiFallbackBase = import.meta.env.VITE_API_FALLBACK_BASE_URL?.trim();
 const envNativeApiBase = import.meta.env.VITE_NATIVE_API_BASE_URL?.trim();
 const envApiHost = import.meta.env.VITE_API_HOST?.trim();
 
@@ -78,6 +79,21 @@ function resolveLocalWebApiBase() {
   return normalizeApiBase(`http://${host}:${DEFAULT_LOCAL_API_PORT}${API_ROOT_PATH}`);
 }
 
+function resolveSecureWebApiBase() {
+  if (typeof window === 'undefined' || window.location?.protocol !== 'https:') {
+    return null;
+  }
+
+  if (envApiBase && isAbsoluteUrl(envApiBase)) {
+    const configuredUrl = new URL(envApiBase);
+    if (configuredUrl.protocol === 'https:') {
+      return normalizeApiBase(envApiBase);
+    }
+  }
+
+  return normalizeApiBase(`${window.location.origin}${API_ROOT_PATH}`);
+}
+
 export function formatLocalDateInputValue(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -103,8 +119,13 @@ function resolveApiBase() {
     return normalizeApiBase(NATIVE_API_BASE);
   }
 
+  const secureWebApiBase = resolveSecureWebApiBase();
+  if (secureWebApiBase) {
+    return secureWebApiBase;
+  }
+
   if (import.meta.env.DEV && isProxyRelativeApiBase(envApiBase)) {
-    return resolveLocalWebApiBase();
+    return API_ROOT_PATH;
   }
 
   if (isLocalWebHost() && isProxyRelativeApiBase(envApiBase)) {
@@ -114,7 +135,23 @@ function resolveApiBase() {
   return normalizeApiBase(envApiBase || DEFAULT_REMOTE_API_BASE);
 }
 
+function resolveFallbackApiBase(primaryBase) {
+  if (Capacitor.isNativePlatform() || typeof window === 'undefined') {
+    return null;
+  }
+
+  if (window.location?.protocol === 'https:') {
+    return null;
+  }
+
+  const fallbackBase = envApiFallbackBase || resolveLocalWebApiBase();
+  const normalizedFallbackBase = normalizeApiBase(fallbackBase);
+
+  return normalizedFallbackBase === primaryBase ? null : normalizedFallbackBase;
+}
+
 const API_BASE = resolveApiBase();
+const API_FALLBACK_BASE = resolveFallbackApiBase(API_BASE);
 
 export class OfflineError extends Error {
   constructor(message = 'You are offline.') {
@@ -174,17 +211,17 @@ function looksLikeHtml(payload) {
   return text.startsWith('<!doctype') || text.startsWith('<html') || text.startsWith('<');
 }
 
-function buildUnexpectedResponseError(path, payload) {
+function buildUnexpectedResponseError(path, requestUrl, payload) {
   if (looksLikeHtml(payload)) {
     return new Error(
-      `The API path "${path}" returned HTML instead of JSON. Make sure your API base points to the backend /api routes instead of a frontend page.`
+      `The API request "${requestUrl}" returned HTML instead of JSON. Make sure this URL is routed to the FastAPI backend, not the frontend page.`
     );
   }
 
-  return new Error(`The API path "${path}" returned an unexpected response.`);
+  return new Error(`The API request "${requestUrl}" returned an unexpected response.`);
 }
 
-async function readJsonResponse(res, path) {
+async function readJsonResponse(res, path, requestUrl = path) {
   const raw = await res.text();
 
   if (!raw) {
@@ -194,7 +231,7 @@ async function readJsonResponse(res, path) {
   try {
     return JSON.parse(raw);
   } catch {
-    throw buildUnexpectedResponseError(path, raw);
+    throw buildUnexpectedResponseError(path, requestUrl, raw);
   }
 }
 
@@ -243,81 +280,116 @@ async function request(method, path, body = null) {
     );
   }
 
-  const headers = {
+  const baseHeaders = {
     'Content-Type': 'application/json',
   };
 
   if (token && !isOfflineSessionToken(token)) {
-    headers.Authorization = `Bearer ${token}`;
+    baseHeaders.Authorization = `Bearer ${token}`;
   }
 
-  const requestUrl = `${API_BASE}${path}`;
-  if (isNgrokUrl(API_BASE) || (typeof window !== 'undefined' && isNgrokUrl(window.location.origin))) {
-    headers['ngrok-skip-browser-warning'] = 'true';
-  }
+  const apiBases = [API_BASE, API_FALLBACK_BASE].filter(Boolean);
+  let lastConnectionBase = API_BASE;
 
-  let res;
-  try {
-    res = await fetch(requestUrl, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    if (cacheable) {
-      const cached = await getCachedResponse(method, path);
-      if (cached !== null) {
-        return cached;
-      }
+  for (let index = 0; index < apiBases.length; index += 1) {
+    const apiBase = apiBases[index];
+    const hasFallback = index < apiBases.length - 1;
+    const requestUrl = `${apiBase}${path}`;
+    const headers = { ...baseHeaders };
+
+    if (isNgrokUrl(apiBase) || (typeof window !== 'undefined' && isNgrokUrl(window.location.origin))) {
+      headers['ngrok-skip-browser-warning'] = 'true';
     }
 
-    throw new Error(`Cannot connect to server at ${API_BASE}. Check your backend and API config.`);
-  }
-
-  if (res.status === 401) {
-    clearSession();
-    window.location.href = '/';
-    return null;
-  }
-
-  if (!res.ok) {
-    let errMsg = `HTTP ${res.status}`;
-    const errorResponse = res.clone();
+    let res;
     try {
-      const err = await readJsonResponse(res, path);
-      errMsg = err?.detail || err?.message || errMsg;
+      res = await fetch(requestUrl, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
     } catch {
-      const raw = await errorResponse.text().catch(() => '');
-      if (looksLikeHtml(raw)) {
-        errMsg = `The API path "${path}" returned HTML instead of JSON. Make sure your API base points to the backend /api routes instead of a frontend page.`;
+      lastConnectionBase = apiBase;
+      if (hasFallback) {
+        continue;
       }
-    }
 
-    if (cacheable && res.status >= 500) {
-      const cached = await getCachedResponse(method, path);
-      if (cached !== null) {
-        return cached;
+      if (cacheable) {
+        const cached = await getCachedResponse(method, path);
+        if (cached !== null) {
+          return cached;
+        }
       }
+
+      throw new Error(`Cannot connect to server at ${apiBase}. Check your backend and API config.`);
     }
 
-    if (res.status === 502 || res.status === 503 || res.status === 504) {
-      errMsg = `Cannot connect to server at ${API_BASE}. Check your backend and API config.`;
+    if (hasFallback && (res.status === 502 || res.status === 503 || res.status === 504)) {
+      lastConnectionBase = apiBase;
+      continue;
     }
 
-    throw new Error(errMsg);
+    if (res.status === 401) {
+      clearSession();
+      window.location.href = '/';
+      return null;
+    }
+
+    if (!res.ok) {
+      let errMsg = `HTTP ${res.status}`;
+      const errorResponse = res.clone();
+      try {
+        const err = await readJsonResponse(res, path, requestUrl);
+        errMsg = err?.detail || err?.message || errMsg;
+      } catch {
+        const raw = await errorResponse.text().catch(() => '');
+        if (looksLikeHtml(raw)) {
+          if (hasFallback) {
+            lastConnectionBase = apiBase;
+            continue;
+          }
+
+          errMsg = `The API request "${requestUrl}" returned HTML instead of JSON. Make sure this URL is routed to the FastAPI backend, not the frontend page.`;
+        }
+      }
+
+      if (cacheable && res.status >= 500) {
+        const cached = await getCachedResponse(method, path);
+        if (cached !== null) {
+          return cached;
+        }
+      }
+
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        errMsg = `Cannot connect to server at ${apiBase}. Check your backend and API config.`;
+      }
+
+      throw new Error(errMsg);
+    }
+
+    if (res.status === 204) {
+      return null;
+    }
+
+    try {
+      const payload = await readJsonResponse(res, path, requestUrl);
+
+      if (cacheable) {
+        saveApiCacheEntry({ method, path, data: payload });
+      }
+
+      return payload;
+    } catch (error) {
+      if (hasFallback && String(error?.message || '').includes('returned HTML instead of JSON')) {
+        lastConnectionBase = apiBase;
+        continue;
+      }
+
+      throw error;
+    }
   }
 
-  if (res.status === 204) {
-    return null;
-  }
-
-  const payload = await readJsonResponse(res, path);
-
-  if (cacheable) {
-    saveApiCacheEntry({ method, path, data: payload });
-  }
-
-  return payload;
+  throw new Error(`Cannot connect to server at ${lastConnectionBase}. Check your backend and API config.`);
 }
 
 async function primeOfflineData({ role } = {}) {

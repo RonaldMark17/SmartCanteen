@@ -13,3 +13,8 @@ INFO:     127.0.0.1:55088 - "GET /api/products/low-stock HTTP/1.1" 200 OK
 INFO:     127.0.0.1:61674 - "GET /api/predictions/tomorrow?algorithm=XGBoost&weather=clear&event=none HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54556 - "GET /api/products/low-stock HTTP/1.1" 200 OK
 INFO:     127.0.0.1:49234 - "GET /api/predictions/tomorrow?algorithm=XGBoost&weather=clear&event=none HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64639 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62595 - "OPTIONS /api/auth/login HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:62599 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60558 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53153 - "OPTIONS /api/auth/login HTTP/1.1" 400 Bad Request

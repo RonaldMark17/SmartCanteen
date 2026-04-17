@@ -132,30 +132,64 @@ app = FastAPI(
     version="1.0.0",
 )
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:4173",
-    "http://127.0.0.1:4173",
-    "http://3.27.146.231",
-    "http://3.27.146.231:5173",
-]
+cors_options = {
+    "allow_origins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "http://13.55.37.38",
+        "https://13.55.37.38",
+        "http://smartcanteen.ct.ws",
+        "https://smartcanteen.ct.ws",
+        "https://smartcanteen.duckdns.org",
+    ],
+    "allow_origin_regex": (
+        r"^https?://("
+        r"localhost|"
+        r"127\.0\.0\.1|"
+        r"13\.55\.37\.38"
+        r")(:\d+)?$"
+    ),
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_options,
 )
 
 # Serve the PWA frontend
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-FRONTEND_CANDIDATES = [
-    os.path.join(PROJECT_ROOT, "smartcanteen", "dist"),
-    os.path.join(PROJECT_ROOT, "frontend"),
-]
-FRONTEND_DIR = next((path for path in FRONTEND_CANDIDATES if os.path.isdir(path)), None)
+BACKEND_DIR = os.path.abspath(os.path.dirname(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
+
+
+def _find_frontend_dir():
+    configured_dir = os.environ.get("SMARTCANTEEN_FRONTEND_DIR")
+    candidates = [
+        configured_dir,
+        os.path.join(PROJECT_ROOT, "smartcanteen", "dist"),
+        os.path.join(PROJECT_ROOT, "dist"),
+        os.path.join(BACKEND_DIR, "smartcanteen", "dist"),
+        os.path.join(BACKEND_DIR, "dist"),
+        os.path.join(os.getcwd(), "smartcanteen", "dist"),
+        os.path.join(os.getcwd(), "dist"),
+    ]
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        frontend_dir = os.path.abspath(candidate)
+        if os.path.isfile(os.path.join(frontend_dir, "index.html")):
+            return frontend_dir
+
+    return None
+
+
+FRONTEND_DIR = _find_frontend_dir()
 RESERVED_FRONTEND_PREFIXES = {"api", "docs", "redoc", "openapi.json"}
 
 
@@ -200,6 +234,7 @@ def favicon():
 # AUTH
 # ═══════════════════════════════════════════════════════════════════════════════
 
+@app.post("/auth/login", include_in_schema=False)
 @app.post("/api/auth/login", tags=["Auth"])
 def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == payload.username).first()
@@ -231,6 +266,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
     }
 
 
+@app.post("/auth/register", include_in_schema=False)
 @app.post("/api/auth/register", tags=["Auth"])
 def register(
     data: schemas.UserCreate,
@@ -258,6 +294,7 @@ def register(
     return {"message": "User created", "id": user.id}
 
 
+@app.get("/auth/me", include_in_schema=False)
 @app.get("/api/auth/me", tags=["Auth"])
 def me(current: models.User = Depends(auth.get_current_user)):
     return {"id": current.id, "username": current.username,

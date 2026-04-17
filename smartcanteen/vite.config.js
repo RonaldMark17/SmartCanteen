@@ -5,7 +5,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const apiHost = env.VITE_API_HOST || '127.0.0.1';
   const apiPort = env.VITE_API_PORT || '8000';
-  const apiTarget = `http://${apiHost}:${apiPort}`;
+  const apiTarget =
+    env.VITE_API_PROXY_TARGET ||
+    `http://${apiHost}${apiPort ? `:${apiPort}` : ''}`;
 
   return {
     plugins: [react()],
