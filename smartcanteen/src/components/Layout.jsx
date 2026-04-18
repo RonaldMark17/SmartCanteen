@@ -49,7 +49,7 @@ const READ_LOW_STOCK_ALERTS_KEY = 'sc_read_low_stock_alerts';
 const READ_HIGH_DEMAND_ALERTS_KEY = 'sc_read_high_demand_alerts';
 const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
 const DARK_MODE_STORAGE_KEY = 'sc_dark_mode';
-const LOW_STOCK_POLL_MS = 10000;
+const LOW_STOCK_POLL_MS = 60000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
 
 function getStoredUser() {

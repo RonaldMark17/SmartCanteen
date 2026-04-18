@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List
@@ -114,6 +115,8 @@ TOMORROW_OUTLOOK_FEATURE_GROUPS = [
 ]
 PREDICTION_CACHE_TTL_SECONDS = 180
 _PREDICTION_RESULT_CACHE: Dict[tuple, Dict] = {}
+_PREDICTION_CACHE_LOCK = threading.Lock()
+_PREDICTION_INFLIGHT: Dict[tuple, threading.Event] = {}
 
 FORECAST_FEATURE_COLUMNS = [
     "days_idx",
@@ -173,6 +176,24 @@ def _prune_prediction_cache(now_utc: datetime) -> None:
     ]
     for cache_key in expired_keys:
         _PREDICTION_RESULT_CACHE.pop(cache_key, None)
+
+
+def _get_cached_prediction_result(cache_key: tuple, now_utc: datetime) -> Dict | None:
+    cached_entry = _PREDICTION_RESULT_CACHE.get(cache_key)
+    if cached_entry and cached_entry.get("expires_at", now_utc) > now_utc:
+        return copy.deepcopy(cached_entry["result"])
+    return None
+
+
+def _store_prediction_result(cache_keys, result: Dict) -> None:
+    expires_at = datetime.utcnow() + timedelta(seconds=PREDICTION_CACHE_TTL_SECONDS)
+    cached_result = copy.deepcopy(result)
+    with _PREDICTION_CACHE_LOCK:
+        for cache_key in cache_keys:
+            _PREDICTION_RESULT_CACHE[cache_key] = {
+                "expires_at": expires_at,
+                "result": cached_result,
+            }
 
 
 def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event: str) -> tuple:
@@ -2071,220 +2092,242 @@ def predict_tomorrow_sales(
     weather: str = "clear",
     event: str = "none",
 ) -> Dict:
-    now_utc = datetime.utcnow()
-    _prune_prediction_cache(now_utc)
     cache_key = _build_prediction_cache_key(db, algorithm, weather, event)
-    cached_entry = _PREDICTION_RESULT_CACHE.get(cache_key)
-    if cached_entry and cached_entry.get("expires_at", now_utc) > now_utc:
-        return copy.deepcopy(cached_entry["result"])
+    while True:
+        now_utc = datetime.utcnow()
+        with _PREDICTION_CACHE_LOCK:
+            _prune_prediction_cache(now_utc)
+            cached_result = _get_cached_prediction_result(cache_key, now_utc)
+            if cached_result is not None:
+                return cached_result
 
-    df = _fetch_sales_df(db, days_back=180)
-    driver_range = _ensure_driver_history(db, df)
-    driver_daily = _fetch_driver_daily_frame(db, driver_range["start_date"], driver_range["end_date"])
-    feature_summary = _build_feature_summary(driver_daily, driver_range)
-    products = db.query(models.Product).filter(models.Product.is_active == True).all()
-    tomorrow = _next_school_day(get_ph_tomorrow())
+            wait_event = _PREDICTION_INFLIGHT.get(cache_key)
+            if wait_event is None:
+                wait_event = threading.Event()
+                _PREDICTION_INFLIGHT[cache_key] = wait_event
+                break
 
-    if not products:
+        wait_event.wait(timeout=60)
+
+    cache_keys = {cache_key}
+    inflight_keys = {cache_key}
+    try:
+        df = _fetch_sales_df(db, days_back=180)
+        driver_range = _ensure_driver_history(db, df)
+        final_cache_key = _build_prediction_cache_key(db, algorithm, weather, event)
+        cache_keys.add(final_cache_key)
+        if final_cache_key != cache_key:
+            with _PREDICTION_CACHE_LOCK:
+                if final_cache_key not in _PREDICTION_INFLIGHT:
+                    _PREDICTION_INFLIGHT[final_cache_key] = wait_event
+                    inflight_keys.add(final_cache_key)
+        driver_daily = _fetch_driver_daily_frame(db, driver_range["start_date"], driver_range["end_date"])
+        feature_summary = _build_feature_summary(driver_daily, driver_range)
+        products = db.query(models.Product).filter(models.Product.is_active == True).all()
+        tomorrow = _next_school_day(get_ph_tomorrow())
+
+        if not products:
+            tomorrow_driver = _build_tomorrow_driver_row(driver_daily, tomorrow, weather, event)
+            empty_summary = {
+                "total_products": 0,
+                "restock_count": 0,
+                "waste_risk_count": 0,
+                "expected_revenue": 0.0,
+                "expected_units": 0,
+                "model_backed_predictions": 0,
+                "heuristic_predictions": 0,
+            }
+            result = {
+                "metrics": _fallback_metrics(algorithm),
+                "algorithm_metrics": _build_algorithm_metrics(algorithm, _fallback_metrics(algorithm)),
+                "feature_summary": feature_summary,
+                "predictions": [],
+                "weekly_sales_trend": _empty_weekly_trend(),
+                "summary": empty_summary,
+                "tomorrow_sales_outlook": _build_tomorrow_sales_outlook(
+                    df,
+                    [],
+                    empty_summary,
+                    tomorrow_driver,
+                    weather,
+                    event,
+                ),
+                "insights": _build_insights([], {"total_products": 0}, "heuristic"),
+                "data_source": "heuristic",
+            }
+            _store_prediction_result(cache_keys, result)
+            return result
+
+        tomorrow_weekday = tomorrow.weekday()
+        series_end_date = df["date"].max() if not df.empty else None
+        context_lookup = _build_context_daily_lookup(df, series_end_date=series_end_date)
+        global_daily = context_lookup["global"]
+        category_daily_lookup = context_lookup["by_category"]
         tomorrow_driver = _build_tomorrow_driver_row(driver_daily, tomorrow, weather, event)
-        empty_summary = {
-            "total_products": 0,
-            "restock_count": 0,
-            "waste_risk_count": 0,
-            "expected_revenue": 0.0,
-            "expected_units": 0,
-            "model_backed_predictions": 0,
-            "heuristic_predictions": 0,
-        }
-        result = {
-            "metrics": _fallback_metrics(algorithm),
-            "algorithm_metrics": _build_algorithm_metrics(algorithm, _fallback_metrics(algorithm)),
-            "feature_summary": feature_summary,
-            "predictions": [],
-            "weekly_sales_trend": _empty_weekly_trend(),
-            "summary": empty_summary,
-            "tomorrow_sales_outlook": _build_tomorrow_sales_outlook(
-                df,
-                [],
-                empty_summary,
-                tomorrow_driver,
-                weather,
-                event,
-            ),
-            "insights": _build_insights([], {"total_products": 0}, "heuristic"),
-            "data_source": "heuristic",
-        }
-        _PREDICTION_RESULT_CACHE[cache_key] = {
-            "expires_at": now_utc + timedelta(seconds=PREDICTION_CACHE_TTL_SECONDS),
-            "result": copy.deepcopy(result),
-        }
-        return result
 
-    tomorrow_weekday = tomorrow.weekday()
-    series_end_date = df["date"].max() if not df.empty else None
-    context_lookup = _build_context_daily_lookup(df, series_end_date=series_end_date)
-    global_daily = context_lookup["global"]
-    category_daily_lookup = context_lookup["by_category"]
-    tomorrow_driver = _build_tomorrow_driver_row(driver_daily, tomorrow, weather, event)
+        predictions = []
+        validation_records = []
+        model_backed_predictions = 0
 
-    predictions = []
-    validation_records = []
-    model_backed_predictions = 0
+        for product in products:
+            product_df = df[df["product_id"] == product.id].copy()
+            daily = _build_daily_sales(product_df, series_end_date=series_end_date)
+            category_key = (product.category or "General").lower()
+            category_daily = category_daily_lookup.get(category_key)
 
-    for product in products:
-        product_df = df[df["product_id"] == product.id].copy()
-        daily = _build_daily_sales(product_df, series_end_date=series_end_date)
-        category_key = (product.category or "General").lower()
-        category_daily = category_daily_lookup.get(category_key)
+            if _is_sparse_category_ready(daily, category_daily, global_daily) and not _is_model_ready(daily):
+                heuristic = _sparse_history_prediction(
+                    daily,
+                    category_key,
+                    tomorrow_weekday,
+                    weather,
+                    event,
+                    category_daily=category_daily,
+                    global_daily=global_daily,
+                )
+            else:
+                heuristic = _heuristic_prediction(
+                    daily,
+                    category_key,
+                    tomorrow_weekday,
+                    weather,
+                    event,
+                )
 
-        if _is_sparse_category_ready(daily, category_daily, global_daily) and not _is_model_ready(daily):
-            heuristic = _sparse_history_prediction(
+            ml_result = _ml_prediction(
                 daily,
                 category_key,
                 tomorrow_weekday,
                 weather,
                 event,
+                algorithm,
                 category_daily=category_daily,
                 global_daily=global_daily,
-            )
-        else:
-            heuristic = _heuristic_prediction(
-                daily,
-                category_key,
-                tomorrow_weekday,
-                weather,
-                event,
+                driver_daily=driver_daily,
+                tomorrow_driver=tomorrow_driver,
             )
 
-        ml_result = _ml_prediction(
-            daily,
-            category_key,
-            tomorrow_weekday,
+            if ml_result["prediction"] is not None:
+                predicted_quantity = ml_result["prediction"]
+                prediction_source = "ml+heuristic"
+                model_backed_predictions += 1
+                for actual, predicted, context in zip(
+                    ml_result.get("y_test", []),
+                    ml_result.get("y_pred", []),
+                    ml_result.get("validation_context", []),
+                ):
+                    validation_records.append(
+                        {
+                            "actual": float(actual),
+                            "predicted": float(predicted),
+                            "date": context.get("date"),
+                            "is_school_day": bool(context.get("is_school_day", True)),
+                        }
+                    )
+                active_feature_groups = MODEL_FEATURE_GROUPS
+                fallback_reason = ""
+            else:
+                predicted_quantity = heuristic["prediction"]
+                prediction_source = heuristic.get("source", "heuristic")
+                active_feature_groups = HEURISTIC_FEATURE_GROUPS
+                fallback_reason = ml_result.get(
+                    "reason",
+                    "Model-ready history is not available for this product.",
+                )
+
+            recommendation = _build_recommendation(
+                int(predicted_quantity),
+                int(product.stock or 0),
+                int(product.min_stock or 0),
+            )
+
+            if heuristic["days_observed"] >= 14 and prediction_source == "ml+heuristic":
+                confidence = "high"
+            elif heuristic["days_observed"] >= 5:
+                confidence = "medium"
+            else:
+                confidence = "low"
+
+            last_sold_on = daily["date"].max().isoformat() if not daily.empty else None
+            estimated_revenue = round(float(predicted_quantity) * float(product.price or 0), 2)
+
+            predictions.append(
+                {
+                    "product_id": product.id,
+                    "product_name": product.name,
+                    "category": product.category,
+                    "current_stock": int(product.stock or 0),
+                    "min_stock": int(product.min_stock or 0),
+                    "predicted_quantity": int(predicted_quantity),
+                    "historical_average": heuristic["avg_daily"],
+                    "days_observed": heuristic["days_observed"],
+                    "estimated_revenue": estimated_revenue,
+                    "confidence": confidence,
+                    "prediction_source": prediction_source,
+                    "last_sold_on": last_sold_on,
+                    "active_feature_groups": active_feature_groups,
+                    "fallback_reason": fallback_reason,
+                    **recommendation,
+                }
+            )
+
+        predictions = sorted(
+            predictions,
+            key=lambda item: (item["recommendation_type"] != "restock", -item["predicted_quantity"]),
+        )
+
+        weekly_sales_trend = _build_weekly_sales_trend(df, weather, event)
+
+        metrics = _build_validation_metrics(validation_records, algorithm)
+
+        summary = {
+            "total_products": len(predictions),
+            "restock_count": sum(
+                1 for prediction in predictions if prediction["recommendation_type"] == "restock"
+            ),
+            "waste_risk_count": sum(
+                1 for prediction in predictions if prediction["recommendation_type"] == "reduce_waste"
+            ),
+            "expected_revenue": round(
+                sum(prediction["estimated_revenue"] for prediction in predictions),
+                2,
+            ),
+            "expected_units": sum(prediction["predicted_quantity"] for prediction in predictions),
+            "model_backed_predictions": model_backed_predictions,
+            "heuristic_predictions": len(predictions) - model_backed_predictions,
+        }
+
+        data_source = "ml+heuristic" if model_backed_predictions > 0 else "heuristic"
+        tomorrow_sales_outlook = _build_tomorrow_sales_outlook(
+            df,
+            predictions,
+            summary,
+            tomorrow_driver,
             weather,
             event,
-            algorithm,
-            category_daily=category_daily,
-            global_daily=global_daily,
-            driver_daily=driver_daily,
-            tomorrow_driver=tomorrow_driver,
         )
 
-        if ml_result["prediction"] is not None:
-            predicted_quantity = ml_result["prediction"]
-            prediction_source = "ml+heuristic"
-            model_backed_predictions += 1
-            for actual, predicted, context in zip(
-                ml_result.get("y_test", []),
-                ml_result.get("y_pred", []),
-                ml_result.get("validation_context", []),
-            ):
-                validation_records.append(
-                    {
-                        "actual": float(actual),
-                        "predicted": float(predicted),
-                        "date": context.get("date"),
-                        "is_school_day": bool(context.get("is_school_day", True)),
-                    }
-                )
-            active_feature_groups = MODEL_FEATURE_GROUPS
-            fallback_reason = ""
-        else:
-            predicted_quantity = heuristic["prediction"]
-            prediction_source = heuristic.get("source", "heuristic")
-            active_feature_groups = HEURISTIC_FEATURE_GROUPS
-            fallback_reason = ml_result.get(
-                "reason",
-                "Model-ready history is not available for this product.",
-            )
-
-        recommendation = _build_recommendation(
-            int(predicted_quantity),
-            int(product.stock or 0),
-            int(product.min_stock or 0),
-        )
-
-        if heuristic["days_observed"] >= 14 and prediction_source == "ml+heuristic":
-            confidence = "high"
-        elif heuristic["days_observed"] >= 5:
-            confidence = "medium"
-        else:
-            confidence = "low"
-
-        last_sold_on = daily["date"].max().isoformat() if not daily.empty else None
-        estimated_revenue = round(float(predicted_quantity) * float(product.price or 0), 2)
-
-        predictions.append(
-            {
-                "product_id": product.id,
-                "product_name": product.name,
-                "category": product.category,
-                "current_stock": int(product.stock or 0),
-                "min_stock": int(product.min_stock or 0),
-                "predicted_quantity": int(predicted_quantity),
-                "historical_average": heuristic["avg_daily"],
-                "days_observed": heuristic["days_observed"],
-                "estimated_revenue": estimated_revenue,
-                "confidence": confidence,
-                "prediction_source": prediction_source,
-                "last_sold_on": last_sold_on,
-                "active_feature_groups": active_feature_groups,
-                "fallback_reason": fallback_reason,
-                **recommendation,
-            }
-        )
-
-    predictions = sorted(
-        predictions,
-        key=lambda item: (item["recommendation_type"] != "restock", -item["predicted_quantity"]),
-    )
-
-    weekly_sales_trend = _build_weekly_sales_trend(df, weather, event)
-
-    metrics = _build_validation_metrics(validation_records, algorithm)
-
-    summary = {
-        "total_products": len(predictions),
-        "restock_count": sum(
-            1 for prediction in predictions if prediction["recommendation_type"] == "restock"
-        ),
-        "waste_risk_count": sum(
-            1 for prediction in predictions if prediction["recommendation_type"] == "reduce_waste"
-        ),
-        "expected_revenue": round(
-            sum(prediction["estimated_revenue"] for prediction in predictions),
-            2,
-        ),
-        "expected_units": sum(prediction["predicted_quantity"] for prediction in predictions),
-        "model_backed_predictions": model_backed_predictions,
-        "heuristic_predictions": len(predictions) - model_backed_predictions,
-    }
-
-    data_source = "ml+heuristic" if model_backed_predictions > 0 else "heuristic"
-    tomorrow_sales_outlook = _build_tomorrow_sales_outlook(
-        df,
-        predictions,
-        summary,
-        tomorrow_driver,
-        weather,
-        event,
-    )
-
-    result = {
-        "metrics": metrics,
-        "algorithm_metrics": _build_algorithm_metrics(algorithm, metrics),
-        "feature_summary": feature_summary,
-        "predictions": predictions,
-        "weekly_sales_trend": weekly_sales_trend,
-        "summary": summary,
-        "tomorrow_sales_outlook": tomorrow_sales_outlook,
-        "insights": _build_insights(predictions, summary, data_source),
-        "data_source": data_source,
-    }
-    _PREDICTION_RESULT_CACHE[cache_key] = {
-        "expires_at": now_utc + timedelta(seconds=PREDICTION_CACHE_TTL_SECONDS),
-        "result": copy.deepcopy(result),
-    }
-    return result
+        result = {
+            "metrics": metrics,
+            "algorithm_metrics": _build_algorithm_metrics(algorithm, metrics),
+            "feature_summary": feature_summary,
+            "predictions": predictions,
+            "weekly_sales_trend": weekly_sales_trend,
+            "summary": summary,
+            "tomorrow_sales_outlook": tomorrow_sales_outlook,
+            "insights": _build_insights(predictions, summary, data_source),
+            "data_source": data_source,
+        }
+        _store_prediction_result(cache_keys, result)
+        return result
+    finally:
+        with _PREDICTION_CACHE_LOCK:
+            signaled_events = []
+            for inflight_key in inflight_keys:
+                inflight_event = _PREDICTION_INFLIGHT.pop(inflight_key, None)
+                if inflight_event and inflight_event not in signaled_events:
+                    signaled_events.append(inflight_event)
+                    inflight_event.set()
 
 
 CLI_ALGORITHMS = ("XGBoost", "Random Forest", "LSTM")

@@ -467,7 +467,6 @@ async function primeOfflineData({ role } = {}) {
           event: 'none',
         })}`
       ),
-    () => request('GET', '/predictions/restock-alerts'),
   ];
 
   if (role === 'admin') {

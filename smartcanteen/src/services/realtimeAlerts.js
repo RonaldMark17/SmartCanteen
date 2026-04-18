@@ -3,7 +3,8 @@ import { getRealtimeAlertsUrl } from './api';
 export const ALERT_REFRESH_EVENT = 'sc-alert-refresh-requested';
 
 const REALTIME_ALERT_TYPES = new Set(['alerts.changed', 'stock.changed']);
-const RECONNECT_DELAY_MS = 5000;
+const RECONNECT_INITIAL_DELAY_MS = 5000;
+const RECONNECT_MAX_DELAY_MS = 60000;
 
 export function requestAlertRefresh(detail = {}) {
   if (typeof window === 'undefined') {
@@ -31,6 +32,7 @@ export function connectRealtimeAlertStream(onAlertChange) {
 
   let socket = null;
   let reconnectTimer = null;
+  let reconnectDelayMs = RECONNECT_INITIAL_DELAY_MS;
   let closed = false;
 
   const clearReconnect = () => {
@@ -45,10 +47,17 @@ export function connectRealtimeAlertStream(onAlertChange) {
       return;
     }
 
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
+    }
+
+    const nextDelay = reconnectDelayMs;
+    reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_DELAY_MS);
+
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
       connect();
-    }, RECONNECT_DELAY_MS);
+    }, nextDelay);
   };
 
   const connect = () => {
@@ -76,7 +85,10 @@ export function connectRealtimeAlertStream(onAlertChange) {
       return;
     }
 
-    socket.onopen = clearReconnect;
+    socket.onopen = () => {
+      reconnectDelayMs = RECONNECT_INITIAL_DELAY_MS;
+      clearReconnect();
+    };
     socket.onmessage = (event) => {
       let message = null;
 
