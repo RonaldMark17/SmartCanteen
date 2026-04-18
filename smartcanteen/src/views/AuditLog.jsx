@@ -125,7 +125,7 @@ export default function AuditLog() {
   const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
 
   return (
-    <div className="view-shell-static">
+    <div className="view-shell-static h-auto min-h-full pb-6 md:h-full md:min-h-0 md:pb-0">
       <section className="panel-card shrink-0">
         <div className="view-header md:flex-row md:items-center">
           <div>
@@ -171,7 +171,7 @@ export default function AuditLog() {
         </div>
       )}
 
-      <div className="data-card flex min-h-0 flex-1 flex-col">
+      <div className="data-card flex shrink-0 flex-col md:min-h-0 md:flex-1 md:shrink">
         <div className="flex shrink-0 flex-col gap-2 border-b border-slate-100 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-[22px] font-extrabold tracking-tight text-slate-900">Activity Feed</h2>
@@ -221,7 +221,7 @@ export default function AuditLog() {
           </table>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 md:hidden">
+        <div className="p-4 md:hidden">
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 5 }, (_, index) => (

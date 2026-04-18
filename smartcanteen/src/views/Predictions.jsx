@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
@@ -50,6 +50,7 @@ const OPENWEATHER_LON = import.meta.env.VITE_OPENWEATHERMAP_LON?.trim() || '';
 const DEFAULT_OPENWEATHER_LAT = '14.5995';
 const DEFAULT_OPENWEATHER_LON = '120.9842';
 const DEFAULT_OPENWEATHER_LOCATION_LABEL = 'Manila, PH';
+const METRIC_REFRESH_IDLE_TIMEOUT_MS = 1500;
 const WEATHER_OPTIONS = [
   {
     value: 'hot_dry',
@@ -191,6 +192,48 @@ const SCHOOL_WEEKDAY_FULL_NAMES = {
   Fri: 'Friday',
 };
 const RECOMMENDATIONS_PER_PAGE = 6;
+
+function scheduleIdleTask(callback) {
+  if (typeof window === 'undefined') {
+    callback();
+    return () => {};
+  }
+
+  if ('requestIdleCallback' in window) {
+    const idleId = window.requestIdleCallback(callback, {
+      timeout: METRIC_REFRESH_IDLE_TIMEOUT_MS,
+    });
+    return () => window.cancelIdleCallback?.(idleId);
+  }
+
+  const timeoutId = window.setTimeout(callback, 0);
+  return () => window.clearTimeout(timeoutId);
+}
+
+function buildPaginationItems(currentPage, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const pages = new Set([
+    1,
+    totalPages,
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+  ]);
+  const normalizedPages = [...pages]
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((left, right) => left - right);
+
+  return normalizedPages.flatMap((page, index) => {
+    const previousPage = normalizedPages[index - 1];
+    if (index > 0 && page - previousPage > 1) {
+      return [`ellipsis-${previousPage}-${page}`, page];
+    }
+    return [page];
+  });
+}
 const TOMORROW_DAY_OPTIONS = [
   { value: 'Monday', label: 'Monday' },
   { value: 'Tuesday', label: 'Tuesday' },
@@ -2503,11 +2546,73 @@ export default function Predictions() {
   }));
   const recommendationsRef = useRef(null);
   const hasAutoWeatherSyncedRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const forecastRequestIdRef = useRef(0);
+  const comparisonMetricsRequestIdRef = useRef(0);
   const weatherProfile = getWeatherProfile(weather);
   const eventProfile = getEventProfile(event);
+  const deferredSearch = useDeferredValue(search);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      forecastRequestIdRef.current += 1;
+      comparisonMetricsRequestIdRef.current += 1;
+    };
+  }, []);
 
   function scrollToRecommendations() {
     recommendationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function refreshComparisonMetrics({
+    activeAlgorithm,
+    activeWeather,
+    activeEvent,
+    primaryResponse,
+    requestId,
+  }) {
+    const comparisonAlgorithms = MODEL_ALGORITHMS.filter((modelName) => modelName !== activeAlgorithm);
+    const hasAllAlgorithmMetrics = MODEL_ALGORITHMS.every(
+      (modelName) => primaryResponse?.algorithm_metrics?.[modelName]
+    );
+
+    if (comparisonAlgorithms.length === 0 || hasAllAlgorithmMetrics) {
+      return;
+    }
+
+    const comparisonRequestId = ++comparisonMetricsRequestIdRef.current;
+    const activeWeatherProfile = getWeatherProfile(activeWeather);
+
+    scheduleIdleTask(async () => {
+      const comparisonResults = await Promise.allSettled(
+        comparisonAlgorithms.map((modelName) =>
+          API.getPredictions({
+            algorithm: modelName,
+            weather: activeWeatherProfile.backendWeather,
+            event: activeEvent,
+          })
+        )
+      );
+
+      if (
+        !isMountedRef.current ||
+        requestId !== forecastRequestIdRef.current ||
+        comparisonRequestId !== comparisonMetricsRequestIdRef.current
+      ) {
+        return;
+      }
+
+      setForecast((currentForecast) => ({
+        ...currentForecast,
+        algorithmMetrics: buildLiveAlgorithmMetrics(
+          activeAlgorithm,
+          primaryResponse,
+          comparisonAlgorithms,
+          comparisonResults
+        ),
+      }));
+    });
   }
 
   async function loadForecast({
@@ -2516,6 +2621,8 @@ export default function Predictions() {
     eventOverride = event,
     leadingNotice = '',
   } = {}) {
+    const requestId = ++forecastRequestIdRef.current;
+    comparisonMetricsRequestIdRef.current += 1;
     const activeWeather = weatherOverride;
     const activeEvent = eventOverride;
     const activeAlgorithm = algorithmOverride;
@@ -2526,32 +2633,29 @@ export default function Predictions() {
     setNotice('');
 
     try {
-      const comparisonAlgorithms = MODEL_ALGORITHMS.filter((modelName) => modelName !== activeAlgorithm);
-      const [predictionResult, productsResult, ...comparisonResults] = await Promise.allSettled([
+      const [predictionResult, productsResult] = await Promise.allSettled([
         API.getPredictions({
           algorithm: activeAlgorithm,
           weather: activeWeatherProfile.backendWeather,
           event: activeEvent,
         }),
         API.getProducts(),
-        ...comparisonAlgorithms.map((modelName) =>
-          API.getPredictions({
-            algorithm: modelName,
-            weather: activeWeatherProfile.backendWeather,
-            event: activeEvent,
-          })
-        ),
       ]);
+
+      if (!isMountedRef.current || requestId !== forecastRequestIdRef.current) {
+        return;
+      }
 
       const catalogProducts =
         productsResult.status === 'fulfilled'
           ? normalizeCatalogProducts(productsResult.value)
           : [];
+      const primaryResponse = predictionResult.status === 'fulfilled' ? predictionResult.value : null;
 
       let normalized;
       if (predictionResult.status === 'fulfilled') {
         normalized = ensureForecastCoverage(
-          normalizeForecastResponse(predictionResult.value, activeAlgorithm),
+          normalizeForecastResponse(primaryResponse, activeAlgorithm),
           catalogProducts,
           activeWeather,
           activeEvent
@@ -2566,13 +2670,22 @@ export default function Predictions() {
         ...normalized,
         algorithmMetrics: buildLiveAlgorithmMetrics(
           activeAlgorithm,
-          predictionResult.status === 'fulfilled' ? predictionResult.value : null,
-          comparisonAlgorithms,
-          comparisonResults
+          primaryResponse,
+          [],
+          []
         ),
       };
 
       setForecast(normalized);
+      if (primaryResponse) {
+        refreshComparisonMetrics({
+          activeAlgorithm,
+          activeWeather,
+          activeEvent,
+          primaryResponse,
+          requestId,
+        });
+      }
 
       const notices = leadingNotice ? [leadingNotice] : [];
       if (normalized.backendError) {
@@ -2589,6 +2702,10 @@ export default function Predictions() {
 
       setNotice(notices.join(' '));
     } catch (err) {
+      if (!isMountedRef.current || requestId !== forecastRequestIdRef.current) {
+        return;
+      }
+
       setError(err.message || 'Unable to load prediction data.');
       setNotice(
         forecast.predictions.length > 0
@@ -2596,7 +2713,9 @@ export default function Predictions() {
           : ''
       );
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && requestId === forecastRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -2771,37 +2890,56 @@ export default function Predictions() {
     return prediction.product_name.toLowerCase() === notificationFocus.name.toLowerCase();
   }
 
-  const filteredPredictions = [...forecast.predictions]
-    .filter((item) => {
-      const query = search.toLowerCase();
-      const matchesSearch =
-        item.product_name.toLowerCase().includes(query) ||
-        item.category.toLowerCase().includes(query) ||
-        item.recommendation.toLowerCase().includes(query);
-      const matchesStatus =
-        statusFilter === 'all'
-          ? true
-          : statusFilter === 'actionable'
-            ? isActionablePrediction(item)
-            : item.recommendation_type === statusFilter;
-      return matchesSearch && matchesStatus;
-    })
-    .sort((left, right) => comparePredictions(left, right, sortBy));
+  const filteredPredictions = useMemo(() => {
+    const query = deferredSearch.trim().toLowerCase();
 
-  const actionablePredictionsCount = forecast.predictions.filter(isActionablePrediction).length;
-  const riskAnalysis = deriveRiskAnalysis(
-    forecast.predictions,
-    forecast.summary,
-    weather,
-    event,
-    forecast.dataSource
+    return [...forecast.predictions]
+      .filter((item) => {
+        const matchesSearch =
+          !query ||
+          item.product_name.toLowerCase().includes(query) ||
+          item.category.toLowerCase().includes(query) ||
+          item.recommendation.toLowerCase().includes(query);
+        const matchesStatus =
+          statusFilter === 'all'
+            ? true
+            : statusFilter === 'actionable'
+              ? isActionablePrediction(item)
+              : item.recommendation_type === statusFilter;
+        return matchesSearch && matchesStatus;
+      })
+      .sort((left, right) => comparePredictions(left, right, sortBy));
+  }, [deferredSearch, forecast.predictions, sortBy, statusFilter]);
+
+  const actionablePredictionsCount = useMemo(
+    () => forecast.predictions.filter(isActionablePrediction).length,
+    [forecast.predictions]
+  );
+  const riskAnalysis = useMemo(
+    () =>
+      deriveRiskAnalysis(
+        forecast.predictions,
+        forecast.summary,
+        weather,
+        event,
+        forecast.dataSource
+      ),
+    [event, forecast.dataSource, forecast.predictions, forecast.summary, weather]
   );
   const totalPages = Math.max(1, Math.ceil(filteredPredictions.length / RECOMMENDATIONS_PER_PAGE));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStartIndex = filteredPredictions.length === 0 ? 0 : (safeCurrentPage - 1) * RECOMMENDATIONS_PER_PAGE;
-  const paginatedPredictions = filteredPredictions.slice(
-    pageStartIndex,
-    pageStartIndex + RECOMMENDATIONS_PER_PAGE
+  const paginatedPredictions = useMemo(
+    () =>
+      filteredPredictions.slice(
+        pageStartIndex,
+        pageStartIndex + RECOMMENDATIONS_PER_PAGE
+      ),
+    [filteredPredictions, pageStartIndex]
+  );
+  const paginationItems = useMemo(
+    () => buildPaginationItems(safeCurrentPage, totalPages),
+    [safeCurrentPage, totalPages]
   );
   const pageStartCount = filteredPredictions.length === 0 ? 0 : pageStartIndex + 1;
   const pageEndCount = Math.min(pageStartIndex + paginatedPredictions.length, filteredPredictions.length);
@@ -2859,226 +2997,294 @@ export default function Predictions() {
     setNotice('Prediction export downloaded.');
   }
 
-  const schoolWeekSalesOutlook = buildSchoolWeekSalesOutlook(
-    forecast.weeklyTrend,
-    forecast.summary.expected_revenue,
-    weather,
-    event,
-    weeklyWeatherForecast
+  const schoolWeekSalesOutlook = useMemo(
+    () =>
+      buildSchoolWeekSalesOutlook(
+        forecast.weeklyTrend,
+        forecast.summary.expected_revenue,
+        weather,
+        event,
+        weeklyWeatherForecast
+      ),
+    [event, forecast.summary.expected_revenue, forecast.weeklyTrend, weather, weeklyWeatherForecast]
   );
-  const chartData = {
-    labels: schoolWeekSalesOutlook.map((item) => item.date),
-    datasets: [
-      {
-        label: 'Projected Revenue',
-        data: schoolWeekSalesOutlook.map((item) => item.predicted_sales),
-        borderColor: '#2563eb',
-        backgroundColor(context) {
-          const { chart } = context;
-          const { ctx, chartArea } = chart;
-          if (!chartArea) {
-            return 'rgba(37, 99, 235, 0.14)';
-          }
-          const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-          gradient.addColorStop(0, 'rgba(37, 99, 235, 0.34)');
-          gradient.addColorStop(0.55, 'rgba(124, 58, 237, 0.12)');
-          gradient.addColorStop(1, 'rgba(37, 99, 235, 0.015)');
-          return gradient;
+  const chartData = useMemo(
+    () => ({
+      labels: schoolWeekSalesOutlook.map((item) => item.date),
+      datasets: [
+        {
+          label: 'Projected Revenue',
+          data: schoolWeekSalesOutlook.map((item) => item.predicted_sales),
+          borderColor: '#2563eb',
+          backgroundColor(context) {
+            const { chart } = context;
+            const { ctx, chartArea } = chart;
+            if (!chartArea) {
+              return 'rgba(37, 99, 235, 0.14)';
+            }
+            const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+            gradient.addColorStop(0, 'rgba(37, 99, 235, 0.34)');
+            gradient.addColorStop(0.55, 'rgba(124, 58, 237, 0.12)');
+            gradient.addColorStop(1, 'rgba(37, 99, 235, 0.015)');
+            return gradient;
+          },
+          fill: true,
+          tension: 0.42,
+          borderWidth: 3,
+          pointRadius: 4.5,
+          pointHoverRadius: 8,
+          pointBackgroundColor: '#ffffff',
+          pointBorderColor: '#2563eb',
+          pointBorderWidth: 2.5,
         },
-        fill: true,
-        tension: 0.42,
-        borderWidth: 3,
-        pointRadius: 4.5,
-        pointHoverRadius: 8,
-        pointBackgroundColor: '#ffffff',
-        pointBorderColor: '#2563eb',
-        pointBorderWidth: 2.5,
-      },
-      {
-        label: 'Previous Week Benchmark',
-        data: schoolWeekSalesOutlook.map((item) => item.baseline_sales),
-        borderColor: '#94a3b8',
-        borderDash: [6, 6],
-        fill: false,
-        tension: 0.35,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-      },
-    ],
-  };
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: {
-      duration: 900,
-      easing: 'easeOutQuart',
-    },
-    plugins: {
-      legend: {
-        display: true,
-        labels: {
-          boxWidth: 10,
-          boxHeight: 10,
-          color: '#475569',
-          font: { weight: '700' },
-          usePointStyle: true,
+        {
+          label: 'Previous Week Benchmark',
+          data: schoolWeekSalesOutlook.map((item) => item.baseline_sales),
+          borderColor: '#94a3b8',
+          borderDash: [6, 6],
+          fill: false,
+          tension: 0.35,
+          pointRadius: 0,
+          pointHoverRadius: 5,
         },
+      ],
+    }),
+    [schoolWeekSalesOutlook]
+  );
+  const chartOptions = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: {
+        duration: 450,
+        easing: 'easeOutQuart',
       },
-      tooltip: {
-        backgroundColor: 'rgba(15, 23, 42, 0.9)',
-        borderColor: 'rgba(255, 255, 255, 0.14)',
-        borderWidth: 1,
-        cornerRadius: 16,
-        caretPadding: 8,
-        padding: 12,
-        displayColors: false,
-        titleColor: '#f8fafc',
-        bodyColor: '#e2e8f0',
-        titleFont: { weight: '800' },
-        bodyFont: { weight: '700' },
-        callbacks: {
-          label(context) {
-            return `${context.dataset.label}: ${formatCurrency(context.parsed.y)}`;
+      plugins: {
+        legend: {
+          display: true,
+          labels: {
+            boxWidth: 10,
+            boxHeight: 10,
+            color: '#475569',
+            font: { weight: '700' },
+            usePointStyle: true,
+          },
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          borderColor: 'rgba(255, 255, 255, 0.14)',
+          borderWidth: 1,
+          cornerRadius: 16,
+          caretPadding: 8,
+          padding: 12,
+          displayColors: false,
+          titleColor: '#f8fafc',
+          bodyColor: '#e2e8f0',
+          titleFont: { weight: '800' },
+          bodyFont: { weight: '700' },
+          callbacks: {
+            label(context) {
+              return `${context.dataset.label}: ${formatCurrency(context.parsed.y)}`;
+            },
           },
         },
       },
-    },
-    interaction: { mode: 'index', intersect: false },
-    scales: {
-      x: {
-        grid: { display: false },
-        ticks: { color: '#64748b', font: { weight: '700' } },
-      },
-      y: {
-        border: { display: false },
-        grid: { color: 'rgba(148, 163, 184, 0.18)' },
-        ticks: {
-          color: '#64748b',
-          callback(value) {
-            return formatCompactCurrency(value);
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: '#64748b', font: { weight: '700' } },
+        },
+        y: {
+          border: { display: false },
+          grid: { color: 'rgba(148, 163, 184, 0.18)' },
+          ticks: {
+            color: '#64748b',
+            callback(value) {
+              return formatCompactCurrency(value);
+            },
           },
         },
       },
-    },
-  };
+    }),
+    []
+  );
 
-  const hasTrendData = schoolWeekSalesOutlook.some((item) => item.predicted_sales > 0);
-  const weeklySummaryItems = buildWeeklySummaryItems(schoolWeekSalesOutlook);
-  const liveModelMetricRows = MODEL_ALGORITHMS.map((modelName) => ({
-    name: modelName,
-    metrics: normalizeMetrics(
-      forecast.algorithmMetrics?.[modelName],
-      EMPTY_MODEL_METRICS
-    ),
-    tone: MODEL_METRIC_TONES[modelName] || 'bg-slate-50 ring-slate-100 text-slate-700',
-  }));
-  const selectedModelMetric =
-    liveModelMetricRows.find((model) => model.name === algorithm) || liveModelMetricRows[0];
-  const salesOutlookUsesForecastWeather = schoolWeekSalesOutlook.some(
-    (item) => item.usesForecastWeather
+  const hasTrendData = useMemo(
+    () => schoolWeekSalesOutlook.some((item) => item.predicted_sales > 0),
+    [schoolWeekSalesOutlook]
+  );
+  const weeklySummaryItems = useMemo(
+    () => buildWeeklySummaryItems(schoolWeekSalesOutlook),
+    [schoolWeekSalesOutlook]
+  );
+  const liveModelMetricRows = useMemo(
+    () =>
+      MODEL_ALGORITHMS.map((modelName) => ({
+        name: modelName,
+        metrics: normalizeMetrics(
+          forecast.algorithmMetrics?.[modelName],
+          EMPTY_MODEL_METRICS
+        ),
+        tone: MODEL_METRIC_TONES[modelName] || 'bg-slate-50 ring-slate-100 text-slate-700',
+      })),
+    [forecast.algorithmMetrics]
+  );
+  const selectedModelMetric = useMemo(
+    () => liveModelMetricRows.find((model) => model.name === algorithm) || liveModelMetricRows[0],
+    [algorithm, liveModelMetricRows]
+  );
+  const salesOutlookUsesForecastWeather = useMemo(
+    () => schoolWeekSalesOutlook.some((item) => item.usesForecastWeather),
+    [schoolWeekSalesOutlook]
   );
   const eventLabel = eventProfile.label;
-  const tomorrowSalesPrediction = buildTomorrowSalesPredictionSummary(
-    forecast.summary,
-    schoolWeekSalesOutlook
+  const tomorrowSalesPrediction = useMemo(
+    () => buildTomorrowSalesPredictionSummary(forecast.summary, schoolWeekSalesOutlook),
+    [forecast.summary, schoolWeekSalesOutlook]
   );
   const outlookWeatherLabel = salesOutlookUsesForecastWeather ? '5-day weather forecast' : weatherProfile.label;
-  const tomorrowSalesInputs = buildTomorrowSalesOutlookDefaults({
-    backendOutlook: forecast.tomorrowSalesOutlook,
-    event,
-    forecastSummary: forecast.summary,
-    predictions: forecast.predictions,
-    riskAnalysis,
-    schoolWeekSalesOutlook,
-    tomorrowSalesPrediction,
-    weather,
-  });
+  const tomorrowSalesInputs = useMemo(
+    () =>
+      buildTomorrowSalesOutlookDefaults({
+        backendOutlook: forecast.tomorrowSalesOutlook,
+        event,
+        forecastSummary: forecast.summary,
+        predictions: forecast.predictions,
+        riskAnalysis,
+        schoolWeekSalesOutlook,
+        tomorrowSalesPrediction,
+        weather,
+      }),
+    [
+      event,
+      forecast.predictions,
+      forecast.summary,
+      forecast.tomorrowSalesOutlook,
+      riskAnalysis,
+      schoolWeekSalesOutlook,
+      tomorrowSalesPrediction,
+      weather,
+    ]
+  );
   const recommendationCountLabel =
     statusFilter === 'actionable'
       ? `${formatCount(pageStartCount)}-${formatCount(pageEndCount)} of ${formatCount(actionablePredictionsCount)} to check`
       : `${formatCount(pageStartCount)}-${formatCount(pageEndCount)} of ${formatCount(filteredPredictions.length)} products`;
-  const predictionMetricCards = [
-    {
-      title: 'Expected Sales',
-      value: formatCurrency(forecast.summary.expected_revenue),
-      subtitle: 'Projected revenue for the next plan',
-      accent: 'bg-white shadow-md',
-      icon: BanknotesIcon,
-      iconTone: 'bg-blue-50 text-blue-700 ring-blue-100',
-    },
-    {
-      title: 'Items to Prepare',
-      value: formatCount(forecast.summary.expected_units),
-      subtitle: `${formatCount(forecast.summary.total_products)} products checked`,
-      accent: 'bg-white',
-      icon: ShoppingBagIcon,
-      iconTone: 'bg-violet-50 text-violet-700 ring-violet-100',
-    },
-    {
-      title: 'Need Restock',
-      value: formatCount(forecast.summary.restock_count),
-      subtitle: 'Products that may run short',
-      accent: 'bg-red-50/70 shadow-md ring-red-100',
-      icon: ArchiveBoxIcon,
-      iconTone: 'bg-red-100 text-red-700 ring-red-200',
-    },
-    {
-      title: 'Use First',
-      value: formatCount(forecast.summary.waste_risk_count),
-      subtitle: 'Products with extra stock',
-      accent: 'bg-amber-50/70',
-      icon: ExclamationTriangleIcon,
-      iconTone: 'bg-amber-100 text-amber-700 ring-amber-200',
-    },
-  ];
+  const predictionMetricCards = useMemo(
+    () => [
+      {
+        title: 'Expected Sales',
+        value: formatCurrency(forecast.summary.expected_revenue),
+        subtitle: 'Projected revenue for the next plan',
+        accent: 'bg-white shadow-md',
+        icon: BanknotesIcon,
+        iconTone: 'bg-blue-50 text-blue-700 ring-blue-100',
+      },
+      {
+        title: 'Items to Prepare',
+        value: formatCount(forecast.summary.expected_units),
+        subtitle: `${formatCount(forecast.summary.total_products)} products checked`,
+        accent: 'bg-white',
+        icon: ShoppingBagIcon,
+        iconTone: 'bg-violet-50 text-violet-700 ring-violet-100',
+      },
+      {
+        title: 'Need Restock',
+        value: formatCount(forecast.summary.restock_count),
+        subtitle: 'Products that may run short',
+        accent: 'bg-red-50/70 shadow-md ring-red-100',
+        icon: ArchiveBoxIcon,
+        iconTone: 'bg-red-100 text-red-700 ring-red-200',
+      },
+      {
+        title: 'Use First',
+        value: formatCount(forecast.summary.waste_risk_count),
+        subtitle: 'Products with extra stock',
+        accent: 'bg-amber-50/70',
+        icon: ExclamationTriangleIcon,
+        iconTone: 'bg-amber-100 text-amber-700 ring-amber-200',
+      },
+    ],
+    [
+      forecast.summary.expected_revenue,
+      forecast.summary.expected_units,
+      forecast.summary.restock_count,
+      forecast.summary.total_products,
+      forecast.summary.waste_risk_count,
+    ]
+  );
   const overallRiskMeta = getRiskMeta(riskAnalysis.overallLevel);
-  const riskSummaryCards = [
-    {
-      title: 'Overall',
-      value: overallRiskMeta.label,
-      description: riskAnalysis.overallMessage,
-      card: overallRiskMeta.card,
-    },
-    {
-      title: 'Supply',
-      value: `${formatCount(forecast.summary.restock_count)} item${forecast.summary.restock_count === 1 ? '' : 's'}`,
-      description: `${formatCount(riskAnalysis.totalStockGap)} total units may be short.`,
-      card: getRiskMeta(riskAnalysis.supplyLevel).card,
-    },
-    {
-      title: 'Use First',
-      value: `${formatCount(forecast.summary.waste_risk_count)} item${forecast.summary.waste_risk_count === 1 ? '' : 's'}`,
-      description: `${formatCount(riskAnalysis.totalOverstockUnits)} units have extra stock.`,
-      card: getRiskMeta(riskAnalysis.wasteLevel).card,
-    },
-    {
-      title: 'Weather',
-      value: weatherProfile.label,
-      description: getWeatherRiskMessage(weather),
-      card: getRiskMeta(riskAnalysis.weatherLevel).card,
-    },
-  ];
+  const riskSummaryCards = useMemo(
+    () => [
+      {
+        title: 'Overall',
+        value: overallRiskMeta.label,
+        description: riskAnalysis.overallMessage,
+        card: overallRiskMeta.card,
+      },
+      {
+        title: 'Supply',
+        value: `${formatCount(forecast.summary.restock_count)} item${forecast.summary.restock_count === 1 ? '' : 's'}`,
+        description: `${formatCount(riskAnalysis.totalStockGap)} total units may be short.`,
+        card: getRiskMeta(riskAnalysis.supplyLevel).card,
+      },
+      {
+        title: 'Use First',
+        value: `${formatCount(forecast.summary.waste_risk_count)} item${forecast.summary.waste_risk_count === 1 ? '' : 's'}`,
+        description: `${formatCount(riskAnalysis.totalOverstockUnits)} units have extra stock.`,
+        card: getRiskMeta(riskAnalysis.wasteLevel).card,
+      },
+      {
+        title: 'Weather',
+        value: weatherProfile.label,
+        description: getWeatherRiskMessage(weather),
+        card: getRiskMeta(riskAnalysis.weatherLevel).card,
+      },
+    ],
+    [
+      forecast.summary.restock_count,
+      forecast.summary.waste_risk_count,
+      overallRiskMeta.card,
+      overallRiskMeta.label,
+      riskAnalysis,
+      weather,
+      weatherProfile.label,
+    ]
+  );
   const tomorrowOutlookMeta = getSalesWeekClassMeta(tomorrowSalesPrediction.level);
-  const heroMetricCards = [
-    {
-      title: 'Expected Sales',
-      value: formatCompactCurrency(forecast.summary.expected_revenue),
-      detail: `${formatCount(forecast.summary.expected_units)} units forecast`,
-      tone: 'bg-blue-50 text-blue-700 ring-blue-100',
-    },
-    {
-      title: 'Tomorrow Outlook',
-      value: tomorrowOutlookMeta.label.replace('Tomorrow Sales', '').trim() || tomorrowOutlookMeta.label,
-      detail: formatCurrency(tomorrowSalesPrediction.estimatedSales),
-      tone: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
-    },
-    {
-      title: `${selectedModelMetric?.name || algorithm} Accuracy`,
-      value: selectedModelMetric?.metrics.accuracy || '0.00',
-      detail: `${selectedModelMetric?.metrics.error_rate || '0.00'} error rate`,
-      tone: 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-100',
-    },
-  ];
+  const heroMetricCards = useMemo(
+    () => [
+      {
+        title: 'Expected Sales',
+        value: formatCompactCurrency(forecast.summary.expected_revenue),
+        detail: `${formatCount(forecast.summary.expected_units)} units forecast`,
+        tone: 'bg-blue-50 text-blue-700 ring-blue-100',
+      },
+      {
+        title: 'Tomorrow Outlook',
+        value: tomorrowOutlookMeta.label.replace('Tomorrow Sales', '').trim() || tomorrowOutlookMeta.label,
+        detail: formatCurrency(tomorrowSalesPrediction.estimatedSales),
+        tone: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+      },
+      {
+        title: `${selectedModelMetric?.name || algorithm} Accuracy`,
+        value: selectedModelMetric?.metrics.accuracy || '0.00',
+        detail: `${selectedModelMetric?.metrics.error_rate || '0.00'} error rate`,
+        tone: 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-100',
+      },
+    ],
+    [
+      algorithm,
+      forecast.summary.expected_revenue,
+      forecast.summary.expected_units,
+      selectedModelMetric?.metrics.accuracy,
+      selectedModelMetric?.metrics.error_rate,
+      selectedModelMetric?.name,
+      tomorrowOutlookMeta.label,
+      tomorrowSalesPrediction.estimatedSales,
+    ]
+  );
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto bg-slate-50/40 pb-6 pr-2 custom-scrollbar">
@@ -3797,20 +4003,29 @@ export default function Predictions() {
                       Previous
                     </button>
 
-                    {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
-                      <button
-                        key={pageNumber}
-                        type="button"
-                        onClick={() => setCurrentPage(pageNumber)}
-                        className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
-                          pageNumber === safeCurrentPage
-                            ? 'bg-slate-900 text-white'
-                            : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        {pageNumber}
-                      </button>
-                    ))}
+                    {paginationItems.map((pageNumber) =>
+                      typeof pageNumber === 'number' ? (
+                        <button
+                          key={pageNumber}
+                          type="button"
+                          onClick={() => setCurrentPage(pageNumber)}
+                          className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
+                            pageNumber === safeCurrentPage
+                              ? 'bg-slate-900 text-white'
+                              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {pageNumber}
+                        </button>
+                      ) : (
+                        <span
+                          key={pageNumber}
+                          className="inline-flex h-10 min-w-10 items-center justify-center px-2 text-sm font-black text-slate-400"
+                        >
+                          ...
+                        </span>
+                      )
+                    )}
 
                     <button
                       type="button"

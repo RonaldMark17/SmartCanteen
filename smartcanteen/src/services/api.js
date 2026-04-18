@@ -152,6 +152,7 @@ function resolveFallbackApiBase(primaryBase) {
 
 const API_BASE = resolveApiBase();
 const API_FALLBACK_BASE = resolveFallbackApiBase(API_BASE);
+const pendingGetRequests = new Map();
 
 export function getRealtimeAlertsUrl() {
   if (typeof window === 'undefined') {
@@ -273,7 +274,7 @@ async function getCachedResponse(method, path) {
   return latestMatch?.data ?? null;
 }
 
-async function request(method, path, body = null) {
+async function performRequest(method, path, body = null) {
   const cacheable = isCacheableRequest(method, path);
   const token = localStorage.getItem('sc_token');
   const offlineSession = isOfflineSessionActive() || isOfflineSessionToken(token);
@@ -418,6 +419,34 @@ async function request(method, path, body = null) {
   }
 
   throw new Error(`Cannot connect to server at ${lastConnectionBase}. Check your backend and API config.`);
+}
+
+function buildPendingGetKey(method, path) {
+  const token = localStorage.getItem('sc_token') || '';
+  return `${String(method || '').toUpperCase()} ${path} ${token}`;
+}
+
+function request(method, path, body = null) {
+  const canShareInFlightRequest =
+    isCacheableRequest(method, path) &&
+    !isOfflineSessionActive() &&
+    isOnline();
+
+  if (!canShareInFlightRequest) {
+    return performRequest(method, path, body);
+  }
+
+  const pendingKey = buildPendingGetKey(method, path);
+  const pendingRequest = pendingGetRequests.get(pendingKey);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  const requestPromise = performRequest(method, path, body).finally(() => {
+    pendingGetRequests.delete(pendingKey);
+  });
+  pendingGetRequests.set(pendingKey, requestPromise);
+  return requestPromise;
 }
 
 async function primeOfflineData({ role } = {}) {
