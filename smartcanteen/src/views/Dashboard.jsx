@@ -10,9 +10,6 @@ import {
   getDaysInPhilippineMonth,
   getPhilippineDateKey,
   getPhilippineDateParts,
-  getPhilippineHour,
-  isSamePhilippinePeriod,
-  parseBackendDateTime,
 } from '../utils/dateTime';
 import {
   ArrowDownTrayIcon,
@@ -53,7 +50,13 @@ const PERIOD_OPTIONS = [
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function formatCurrency(value) {
-  return `PHP ${Number(value || 0).toFixed(2)}`;
+  const numeric = Number(value || 0);
+  const hasFraction = Math.abs(numeric % 1) > 0;
+
+  return `PHP ${numeric.toLocaleString('en-PH', {
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function formatNumber(value) {
@@ -94,24 +97,6 @@ function getPeriodDescription(period, referenceDate) {
     month: 'long',
     day: 'numeric',
   });
-}
-
-function parseTransactionDate(transaction) {
-  return parseBackendDateTime(transaction.created_at);
-}
-
-function isWithinPeriod(date, period, referenceDate) {
-  return isSamePhilippinePeriod(date, period, referenceDate);
-}
-
-function getPeriodTransactions(transactions, period, referenceDate) {
-  return transactions
-    .filter((transaction) => isWithinPeriod(parseTransactionDate(transaction), period, referenceDate))
-    .sort((left, right) => {
-      const leftDate = parseTransactionDate(left)?.getTime() || 0;
-      const rightDate = parseTransactionDate(right)?.getTime() || 0;
-      return rightDate - leftDate;
-    });
 }
 
 function buildPeriodRange(period, selectedDate, selectedMonth, selectedYear) {
@@ -162,69 +147,66 @@ function buildYearOptions(selectedYear) {
   return years.sort((left, right) => Number(right) - Number(left));
 }
 
-function buildCategorySplit(transactions) {
-  const totals = new Map();
-
-  transactions.forEach((transaction) => {
-    (transaction.items || []).forEach((item) => {
-      const category = item.product?.category || 'Uncategorized';
-      const revenue = Number(item.quantity || 0) * Number(item.unit_price || 0);
-      totals.set(category, (totals.get(category) || 0) + revenue);
-    });
-  });
-
-  return [...totals.entries()]
-    .map(([category, value]) => ({ category, value: Number(value.toFixed(2)) }))
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 4);
+function normalizeDailySales(value) {
+  return Array.isArray(value)
+    ? value.map((item) => ({
+        date: item?.date || '',
+        revenue: Number(item?.revenue || 0),
+        transactions: Number(item?.transactions || 0),
+      }))
+    : [];
 }
 
-function buildPaymentSummary(transactions) {
-  const summary = {
-    cash: { label: 'Cash', count: 0, revenue: 0 },
-    gcash: { label: 'GCash', count: 0, revenue: 0 },
-  };
-
-  transactions.forEach((transaction) => {
-    const key = transaction.payment_type === 'gcash' ? 'gcash' : 'cash';
-    summary[key].count += 1;
-    summary[key].revenue += Number(transaction.total || 0);
-  });
-
-  return Object.entries(summary).map(([key, item]) => ({
-    key,
-    ...item,
-    revenue: Number(item.revenue.toFixed(2)),
-  }));
+function normalizeCategorySplit(value) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => ({
+          category: item?.category || 'Uncategorized',
+          value: Number(item?.value || 0),
+        }))
+        .filter((item) => item.value > 0)
+        .slice(0, 4)
+    : [];
 }
 
-function buildTopProducts(transactions) {
-  const totals = new Map();
+function normalizePaymentSummary(value) {
+  const fallback = [
+    { key: 'cash', label: 'Cash', count: 0, revenue: 0 },
+    { key: 'gcash', label: 'GCash', count: 0, revenue: 0 },
+  ];
 
-  transactions.forEach((transaction) => {
-    (transaction.items || []).forEach((item) => {
-      const product = item.product || {};
-      const id = product.id || item.product_id || product.name || 'Unknown product';
-      const quantity = Number(item.quantity || 0);
-      const revenue = quantity * Number(item.unit_price || 0);
-      const current = totals.get(id) || {
-        id,
-        name: product.name || item.product_name || `Product ${id}`,
-        category: product.category || item.category || 'Uncategorized',
-        quantity: 0,
-        revenue: 0,
-      };
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
 
-      current.quantity += quantity;
-      current.revenue += revenue;
-      totals.set(id, current);
-    });
-  });
+  const byKey = new Map(
+    value.map((item) => {
+      const key = item?.key === 'gcash' ? 'gcash' : 'cash';
+      return [
+        key,
+        {
+          key,
+          label: key === 'gcash' ? 'GCash' : 'Cash',
+          count: Number(item?.count || 0),
+          revenue: Number(item?.revenue || 0),
+        },
+      ];
+    })
+  );
 
-  return [...totals.values()]
-    .map((item) => ({ ...item, revenue: Number(item.revenue.toFixed(2)) }))
-    .sort((left, right) => right.revenue - left.revenue || right.quantity - left.quantity)
-    .slice(0, 5);
+  return fallback.map((item) => byKey.get(item.key) || item);
+}
+
+function normalizeTopProducts(value) {
+  return Array.isArray(value)
+    ? value.map((item, index) => ({
+        id: item?.product_id || item?.product_name || `product-${index}`,
+        name: item?.product_name || `Product ${index + 1}`,
+        category: item?.category || 'Uncategorized',
+        quantity: Number(item?.total_qty || 0),
+        revenue: Number(item?.revenue || 0),
+      }))
+    : [];
 }
 
 function getPeakTrendPoint(trend) {
@@ -348,15 +330,15 @@ function mapRecentTransactions(transactions) {
   }));
 }
 
-function buildTrend(period, transactions, now) {
+function buildTrend(period, dailySales, hourlySales, now) {
   if (period === 'year') {
     const revenueByMonth = Array.from({ length: 12 }, () => 0);
-    transactions.forEach((transaction) => {
-      const date = parseTransactionDate(transaction);
-      if (!date) {
+    dailySales.forEach((item) => {
+      const month = getPhilippineDateParts(item.date)?.month;
+      if (!month) {
         return;
       }
-      revenueByMonth[date.getMonth()] += Number(transaction.total || 0);
+      revenueByMonth[month - 1] += Number(item.revenue || 0);
     });
 
     return {
@@ -370,15 +352,12 @@ function buildTrend(period, transactions, now) {
     const daysInMonth = getDaysInPhilippineMonth(now);
     const revenueByDay = Array.from({ length: daysInMonth }, () => 0);
 
-    transactions.forEach((transaction) => {
-      const date = parseTransactionDate(transaction);
-      if (!date) {
+    dailySales.forEach((item) => {
+      const day = getPhilippineDateParts(item.date)?.day;
+      if (!day) {
         return;
       }
-      const day = getPhilippineDateParts(date)?.day;
-      if (day) {
-        revenueByDay[day - 1] += Number(transaction.total || 0);
-      }
+      revenueByDay[day - 1] += Number(item.revenue || 0);
     });
 
     return {
@@ -389,14 +368,10 @@ function buildTrend(period, transactions, now) {
   }
 
   const revenueByHour = Array.from({ length: 24 }, () => 0);
-  transactions.forEach((transaction) => {
-    const date = parseTransactionDate(transaction);
-    if (!date) {
-      return;
-    }
-    const hour = getPhilippineHour(date);
-    if (hour !== null) {
-      revenueByHour[hour] += Number(transaction.total || 0);
+  hourlySales.forEach((item) => {
+    const hour = Number(item.hour);
+    if (hour >= 0 && hour < 24) {
+      revenueByHour[hour] += Number(item.sales || 0);
     }
   });
 
@@ -605,6 +580,14 @@ export default function Dashboard() {
   const [data, setData] = useState({
     summary: null,
     transactions: [],
+    dailySales: [],
+    hourlySales: [],
+    categorySplit: [],
+    paymentSummary: [
+      { key: 'cash', label: 'Cash', count: 0, revenue: 0 },
+      { key: 'gcash', label: 'GCash', count: 0, revenue: 0 },
+    ],
+    topProducts: [],
     predictions: [],
     metrics: DEFAULT_METRICS,
   });
@@ -662,7 +645,7 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadTransactions() {
+    async function loadPeriodData() {
       setTransactionsLoading(true);
       setTransactionsError('');
 
@@ -672,17 +655,74 @@ export default function Dashboard() {
         selectedMonth,
         selectedYear
       );
+      const queryOptions = { startDate, endDate };
+      const hourlyRequest =
+        period === 'day'
+          ? API.getHourlyHeatmap(queryOptions)
+          : Promise.resolve([]);
 
       try {
-        const transactions = await API.getTransactions(startDate, endDate, { limit: 2000 });
+        const [
+          dailyResult,
+          categoryResult,
+          topProductsResult,
+          paymentResult,
+          recentTransactionsResult,
+          hourlyResult,
+        ] = await Promise.allSettled([
+          API.getDailySales(queryOptions),
+          API.getCategorySales(queryOptions),
+          API.getTopProducts(queryOptions),
+          API.getPaymentSummary(queryOptions),
+          API.getTransactions(startDate, endDate, { limit: 5 }),
+          hourlyRequest,
+        ]);
         if (cancelled) {
           return;
         }
 
         setData((previous) => ({
           ...previous,
-          transactions: Array.isArray(transactions) ? transactions : [],
+          dailySales:
+            dailyResult.status === 'fulfilled'
+              ? normalizeDailySales(dailyResult.value)
+              : [],
+          categorySplit:
+            categoryResult.status === 'fulfilled'
+              ? normalizeCategorySplit(categoryResult.value)
+              : [],
+          topProducts:
+            topProductsResult.status === 'fulfilled'
+              ? normalizeTopProducts(topProductsResult.value)
+              : [],
+          paymentSummary:
+            paymentResult.status === 'fulfilled'
+              ? normalizePaymentSummary(paymentResult.value)
+              : normalizePaymentSummary([]),
+          transactions:
+            recentTransactionsResult.status === 'fulfilled' && Array.isArray(recentTransactionsResult.value)
+              ? recentTransactionsResult.value
+              : [],
+          hourlySales:
+            hourlyResult.status === 'fulfilled' && Array.isArray(hourlyResult.value)
+              ? hourlyResult.value
+              : [],
         }));
+
+        const failures = [
+          dailyResult.status === 'rejected' ? dailyResult.reason?.message || 'Daily sales failed.' : null,
+          categoryResult.status === 'rejected' ? categoryResult.reason?.message || 'Category sales failed.' : null,
+          topProductsResult.status === 'rejected' ? topProductsResult.reason?.message || 'Top products failed.' : null,
+          paymentResult.status === 'rejected' ? paymentResult.reason?.message || 'Payment summary failed.' : null,
+          recentTransactionsResult.status === 'rejected'
+            ? recentTransactionsResult.reason?.message || 'Recent transactions failed.'
+            : null,
+          hourlyResult.status === 'rejected' ? hourlyResult.reason?.message || 'Hourly sales failed.' : null,
+        ].filter(Boolean);
+
+        if (failures.length > 0) {
+          setTransactionsError(`Some selected-period data could not be loaded: ${failures.join(' | ')}`);
+        }
       } catch (loadError) {
         if (cancelled) {
           return;
@@ -694,6 +734,11 @@ export default function Dashboard() {
         setData((previous) => ({
           ...previous,
           transactions: [],
+          dailySales: [],
+          hourlySales: [],
+          categorySplit: [],
+          topProducts: [],
+          paymentSummary: normalizePaymentSummary([]),
         }));
       } finally {
         if (!cancelled) {
@@ -702,7 +747,7 @@ export default function Dashboard() {
       }
     }
 
-    loadTransactions();
+    loadPeriodData();
 
     return () => {
       cancelled = true;
@@ -717,6 +762,7 @@ export default function Dashboard() {
     overviewLoading &&
     transactionsLoading &&
     !data.summary &&
+    data.dailySales.length === 0 &&
     data.transactions.length === 0 &&
     data.predictions.length === 0;
 
@@ -725,21 +771,23 @@ export default function Dashboard() {
   }
 
   const periodTitle = getPeriodTitle(period);
-  const { summary, transactions, predictions, metrics } = data;
-  const periodTransactions = getPeriodTransactions(transactions, period, referenceDate);
-  const recentTxns = mapRecentTransactions(periodTransactions);
-  const categorySplit = buildCategorySplit(periodTransactions);
-  const trend = buildTrend(period, periodTransactions, referenceDate);
-  const periodRevenue = periodTransactions.reduce(
-    (sum, transaction) => sum + Number(transaction.total || 0),
+  const { summary, transactions, predictions, metrics, dailySales, hourlySales } = data;
+  const recentTxns = mapRecentTransactions(transactions);
+  const categorySplit = data.categorySplit;
+  const trend = buildTrend(period, dailySales, hourlySales, referenceDate);
+  const periodRevenue = dailySales.reduce(
+    (sum, item) => sum + Number(item.revenue || 0),
     0
   );
-  const periodTransactionCount = periodTransactions.length;
+  const periodTransactionCount = dailySales.reduce(
+    (sum, item) => sum + Number(item.transactions || 0),
+    0
+  );
   const averageOrderValue =
     periodTransactionCount > 0 ? periodRevenue / periodTransactionCount : 0;
-  const paymentSummary = buildPaymentSummary(periodTransactions);
+  const paymentSummary = data.paymentSummary;
   const paymentTotal = paymentSummary.reduce((sum, item) => sum + item.revenue, 0);
-  const topProducts = buildTopProducts(periodTransactions);
+  const topProducts = data.topProducts;
   const topProduct = topProducts[0] || null;
   const peakTrendPoint = getPeakTrendPoint(trend);
   const topCategory = categorySplit[0] || null;

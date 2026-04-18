@@ -948,6 +948,40 @@ def top_products(
     )
 
 
+@app.get("/api/analytics/category-sales", tags=["Analytics"])
+def category_sales(
+    days: int = 7,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.get_current_user),
+):
+    date_range = _resolve_analytics_date_range(days, start_date, end_date)
+    return analytics_helpers.get_category_sales(
+        db,
+        date_range["days"],
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+@app.get("/api/analytics/payment-summary", tags=["Analytics"])
+def payment_summary(
+    days: int = 7,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.get_current_user),
+):
+    date_range = _resolve_analytics_date_range(days, start_date, end_date)
+    return analytics_helpers.get_payment_summary(
+        db,
+        date_range["days"],
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
 @app.get("/api/analytics/hourly-heatmap", tags=["Analytics"])
 def hourly_heatmap(
     days: int = 30,

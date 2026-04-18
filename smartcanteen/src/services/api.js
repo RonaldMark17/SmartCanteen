@@ -598,6 +598,8 @@ export const API = {
   getSummary: () => request('GET', '/analytics/summary'),
   getDailySales: (options = 7) => request('GET', `/analytics/daily-sales${toAnalyticsQuery(options)}`),
   getTopProducts: (options = 7) => request('GET', `/analytics/top-products${toAnalyticsQuery(options)}`),
+  getCategorySales: (options = 7) => request('GET', `/analytics/category-sales${toAnalyticsQuery(options)}`),
+  getPaymentSummary: (options = 7) => request('GET', `/analytics/payment-summary${toAnalyticsQuery(options)}`),
   getHourlyHeatmap: (options = {}) => request('GET', `/analytics/hourly-heatmap${toAnalyticsQuery(options)}`),
 
   getPredictions: ({ algorithm = 'XGBoost', weather = 'clear', event = 'none' } = {}) =>
