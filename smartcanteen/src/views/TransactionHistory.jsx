@@ -222,19 +222,19 @@ export default function TransactionHistory() {
   };
 
   return (
-    <div className="view-shell-static">
+    <div className="view-shell-static h-auto min-h-full pb-6 md:h-full md:min-h-0 md:pb-0">
       <div className="view-header md:flex-row md:items-center">
         <div>
           <h1 className="view-title">Transaction History</h1>
           <p className="view-subtitle">Review past sales and inspect transaction details.</p>
         </div>
 
-        <div className="flex w-full flex-wrap items-center gap-3 md:w-auto md:flex-nowrap">
+        <div className="grid w-full grid-cols-2 gap-3 md:flex md:w-auto md:flex-nowrap md:items-center">
           <button
             type="button"
             onClick={exportTransactionsCsv}
             disabled={loading || filteredTxns.length === 0}
-            className="action-button"
+            className="action-button w-full md:w-auto"
           >
             <ArrowDownTrayIcon className="h-5 w-5" />
             Export CSV
@@ -245,18 +245,18 @@ export default function TransactionHistory() {
               setCurrentPage(1);
               setReloadKey((value) => value + 1);
             }}
-            className="action-button"
+            className="action-button w-full md:w-auto"
           >
             Refresh
           </button>
-          <div className="flex flex-1 items-center gap-4 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm md:flex-none">
-            <div className="border-r border-slate-100 px-4 text-center">
+          <div className="col-span-2 grid min-w-0 grid-cols-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm md:flex md:flex-none md:items-center md:gap-4">
+            <div className="min-w-0 border-r border-slate-100 px-3 text-center md:px-4">
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Sales</p>
-              <p className="text-lg font-black text-primary">{formatCurrency(totalRevenue)}</p>
+              <p className="truncate text-base font-black text-primary sm:text-lg">{formatCurrency(totalRevenue)}</p>
             </div>
-            <div className="px-4 text-center">
+            <div className="min-w-0 px-3 text-center md:px-4">
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Count</p>
-              <p className="text-lg font-black text-slate-900">{filteredTxns.length}</p>
+              <p className="truncate text-base font-black text-slate-900 sm:text-lg">{filteredTxns.length}</p>
             </div>
           </div>
         </div>
@@ -268,8 +268,8 @@ export default function TransactionHistory() {
         </DismissibleAlert>
       )}
 
-      <div className="control-surface grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="relative md:col-span-2">
+      <div className="control-surface grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
+        <div className="relative sm:col-span-2 md:col-span-2">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
@@ -308,7 +308,7 @@ export default function TransactionHistory() {
         </div>
       </div>
 
-      <div className="data-card flex min-h-0 flex-1 flex-col">
+      <div className="data-card flex shrink-0 flex-col md:min-h-0 md:flex-1 md:shrink">
         <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-y-auto md:block">
           <table className="w-full text-left text-sm text-slate-600">
             <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">
@@ -383,7 +383,7 @@ export default function TransactionHistory() {
           </table>
         </div>
 
-        <div className="custom-scrollbar flex-1 overflow-y-auto p-4 md:hidden">
+        <div className="p-3 sm:p-4 md:hidden">
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 5 }, (_, index) => (
@@ -408,7 +408,7 @@ export default function TransactionHistory() {
               {paginatedTxns.map((transaction) => (
                 <div key={transaction.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <div className="font-mono text-xs font-bold text-slate-900">
                         TXN-{String(transaction.id).padStart(6, '0')}
                       </div>
@@ -420,8 +420,10 @@ export default function TransactionHistory() {
                       </div>
                     </div>
                     <button
+                      type="button"
                       onClick={() => setSelectedTxn(transaction)}
-                      className="rounded-lg border border-slate-200 p-2 text-slate-500 transition-all hover:bg-primary/5 hover:text-primary"
+                      aria-label={`View transaction TXN-${String(transaction.id).padStart(6, '0')}`}
+                      className="shrink-0 rounded-lg border border-slate-200 p-2 text-slate-500 transition-all hover:bg-primary/5 hover:text-primary"
                     >
                       <EyeIcon className="h-5 w-5" />
                     </button>
@@ -438,7 +440,7 @@ export default function TransactionHistory() {
                     </div>
                   </div>
 
-                  <div className="mt-4 flex items-center justify-between">
+                  <div className="mt-4 flex items-center justify-between gap-3">
                     <span
                       className={`rounded px-2 py-1 text-[10px] font-black uppercase ${
                         transaction.payment_type === 'cash'
@@ -448,7 +450,7 @@ export default function TransactionHistory() {
                     >
                       {transaction.payment_type || 'cash'}
                     </span>
-                    <span className="max-w-[12rem] truncate text-xs text-slate-500">
+                    <span className="min-w-0 flex-1 truncate text-right text-xs text-slate-500">
                       {(transaction.items || []).map(getItemName).slice(0, 2).join(', ') || 'No items'}
                     </span>
                   </div>
@@ -465,13 +467,13 @@ export default function TransactionHistory() {
             </div>
 
             {totalPages > 1 && (
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full flex-wrap items-center justify-center gap-1.5 sm:w-auto sm:justify-end sm:gap-2">
                 <button
                   type="button"
                   onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
                   disabled={safeCurrentPage === 1}
                   aria-label="Previous transaction page"
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10 sm:px-3"
                 >
                   <ChevronLeftIcon className="h-4 w-4" />
                   <span className="hidden sm:inline">Previous</span>
@@ -483,7 +485,7 @@ export default function TransactionHistory() {
                     type="button"
                     onClick={() => setCurrentPage(pageNumber)}
                     aria-current={pageNumber === safeCurrentPage ? 'page' : undefined}
-                    className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
+                    className={`inline-flex h-9 min-w-9 items-center justify-center rounded-xl px-2 text-sm font-black transition sm:h-10 sm:min-w-10 sm:px-3 ${
                       pageNumber === safeCurrentPage
                         ? 'bg-slate-900 text-white'
                         : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
@@ -498,7 +500,7 @@ export default function TransactionHistory() {
                   onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
                   disabled={safeCurrentPage === totalPages}
                   aria-label="Next transaction page"
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10 sm:px-3"
                 >
                   <span className="hidden sm:inline">Next</span>
                   <ChevronRightIcon className="h-4 w-4" />
@@ -510,9 +512,9 @@ export default function TransactionHistory() {
       </div>
 
       {selectedTxn && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-          <div className="flex max-h-[90vh] w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="custom-scrollbar flex-1 overflow-y-auto p-6">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[90vh] sm:max-w-sm sm:rounded-2xl">
+            <div className="custom-scrollbar flex-1 overflow-y-auto px-5 pb-5 pt-[calc(env(safe-area-inset-top)+1.25rem)] sm:p-6">
               <div className="mb-6 text-center">
                 <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
                   <BanknotesIcon className="h-6 w-6 text-slate-600" />
@@ -525,11 +527,11 @@ export default function TransactionHistory() {
 
               <div className="mb-6 space-y-3">
                 {(selectedTxn.items || []).map((item, index) => (
-                  <div key={`${item.product_id}-${index}`} className="flex justify-between text-sm">
-                    <span className="text-slate-600">
+                  <div key={`${item.product_id}-${index}`} className="flex justify-between gap-3 text-sm">
+                    <span className="min-w-0 text-slate-600">
                       <span className="font-bold">{item.quantity}x</span> {getItemName(item)}
                     </span>
-                    <span className="font-bold text-slate-900">
+                    <span className="shrink-0 font-bold text-slate-900">
                       {formatCurrency(Number(item.unit_price || 0) * Number(item.quantity || 0))}
                     </span>
                   </div>
@@ -556,14 +558,16 @@ export default function TransactionHistory() {
               </div>
             </div>
 
-            <div className="flex gap-3 border-t border-slate-100 bg-white p-4">
+            <div className="flex gap-3 border-t border-slate-100 bg-white px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4 sm:p-4">
               <button
+                type="button"
                 onClick={() => setSelectedTxn(null)}
                 className="flex-1 rounded-xl bg-slate-100 py-3 font-bold text-slate-700 transition-all hover:bg-slate-200"
               >
                 Close
               </button>
               <button
+                type="button"
                 onClick={() => window.print()}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-3 font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary-dark"
               >
