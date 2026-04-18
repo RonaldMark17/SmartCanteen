@@ -139,11 +139,11 @@ export default function AuditLog() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
             <button
               type="button"
               onClick={() => loadLogs({ showLoading: true })}
-              className="action-button h-11"
+              className="action-button"
             >
               <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               Refresh
