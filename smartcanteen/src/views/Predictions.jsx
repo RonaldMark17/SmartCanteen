@@ -4,6 +4,7 @@ import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
+  formatPhilippineDate,
   formatPhilippineDateTime,
   getPhilippineDateKey,
   getPhilippineWeekday,
@@ -177,8 +178,8 @@ const SCHOOL_WEEKDAY_SALES_WEIGHTS = {
   Mon: 1.08,
   Tue: 1.02,
   Wed: 1,
-  Thu: 0.97,
-  Fri: 0.9,
+  Thu: 0.99,
+  Fri: 1.01,
 };
 const SCHOOL_WEEKDAY_FULL_NAMES = {
   Mon: 'Monday',
@@ -186,6 +187,10 @@ const SCHOOL_WEEKDAY_FULL_NAMES = {
   Wed: 'Wednesday',
   Thu: 'Thursday',
   Fri: 'Friday',
+};
+const SCHOOL_SCHEDULE_BADGE_META = {
+  holiday: 'bg-rose-50 text-rose-700 ring-rose-100',
+  halfday: 'bg-amber-50 text-amber-700 ring-amber-100',
 };
 const RECOMMENDATIONS_PER_PAGE = 6;
 
@@ -354,6 +359,20 @@ function formatCompactCurrency(value) {
 
 function formatCount(value) {
   return Number(value || 0).toLocaleString('en-PH');
+}
+
+function formatShortPhilippineDate(value) {
+  if (!value) {
+    return '';
+  }
+
+  const formatted = formatPhilippineDate(value, { month: 'short', day: 'numeric' });
+  return formatted === 'N/A' ? '' : formatted;
+}
+
+function toOptionalAmount(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.max(0, amount) : null;
 }
 
 function InlineAlert({
@@ -615,14 +634,44 @@ function normalizeTrend(trend) {
 
   trend
     .map((entry) => {
-      const label = getSchoolDayLabel(entry?.date);
+      const label = getSchoolDayLabel(entry?.day_label || entry?.date);
       if (!label) {
         return null;
       }
+      const rawDate = String(entry?.date || '').trim();
+      const hasCalendarDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate);
+      const schoolEventType = String(
+        entry?.school_event_type || entry?.schoolEventType || entry?.event_type || entry?.eventType || 'none'
+      );
+      const appliedEventType = String(entry?.event_type || entry?.eventType || schoolEventType || 'none');
+      let scheduleLabel = entry?.schedule_label || entry?.scheduleLabel || '';
+      if (!scheduleLabel && (schoolEventType === 'holiday' || schoolEventType === 'halfday')) {
+        scheduleLabel = entry?.school_event_label || entry?.schoolEventLabel || entry?.event_label || entry?.eventLabel || '';
+      }
+      if (!scheduleLabel && (appliedEventType === 'holiday' || appliedEventType === 'halfday')) {
+        scheduleLabel = entry?.event_label || entry?.eventLabel || '';
+      }
+      const isSchoolDay = entry?.is_school_day ?? entry?.isSchoolDay ?? true;
 
       return [label, {
         date: label,
+        actualDate: hasCalendarDate ? rawDate : entry?.actualDate || entry?.actual_date || '',
         predicted_sales: Math.max(0, Number(entry?.predicted_sales || 0)),
+        baseline_sales: Math.max(0, Number(entry?.baseline_sales || entry?.predicted_sales || 0)),
+        historicalAverageSales: toOptionalAmount(entry?.historical_average_sales ?? entry?.historicalAverageSales),
+        recentAverageSales: toOptionalAmount(entry?.recent_average_sales ?? entry?.recentAverageSales),
+        previousWeekSales: toOptionalAmount(entry?.previous_week_sales ?? entry?.previousWeekSales),
+        lastActualSales: toOptionalAmount(entry?.last_actual_sales ?? entry?.lastActualSales),
+        lastActualDate: entry?.last_actual_date || entry?.lastActualDate || '',
+        historyDays: Number(entry?.history_days ?? entry?.historyDays ?? 0),
+        weather: entry?.weather || '',
+        schoolEventType,
+        schoolEventLabel: entry?.school_event_label || entry?.schoolEventLabel || '',
+        scheduleLabel,
+        eventType: appliedEventType,
+        eventLabel: entry?.event_label || entry?.eventLabel || entry?.school_event_label || entry?.schoolEventLabel || '',
+        isSchoolDay: isSchoolDay !== false && isSchoolDay !== 0,
+        dataSource: entry?.data_source || entry?.dataSource || '',
       }];
     })
     .filter(Boolean)
@@ -685,25 +734,47 @@ function buildSchoolWeekSalesOutlook(
     const outlookWeather = forecastWeather || selectedWeather;
     const dayModifier = getScenarioModifier(outlookWeather, selectedEvent);
     const trendItem = normalizedTrend.find((item) => item.date === label);
+    const fallbackBaseline =
+      (baseRevenue / selectedScenarioModifier) * (SCHOOL_WEEKDAY_SALES_WEIGHTS[label] || 1);
     const unadjustedSales = hasBackendTrend
-      ? Number(trendItem?.predicted_sales || 0) / selectedScenarioModifier
-      : (baseRevenue / selectedScenarioModifier) * (SCHOOL_WEEKDAY_SALES_WEIGHTS[label] || 1);
+      ? Number(trendItem?.baseline_sales ?? trendItem?.predicted_sales ?? 0)
+      : fallbackBaseline;
+    const predictedSales = hasBackendTrend
+      ? Number(trendItem?.predicted_sales || 0)
+      : unadjustedSales * dayModifier;
 
     return {
+      ...trendItem,
       date: label,
-      predicted_sales: Number(Math.max(0, unadjustedSales * dayModifier).toFixed(2)),
+      predicted_sales: Number(Math.max(0, predictedSales).toFixed(2)),
       baseline_sales: Number(Math.max(0, unadjustedSales).toFixed(2)),
-      weather: outlookWeather,
-      weatherLabel: getWeatherProfile(outlookWeather).label,
-      event: selectedEvent,
-      eventLabel: getEventProfile(selectedEvent).label,
+      weather: trendItem?.weather || outlookWeather,
+      weatherLabel: getWeatherProfile(trendItem?.weather || outlookWeather).label,
+      event: trendItem?.eventType || selectedEvent,
+      eventLabel: trendItem?.eventLabel || getEventProfile(selectedEvent).label,
       usesForecastWeather: Boolean(forecastWeather),
+      dataSource: trendItem?.dataSource || (hasBackendTrend ? 'transaction_history' : 'forecast_fallback'),
     };
   });
 }
 
 function getWeekdayFullName(label) {
   return SCHOOL_WEEKDAY_FULL_NAMES[label] || label;
+}
+
+function getScheduleBadgeMeta(item) {
+  const eventType = SCHOOL_SCHEDULE_BADGE_META[item?.schoolEventType]
+    ? item.schoolEventType
+    : item?.eventType || 'none';
+  const label = item?.scheduleLabel || '';
+  if (!label || !SCHOOL_SCHEDULE_BADGE_META[eventType]) {
+    return null;
+  }
+
+  return {
+    label,
+    className: SCHOOL_SCHEDULE_BADGE_META[eventType],
+  };
 }
 
 function describeSchoolWeekSalesOutlook(outlook) {
@@ -741,7 +812,7 @@ function describeSchoolWeekSalesOutlook(outlook) {
       ? `${quietName} is the quietest day at ${formatCurrency(quietDay.predicted_sales)} with ${quietDay.weatherLabel.toLowerCase()} weather.`
       : '';
 
-  return [movement, peakSummary, quietSummary, 'This diagram uses the selected school-day scenario for the whole school week.']
+  return [movement, peakSummary, quietSummary, 'This diagram uses real transaction history and marks special school schedules when available.']
     .filter(Boolean)
     .join(' ');
 }
@@ -761,10 +832,15 @@ function buildWeeklySummaryItems(outlook) {
     salesDays[0]
   );
   const weatherInsight = getWeatherBusinessInsight(peakDay.weather);
+  const scheduledDays = outlook.filter((item) => item.scheduleLabel);
+  const totalHistoryDays = outlook.reduce((total, item) => total + Number(item.historyDays || 0), 0);
 
   return [
     `Highest sales: ${getWeekdayFullName(peakDay.date)} ${formatCurrency(peakDay.predicted_sales)}`,
     `Lowest sales: ${getWeekdayFullName(quietDay.date)} ${formatCurrency(quietDay.predicted_sales)}`,
+    scheduledDays.length > 0
+      ? `Schedule note: ${scheduledDays.map((item) => `${getWeekdayFullName(item.date)} ${item.scheduleLabel}`).join(', ')}`
+      : `Real history used: ${formatCount(totalHistoryDays)} school-day records`,
     `Best weather day: ${peakDay.weatherLabel} ${getWeekdayFullName(peakDay.date)}`,
     `Suggested prep: ${weatherInsight.detail}`,
   ];
@@ -969,7 +1045,7 @@ function getAllowanceDemandModifier(allowanceTiming) {
     start_week: 1.08,
     allowance_day: 1.12,
     normal: 1,
-    end_week: 0.92,
+    end_week: 1,
   };
   return modifiers[allowanceTiming] || 1;
 }
@@ -1140,7 +1216,7 @@ function estimateAttendanceTomorrow(tomorrowDay, eventTomorrow) {
     1: 1,
     2: 1,
     3: 0.98,
-    4: 0.92,
+    4: 1,
     5: 0.2,
     6: 0.12,
   }[dayIndex] ?? 1;
@@ -2540,6 +2616,8 @@ export default function Predictions() {
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
+    isMountedRef.current = true;
+
     return () => {
       isMountedRef.current = false;
       forecastRequestIdRef.current += 1;
@@ -3012,7 +3090,7 @@ export default function Predictions() {
           pointBorderWidth: 2.5,
         },
         {
-          label: 'Previous Week Benchmark',
+          label: 'Real History Baseline',
           data: schoolWeekSalesOutlook.map((item) => item.baseline_sales),
           borderColor: '#94a3b8',
           borderDash: [6, 6],
@@ -3057,8 +3135,27 @@ export default function Predictions() {
           titleFont: { weight: '800' },
           bodyFont: { weight: '700' },
           callbacks: {
+            title(context) {
+              const item = schoolWeekSalesOutlook[context?.[0]?.dataIndex];
+              const dateLabel = formatShortPhilippineDate(item?.actualDate);
+              return dateLabel ? `${getWeekdayFullName(item.date)} · ${dateLabel}` : getWeekdayFullName(item?.date);
+            },
             label(context) {
               return `${context.dataset.label}: ${formatCurrency(context.parsed.y)}`;
+            },
+            afterBody(context) {
+              const item = schoolWeekSalesOutlook[context?.[0]?.dataIndex];
+              if (!item) {
+                return [];
+              }
+
+              return [
+                item.scheduleLabel ? `Schedule: ${item.scheduleLabel}` : '',
+                item.previousWeekSales !== null && item.previousWeekSales !== undefined
+                  ? `Same day last week: ${formatCurrency(item.previousWeekSales)}`
+                  : '',
+                item.historyDays ? `History records: ${formatCount(item.historyDays)} school days` : '',
+              ].filter(Boolean);
             },
           },
         },
@@ -3081,7 +3178,7 @@ export default function Predictions() {
         },
       },
     }),
-    []
+    [schoolWeekSalesOutlook]
   );
 
   const hasTrendData = useMemo(
@@ -3554,7 +3651,7 @@ export default function Predictions() {
                 <div>
                   <h2 className="text-[22px] font-extrabold text-slate-900">School Week Sales Outlook</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Predicted expected sales from Monday to Friday using {algorithm}, {outlookWeatherLabel.toLowerCase()}, {eventLabel.toLowerCase()}, past sales history, and product availability.
+                    Monday to Friday forecast from real transaction history, school calendar notes, {outlookWeatherLabel.toLowerCase()}, and product availability.
                   </p>
                 </div>
                 <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-black text-white shadow-sm">
@@ -3594,19 +3691,41 @@ export default function Predictions() {
 
               {hasTrendData && (
                 <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  {schoolWeekSalesOutlook.map((item) => (
-                    <div key={`sales-outlook-${item.date}`} className="rounded-xl bg-slate-50 px-3 py-2">
-                      <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">
-                        {item.date}
+                  {schoolWeekSalesOutlook.map((item) => {
+                    const scheduleBadge = getScheduleBadgeMeta(item);
+                    return (
+                      <div key={`sales-outlook-${item.date}`} className="rounded-xl bg-slate-50 px-3 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                              {item.date}
+                            </div>
+                            {item.actualDate && (
+                              <div className="mt-0.5 text-[11px] font-bold text-slate-500">
+                                {formatShortPhilippineDate(item.actualDate)}
+                              </div>
+                            )}
+                          </div>
+                          {scheduleBadge && (
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ring-1 ${scheduleBadge.className}`}>
+                              {scheduleBadge.label}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-sm font-black text-slate-900">
+                          {formatCurrency(item.predicted_sales)}
+                        </div>
+                        <div className="mt-1 text-[11px] font-bold leading-4 text-slate-500">
+                          {item.weatherLabel}
+                        </div>
+                        {item.previousWeekSales !== null && item.previousWeekSales !== undefined && (
+                          <div className="mt-1 text-[10px] font-semibold leading-4 text-slate-400">
+                            Last week {formatCompactCurrency(item.previousWeekSales)}
+                          </div>
+                        )}
                       </div>
-                      <div className="mt-1 text-sm font-black text-slate-900">
-                        {formatCurrency(item.predicted_sales)}
-                      </div>
-                      <div className="mt-1 truncate text-[11px] font-bold text-slate-500">
-                        {item.weatherLabel}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

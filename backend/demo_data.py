@@ -127,7 +127,7 @@ WEEKDAY_BASE_REVENUE = {
     1: 6100,
     2: 7200,
     3: 6400,
-    4: 5000,
+    4: 6500,
 }
 
 
@@ -390,7 +390,7 @@ def _daily_target(day_value, weather_row: dict, event_row: dict) -> float:
     if day_value.day <= 3 or day_value.weekday() == 0:
         target *= 1.05
     if day_value.weekday() == 4:
-        target *= 0.93
+        target *= 1.0
     return round(target, 2)
 
 

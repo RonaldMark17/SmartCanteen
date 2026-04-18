@@ -110,7 +110,7 @@ TOMORROW_OUTLOOK_FEATURE_GROUPS = [
     "same weekday benchmark",
 ]
 PREDICTION_CACHE_TTL_SECONDS = 180
-PREDICTION_CACHE_VERSION = "xgb-shared-v2"
+PREDICTION_CACHE_VERSION = "xgb-shared-v3"
 REFRESH_ARCHIVE_WEATHER_ON_PREDICTION = os.getenv("FORECAST_REFRESH_ARCHIVE_WEATHER", "0").lower() in {
     "1",
     "true",
@@ -287,6 +287,10 @@ def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event
         func.count(models.Product.id),
         func.max(models.Product.updated_at),
     ).filter(models.Product.is_active == True).one()
+    event_count, event_updated_max = db.query(
+        func.count(models.SchoolEventHistory.id),
+        func.max(models.SchoolEventHistory.updated_at),
+    ).one()
     return (
         get_ph_today().isoformat(),
         PREDICTION_CACHE_VERSION,
@@ -297,17 +301,41 @@ def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event
         tx_max.isoformat() if tx_max else "",
         int(product_count or 0),
         product_updated_max.isoformat() if product_updated_max else "",
+        int(event_count or 0),
+        event_updated_max.isoformat() if event_updated_max else "",
     )
 
 
-def _empty_weekly_trend() -> List[Dict]:
-    return [{"date": WEEKDAY_LABELS[day], "predicted_sales": 0} for day in SCHOOL_WEEKDAYS]
+def _school_week_dates(anchor_day) -> List:
+    if anchor_day is None:
+        return []
+    week_start = anchor_day - timedelta(days=anchor_day.weekday())
+    return [week_start + timedelta(days=offset) for offset in SCHOOL_WEEKDAYS]
 
 
 def _next_school_day(day_value):
     while day_value.weekday() >= 5:
         day_value += timedelta(days=1)
     return day_value
+
+
+def _empty_weekly_trend(anchor_day=None) -> List[Dict]:
+    week_dates = _school_week_dates(anchor_day)
+    if not week_dates:
+        return [{"date": WEEKDAY_LABELS[day], "predicted_sales": 0} for day in SCHOOL_WEEKDAYS]
+
+    return [
+        {
+            "date": day_value.isoformat(),
+            "day_label": WEEKDAY_LABELS[day_value.weekday()],
+            "predicted_sales": 0,
+            "baseline_sales": 0,
+            "previous_week_sales": None,
+            "history_days": 0,
+            "data_source": "transaction_history",
+        }
+        for day_value in week_dates
+    ]
 
 
 def _fallback_metrics(algorithm: str) -> Dict:
@@ -562,12 +590,13 @@ def _refresh_weather_history_from_archive(
 
 def _ensure_driver_history(db: Session, sales_df: pd.DataFrame) -> Dict:
     prediction_day = _next_school_day(get_ph_tomorrow())
+    school_week_end = _school_week_dates(prediction_day)[-1]
     if sales_df.empty:
         start_date = get_ph_today() - timedelta(days=180)
-        end_date = prediction_day
+        end_date = school_week_end
     else:
         start_date = min(sales_df["date"]).to_pydatetime().date() if isinstance(min(sales_df["date"]), pd.Timestamp) else min(sales_df["date"])
-        end_date = max(max(sales_df["date"]), prediction_day)
+        end_date = max(max(sales_df["date"]), school_week_end)
 
     weather_rows = (
         db.query(models.WeatherHistory)
@@ -1718,13 +1747,47 @@ def _build_recommendation(predicted_quantity: int, stock: int, min_stock: int) -
     }
 
 
+def _school_event_context_for_day(driver_daily: pd.DataFrame, day_value) -> Dict:
+    fallback = _build_bootstrap_school_event(day_value)
+
+    if driver_daily.empty or "date" not in driver_daily:
+        return fallback
+
+    driver_dates = pd.to_datetime(driver_daily["date"]).dt.date
+    matches = driver_daily.loc[driver_dates == day_value]
+    if matches.empty:
+        return fallback
+
+    row = matches.iloc[-1]
+    return {
+        "event_type": str(row.get("event_type") or fallback["event_type"]),
+        "label": str(row.get("event_label") or fallback["label"]),
+        "is_school_day": bool(row.get("is_school_day", fallback["is_school_day"])),
+        "source": str(row.get("event_source") or fallback["source"]),
+    }
+
+
+def _event_display_label(event_type: str, scheduled_label: str = "") -> str:
+    if scheduled_label and event_type not in {"none", ""}:
+        return scheduled_label
+    return {
+        "intramurals": "Intramurals",
+        "exams": "Exam Week",
+        "halfday": "Half Day",
+        "holiday": "Holiday",
+        "none": "Regular School Day",
+    }.get(event_type or "none", "Regular School Day")
+
+
 def _build_weekly_sales_trend(
     df: pd.DataFrame,
+    driver_daily: pd.DataFrame,
     weather: str,
     event: str,
+    anchor_day=None,
 ) -> List[Dict]:
     if df.empty:
-        return _empty_weekly_trend()
+        return _empty_weekly_trend(anchor_day)
 
     revenue_df = df.copy()
     revenue_df["revenue"] = revenue_df["quantity"] * revenue_df["price"]
@@ -1736,38 +1799,105 @@ def _build_weekly_sales_trend(
     )
 
     if daily_revenue.empty:
-        return _empty_weekly_trend()
+        return _empty_weekly_trend(anchor_day)
+
+    daily_revenue["date"] = pd.to_datetime(daily_revenue["date"]).dt.date
 
     daily_revenue = daily_revenue[daily_revenue["day_of_week"].isin(SCHOOL_WEEKDAYS)].copy()
     if daily_revenue.empty:
-        return _empty_weekly_trend()
+        return _empty_weekly_trend(anchor_day)
+
+    baseline_daily_revenue = daily_revenue
+    positive_revenue = daily_revenue.loc[daily_revenue["revenue"] > 0, "revenue"]
+    if len(positive_revenue) >= 10:
+        normal_day_floor = float(positive_revenue.median()) * 0.55
+        candidate_baseline = daily_revenue.loc[daily_revenue["revenue"] >= normal_day_floor].copy()
+        if len(candidate_baseline) >= len(SCHOOL_WEEKDAYS) * 2:
+            baseline_daily_revenue = candidate_baseline
 
     weekday_baselines = {
         int(day): float(group["revenue"].mean())
-        for day, group in daily_revenue.groupby("day_of_week")
+        for day, group in baseline_daily_revenue.groupby("day_of_week")
     }
-    overall_baseline = float(daily_revenue["revenue"].mean())
-    recent_baseline = float(daily_revenue.tail(min(10, len(daily_revenue)))["revenue"].mean())
+    overall_baseline = float(baseline_daily_revenue["revenue"].mean())
+    recent_baseline = float(baseline_daily_revenue.tail(min(10, len(baseline_daily_revenue)))["revenue"].mean())
     recent_weekday_baselines = {
         int(day): float(group.tail(min(3, len(group)))["revenue"].mean())
-        for day, group in daily_revenue.groupby("day_of_week")
+        for day, group in baseline_daily_revenue.groupby("day_of_week")
     }
-    multiplier = _get_overall_factor(weather, event)
+    revenue_by_date = {
+        row.date: float(row.revenue)
+        for row in daily_revenue.itertuples(index=False)
+    }
+    weather_multiplier = WEATHER_FACTORS.get(weather, 1.0)
+    week_dates = _school_week_dates(anchor_day) if anchor_day is not None else []
 
     trend = []
-    for offset, future_day in enumerate(SCHOOL_WEEKDAYS, start=1):
+    for index, future_day in enumerate(SCHOOL_WEEKDAYS):
+        future_date = week_dates[index] if index < len(week_dates) else None
         weekday_baseline = weekday_baselines.get(future_day, overall_baseline)
         recent_weekday_baseline = recent_weekday_baselines.get(future_day, weekday_baseline)
-        predicted_value = (
+        baseline_value = (
             (weekday_baseline * 0.6)
             + (recent_weekday_baseline * 0.25)
             + (recent_baseline * 0.15)
-        ) * multiplier
+        )
+        event_context = (
+            _school_event_context_for_day(driver_daily, future_date)
+            if future_date is not None
+            else {"event_type": "none", "label": "Regular School Day", "is_school_day": True, "source": "unknown"}
+        )
+        scheduled_event = event_context["event_type"] if event_context["event_type"] in EVENT_TYPES else "none"
+        applied_event = scheduled_event if scheduled_event != "none" or not event_context["is_school_day"] else event
+        if not event_context["is_school_day"]:
+            applied_event = "holiday"
+        event_multiplier = EVENT_FACTORS.get(applied_event, 1.0)
+        predicted_value = baseline_value * weather_multiplier * event_multiplier
+        previous_week_sales = (
+            revenue_by_date.get(future_date - timedelta(days=7))
+            if future_date is not None
+            else None
+        )
+        historical_rows = (
+            baseline_daily_revenue[baseline_daily_revenue["day_of_week"] == future_day]
+            .sort_values("date")
+        )
+        last_actual_sales = None
+        last_actual_date = None
+        if not historical_rows.empty:
+            last_actual_row = historical_rows.iloc[-1]
+            last_actual_sales = float(last_actual_row["revenue"])
+            last_actual_date = last_actual_row["date"]
+        schedule_label = (
+            _event_display_label(scheduled_event, event_context["label"])
+            if scheduled_event in {"holiday", "halfday"} or not event_context["is_school_day"]
+            else ""
+        )
 
         trend.append(
             {
-                "date": WEEKDAY_LABELS[future_day],
+                "date": future_date.isoformat() if future_date is not None else WEEKDAY_LABELS[future_day],
+                "day_label": WEEKDAY_LABELS[future_day],
                 "predicted_sales": round(max(0, predicted_value), 2),
+                "baseline_sales": round(max(0, baseline_value), 2),
+                "historical_average_sales": round(max(0, weekday_baseline), 2),
+                "recent_average_sales": round(max(0, recent_weekday_baseline), 2),
+                "previous_week_sales": round(previous_week_sales, 2) if previous_week_sales is not None else None,
+                "last_actual_sales": round(last_actual_sales, 2) if last_actual_sales is not None else None,
+                "last_actual_date": last_actual_date.isoformat() if last_actual_date is not None else None,
+                "history_days": int(len(historical_rows)),
+                "weather": weather,
+                "school_event_type": scheduled_event,
+                "school_event_label": event_context["label"],
+                "school_event_source": event_context["source"],
+                "event_type": applied_event,
+                "event_label": _event_display_label(
+                    applied_event,
+                    event_context["label"] if applied_event == scheduled_event else "",
+                ),
+                "schedule_label": schedule_label,
+                "is_school_day": bool(event_context["is_school_day"]),
+                "data_source": "transaction_history",
             }
         )
 
@@ -1853,7 +1983,7 @@ def _estimate_attendance_forecast(tomorrow_value, event: str) -> int:
         1: 1.0,
         2: 1.0,
         3: 0.98,
-        4: 0.92,
+        4: 1.0,
         5: 0.2,
         6: 0.12,
     }.get(tomorrow_value.weekday(), 1.0)
@@ -1879,7 +2009,7 @@ def _infer_allowance_timing(tomorrow_value) -> Dict:
         return {
             "value": "end_week",
             "label": "End of week",
-            "modifier": 0.92,
+            "modifier": 1.0,
             "source": "calendar_allowance_pattern",
         }
     return {
@@ -2222,7 +2352,7 @@ def predict_tomorrow_sales(
                 "algorithm_metrics": _build_algorithm_metrics(algorithm, _fallback_metrics(algorithm)),
                 "feature_summary": feature_summary,
                 "predictions": [],
-                "weekly_sales_trend": _empty_weekly_trend(),
+                "weekly_sales_trend": _empty_weekly_trend(tomorrow),
                 "summary": empty_summary,
                 "tomorrow_sales_outlook": _build_tomorrow_sales_outlook(
                     df,
@@ -2379,7 +2509,7 @@ def predict_tomorrow_sales(
             key=lambda item: (item["recommendation_type"] != "restock", -item["predicted_quantity"]),
         )
 
-        weekly_sales_trend = _build_weekly_sales_trend(df, weather, event)
+        weekly_sales_trend = _build_weekly_sales_trend(df, driver_daily, weather, event, tomorrow)
 
         metrics = _build_validation_metrics(validation_records, algorithm)
 

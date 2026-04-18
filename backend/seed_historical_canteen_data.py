@@ -62,7 +62,7 @@ WEEKDAY_BASE_REVENUE = {
     1: 4850.0,
     2: 5600.0,
     3: 5150.0,
-    4: 4350.0,
+    4: 5200.0,
 }
 
 
@@ -78,7 +78,7 @@ MONTH_FACTOR = {
     1: 0.93,
     2: 1.03,
     3: 1.07,
-    4: 0.92,
+    4: 1.0,
     5: 0.2,
     6: 0.86,
     7: 1.08,
@@ -418,7 +418,7 @@ def daily_target(day_value: date, weather_row: dict, event_row: dict) -> float:
     if day_value.weekday() == 0:
         target *= 1.04
     if day_value.weekday() == 4:
-        target *= 0.92
+        target *= 1.01
     if "Foundation" in event_row["label"]:
         target *= 1.1
 
