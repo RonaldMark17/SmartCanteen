@@ -31,6 +31,10 @@ function formatCount(value) {
   return Number(value || 0).toLocaleString('en-PH');
 }
 
+function isBelowMinimumStock(product) {
+  return Number(product?.stock || 0) < Number(product?.min_stock || 0);
+}
+
 const POS_ITEMS_PER_PAGE = 12;
 const MAX_PAGE_BUTTONS = 5;
 
@@ -265,7 +269,7 @@ export default function POS() {
           }
 
           const nextStock = Math.max(0, p.stock - cartItem.qty);
-          return { ...p, stock: nextStock, is_active: nextStock > 0 };
+          return { ...p, stock: nextStock };
         })
       );
       window.showToast('Saved offline. Will sync when back online.', 'warning');
@@ -290,7 +294,7 @@ export default function POS() {
           }
 
           const nextStock = Math.max(0, p.stock - cartItem.qty);
-          return { ...p, stock: nextStock, is_active: nextStock > 0 };
+          return { ...p, stock: nextStock };
         })
       );
 
@@ -455,7 +459,7 @@ export default function POS() {
                   <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
                     <div
                       className={`pos-stock-chip max-w-full truncate rounded-md px-2 py-0.5 text-[10px] font-bold ${
-                        product.stock <= product.min_stock
+                        isBelowMinimumStock(product)
                           ? 'bg-red-100 text-red-700'
                           : 'bg-slate-100 text-slate-500'
                       }`}

@@ -259,7 +259,6 @@ def _persist_transaction(
         product.stock -= item["quantity"]
         if product.stock <= 0:
             product.stock = 0
-            product.is_active = False
         db.add(models.TransactionItem(
             transaction_id=txn.id,
             product_id=item["product_id"],
@@ -496,7 +495,6 @@ def create_product(
     current: models.User = Depends(auth.require_admin),
 ):
     product = models.Product(**data.model_dump())
-    product.is_active = product.stock > 0
     db.add(product)
     db.commit()
     db.refresh(product)
@@ -533,7 +531,6 @@ def update_product(
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(product, field, value)
-    product.is_active = product.stock > 0
     product.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(product)
@@ -594,7 +591,7 @@ def low_stock(
     return (
         db.query(models.Product)
         .filter(models.Product.is_active == True,
-                models.Product.stock <= models.Product.min_stock)
+                models.Product.stock < models.Product.min_stock)
         .all()
     )
 
@@ -792,7 +789,7 @@ def summary(
     all_txns     = db.query(models.Transaction).all()
     low_stock_ct = db.query(models.Product).filter(
         models.Product.is_active == True,
-        models.Product.stock <= models.Product.min_stock,
+        models.Product.stock < models.Product.min_stock,
     ).count()
 
     return {

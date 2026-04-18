@@ -19,6 +19,10 @@ function formatCount(value) {
   return Number(value || 0).toLocaleString('en-PH');
 }
 
+function isBelowMinimumStock(product) {
+  return Number(product?.stock || 0) < Number(product?.min_stock || 0);
+}
+
 function getInventoryPageNumbers(currentPage, totalPages) {
   const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
   let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
@@ -55,8 +59,8 @@ export default function Inventory() {
       
       // Sorting logic: Low stock items come first, then alphabetical by name
       const sortedData = data.sort((a, b) => {
-        const aIsLow = !isProductActive(a) || a.stock <= a.min_stock;
-        const bIsLow = !isProductActive(b) || b.stock <= b.min_stock;
+        const aIsLow = !isProductActive(a) || isBelowMinimumStock(a);
+        const bIsLow = !isProductActive(b) || isBelowMinimumStock(b);
 
         if (aIsLow && !bIsLow) return -1; // a comes first
         if (!aIsLow && bIsLow) return 1;  // b comes first
@@ -131,7 +135,9 @@ export default function Inventory() {
       };
 
       if (formData.id) {
-        payload.is_active = parsedStock > 0;
+        if (parsedStock > 0) {
+          payload.is_active = true;
+        }
         await API.updateProduct(formData.id, payload);
       } else {
         await API.createProduct(payload);
@@ -190,7 +196,7 @@ export default function Inventory() {
   };
 
   function isProductActive(product) {
-    return product?.is_active !== false && Number(product?.stock || 0) > 0;
+    return product?.is_active !== false;
   }
 
   const displayedProducts = notificationFocus
@@ -302,7 +308,7 @@ export default function Inventory() {
                 const isActive = isProductActive(p);
 
                 return (
-                <tr key={p.id} className={`transition-colors ${isHighlighted ? 'bg-sky-50 ring-2 ring-inset ring-sky-200' : 'hover:bg-slate-50'} ${!isActive && !isHighlighted ? 'bg-slate-50 opacity-80' : p.stock <= p.min_stock && !isHighlighted ? 'bg-red-50/50' : ''}`}>
+                <tr key={p.id} className={`transition-colors ${isHighlighted ? 'bg-sky-50 ring-2 ring-inset ring-sky-200' : 'hover:bg-slate-50'} ${!isActive && !isHighlighted ? 'bg-slate-50 opacity-80' : isBelowMinimumStock(p) && !isHighlighted ? 'bg-red-50/50' : ''}`}>
                   <td className="px-6 py-4">{p.id}</td>
                   <td className="px-6 py-4 font-semibold text-slate-900">
                     <div className="flex flex-wrap items-center gap-2">
@@ -317,8 +323,8 @@ export default function Inventory() {
                   <td className="px-6 py-4"><span className="bg-fuchsia-50 text-fuchsia-700 px-3 py-1 rounded-full text-xs font-bold">{p.category}</span></td>
                   <td className="px-6 py-4">{`PHP ${p.price.toFixed(2)}`}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${p.stock <= p.min_stock ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-emerald-100 text-emerald-700'}`}>
-                      {p.stock} {p.stock <= p.min_stock && ' (LOW)'}
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${isBelowMinimumStock(p) ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {p.stock} {isBelowMinimumStock(p) && ' (LOW)'}
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -375,7 +381,7 @@ export default function Inventory() {
                       ? 'border-sky-300 bg-sky-50/70 ring-2 ring-sky-100'
                       : !isActive
                         ? 'border-slate-200 bg-slate-50/90 opacity-90'
-                        : p.stock <= p.min_stock
+                        : isBelowMinimumStock(p)
                         ? 'border-red-200 bg-red-50/60'
                         : 'border-slate-200 bg-white'
                   }`}
@@ -415,10 +421,10 @@ export default function Inventory() {
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <span
                       className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${
-                        p.stock <= p.min_stock ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+                        isBelowMinimumStock(p) ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
                       }`}
                     >
-                      {p.stock <= p.min_stock ? 'Low stock' : 'Healthy stock'}
+                      {isBelowMinimumStock(p) ? 'Low stock' : 'Healthy stock'}
                     </span>
                     <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-600">
                       <span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>

@@ -37,11 +37,11 @@ import { OFFLINE_QUEUE_EVENT, countOfflineTransactions } from '../services/offli
 import { ALERT_REFRESH_EVENT, connectRealtimeAlertStream } from '../services/realtimeAlerts';
 import { getAllowedRolesForPath, getDefaultRoute } from '../config/access';
 
-const LOW_STOCK_SIGNATURE_KEY = 'sc_low_stock_signature';
+const LOW_STOCK_SIGNATURE_KEY = 'sc_low_stock_signature_v2';
 const HIGH_DEMAND_SIGNATURE_KEY = 'sc_high_demand_signature';
-const DISMISSED_LOW_STOCK_ALERTS_KEY = 'sc_dismissed_low_stock_alerts';
+const DISMISSED_LOW_STOCK_ALERTS_KEY = 'sc_dismissed_low_stock_alerts_v2';
 const DISMISSED_HIGH_DEMAND_ALERTS_KEY = 'sc_dismissed_high_demand_alerts';
-const READ_LOW_STOCK_ALERTS_KEY = 'sc_read_low_stock_alerts';
+const READ_LOW_STOCK_ALERTS_KEY = 'sc_read_low_stock_alerts_v2';
 const READ_HIGH_DEMAND_ALERTS_KEY = 'sc_read_high_demand_alerts';
 const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
 const DARK_MODE_STORAGE_KEY = 'sc_dark_mode';
@@ -96,6 +96,10 @@ function buildHighDemandSignature(items) {
 
 function buildLowStockAlertKey(item) {
   return String(item?.id ?? item?.name ?? '');
+}
+
+function isBelowMinimumStock(item) {
+  return Number(item?.stock || 0) < Number(item?.min_stock || 0);
 }
 
 function buildHighDemandAlertKey(item) {
@@ -436,7 +440,9 @@ export default function Layout({ children, onLogout }) {
     try {
       const data = await API.getLowStock();
       const items = Array.isArray(data)
-        ? [...data].sort((left, right) => (left.stock - right.stock) || left.name.localeCompare(right.name))
+        ? [...data]
+            .filter(isBelowMinimumStock)
+            .sort((left, right) => (left.stock - right.stock) || left.name.localeCompare(right.name))
         : [];
       const visibleItems = filterDismissedAlerts(
         items,
@@ -466,7 +472,7 @@ export default function Layout({ children, onLogout }) {
         );
         if (freshItems.length > 0) {
           const countLabel = freshItems.length === 1 ? 'item is' : 'items are';
-          window.showToast?.(`${freshItems.length} low stock ${countLabel} below alert level.`, 'warning');
+          window.showToast?.(`${freshItems.length} low stock ${countLabel} below minimum stock.`, 'warning');
           await sendLowStockDeviceAlert(freshItems);
         }
       }
@@ -730,19 +736,14 @@ export default function Layout({ children, onLogout }) {
       (entry) => buildLowStockAlertKey(entry) !== signature
     );
     setLowStockItems(remainingLowStockItems);
+    lowStockItemsRef.current = remainingLowStockItems;
     const remainingUnreadLowStockItems = filterUnreadAlerts(
       remainingLowStockItems,
       READ_LOW_STOCK_ALERTS_KEY,
       buildLowStockAlertKey
     );
-    const unreadHighDemandItems = filterUnreadAlerts(
-      highDemandItems,
-      READ_HIGH_DEMAND_ALERTS_KEY,
-      buildHighDemandAlertKey
-    );
     persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, buildLowStockSignature(remainingUnreadLowStockItems));
-    const remainingUnreadCount = remainingUnreadLowStockItems.length + unreadHighDemandItems.length;
-    setHasUnreadAlerts((currentValue) => (remainingUnreadCount === 0 ? false : currentValue));
+    updateUnreadAlertStatus(remainingLowStockItems, highDemandItems);
   }
 
   function dismissHighDemandAlert(item) {
@@ -756,19 +757,14 @@ export default function Layout({ children, onLogout }) {
       (entry) => buildHighDemandAlertKey(entry) !== signature
     );
     setHighDemandItems(remainingHighDemandItems);
+    highDemandItemsRef.current = remainingHighDemandItems;
     const remainingUnreadHighDemandItems = filterUnreadAlerts(
       remainingHighDemandItems,
       READ_HIGH_DEMAND_ALERTS_KEY,
       buildHighDemandAlertKey
     );
-    const unreadLowStockItems = filterUnreadAlerts(
-      lowStockItems,
-      READ_LOW_STOCK_ALERTS_KEY,
-      buildLowStockAlertKey
-    );
     persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, buildHighDemandSignature(remainingUnreadHighDemandItems));
-    const remainingUnreadCount = unreadLowStockItems.length + remainingUnreadHighDemandItems.length;
-    setHasUnreadAlerts((currentValue) => (remainingUnreadCount === 0 ? false : currentValue));
+    updateUnreadAlertStatus(lowStockItems, remainingHighDemandItems);
   }
 
   function openLowStockAlert(item) {
