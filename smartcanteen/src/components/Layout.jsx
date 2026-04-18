@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowPathIcon,
   ArrowRightOnRectangleIcon,
@@ -12,12 +12,9 @@ import {
   ChevronRightIcon,
   ClockIcon,
   CloudArrowUpIcon,
-  Cog6ToothIcon,
   CubeIcon,
   ExclamationTriangleIcon,
   HomeIcon,
-  LockClosedIcon,
-  MagnifyingGlassIcon,
   MoonIcon,
   ShieldCheckIcon,
   SparklesIcon,
@@ -28,7 +25,6 @@ import { API } from '../services/api';
 import {
   formatPhilippineDate,
   formatPhilippineTime,
-  getPhilippineDateParts,
   parseBackendDateTime,
 } from '../utils/dateTime';
 import {
@@ -173,6 +169,20 @@ function filterUnreadAlerts(items, storageKey, buildSignature) {
   return items.filter((item) => !readSignatures.has(buildSignature(item)));
 }
 
+function getUnreadAlertKeySet(items, storageKey, buildSignature, readVersion = 0) {
+  if (readVersion < 0) {
+    return new Set();
+  }
+
+  const readSignatures = readDismissedAlertSignatures(storageKey);
+
+  return new Set(
+    items
+      .map((item) => buildSignature(item))
+      .filter((signature) => !readSignatures.has(signature))
+  );
+}
+
 function markAlertItemsRead(storageKey, items, buildSignature) {
   const readSignatures = readDismissedAlertSignatures(storageKey);
 
@@ -280,84 +290,6 @@ function getPermissionLabel(status) {
   return 'Phone alerts not enabled';
 }
 
-function getPageMeta(pathname) {
-  if (pathname.startsWith('/dashboard')) {
-    return {
-      eyebrow: 'Operations Overview',
-      title: 'Command center for daily service',
-      description: 'Keep sales, stock movement, and forecasts aligned from one workspace.',
-    };
-  }
-
-  if (pathname.startsWith('/pos')) {
-    return {
-      eyebrow: 'Cashier Workspace',
-      title: 'Move queues faster with a cleaner checkout flow',
-      description: 'Process orders, review carts, and keep counter operations moving smoothly.',
-    };
-  }
-
-  if (pathname.startsWith('/inventory')) {
-    return {
-      eyebrow: 'Inventory Control',
-      title: 'Watch stock health before shortages slow the team down',
-      description: 'Track available items, low-stock risks, and product activity in one place.',
-    };
-  }
-
-  if (pathname.startsWith('/transactions')) {
-    return {
-      eyebrow: 'Transactions',
-      title: 'Review completed sales with clearer operating context',
-      description: 'Check transaction history, cashier activity, and recent service trends quickly.',
-    };
-  }
-
-  if (pathname.startsWith('/analytics')) {
-    return {
-      eyebrow: 'Analytics',
-      title: 'Read the numbers behind each service day',
-      description: 'Spot patterns in sales, top products, and team performance without leaving the app shell.',
-    };
-  }
-
-  if (pathname.startsWith('/predictions')) {
-    return {
-      eyebrow: 'AI Predictions',
-      title: 'Plan tomorrow with stronger demand signals',
-      description: 'Compare forecast guidance, weather context, and restock priorities before the next rush.',
-    };
-  }
-
-  if (pathname.startsWith('/audit')) {
-    return {
-      eyebrow: 'Audit Trail',
-      title: 'Review admin activity with clearer visibility',
-      description: 'Track sensitive actions, role-based activity, and system accountability over time.',
-    };
-  }
-
-  return {
-    eyebrow: 'Workspace',
-    title: 'Manage day-to-day canteen operations',
-    description: 'Navigate the tools your team needs for sales, stock, and planning.',
-  };
-}
-
-function getGreeting(date = new Date()) {
-  const hour = getPhilippineDateParts(date)?.hour ?? 12;
-
-  if (hour < 12) {
-    return 'Good morning';
-  }
-
-  if (hour < 18) {
-    return 'Good afternoon';
-  }
-
-  return 'Good evening';
-}
-
 function formatWorkspaceDate(date = new Date()) {
   return formatPhilippineDate(date, {
     weekday: 'long',
@@ -415,33 +347,6 @@ function getNavDescription(path) {
   return 'Workspace module';
 }
 
-function getRoleFocus(role) {
-  if (role === 'admin') {
-    return {
-      label: 'Admin focus',
-      title: 'Watch the whole system and keep the team aligned.',
-      description:
-        'Best for reviewing dashboards, analytics, audit activity, and cross-team operations.',
-    };
-  }
-
-  if (role === 'staff') {
-    return {
-      label: 'Staff focus',
-      title: 'Stay ahead of stock needs and tomorrow’s demand.',
-      description:
-        'Best for inventory control, analytics checks, and prediction-driven prep work.',
-    };
-  }
-
-  return {
-    label: 'Cashier focus',
-    title: 'Process orders quickly and keep service moving.',
-    description:
-      'Best for POS transactions, recent sales review, and low-stock awareness during service.',
-  };
-}
-
 export default function Layout({ children, onLogout }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -449,20 +354,24 @@ export default function Layout({ children, onLogout }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getStoredSidebarCollapsed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [remindersOpen, setRemindersOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(getStoredDarkMode);
   const [lowStockItems, setLowStockItems] = useState([]);
   const [highDemandItems, setHighDemandItems] = useState([]);
   const [alertsLoading, setAlertsLoading] = useState(true);
   const [hasUnreadAlerts, setHasUnreadAlerts] = useState(getStoredUnreadAlerts);
+  const [alertReadVersion, setAlertReadVersion] = useState(0);
   const [alertPermission, setAlertPermission] = useState('prompt');
   const [lastAlertCheck, setLastAlertCheck] = useState(null);
   const [pendingSyncCount, setPendingSyncCount] = useState(countOfflineTransactions());
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  const [navSearch, _setNavSearch] = useState('');
   const alertsRequestInFlightRef = useRef(false);
   const queuedAlertRefreshRef = useRef(null);
+  const lowStockItemsRef = useRef(lowStockItems);
+  const highDemandItemsRef = useRef(highDemandItems);
 
   const user = getStoredUser();
 
@@ -480,33 +389,50 @@ export default function Layout({ children, onLogout }) {
     getAllowedRolesForPath(item.path).includes(user.role)
   );
   const isActive = (path) => location.pathname === path;
-  const totalAlertCount = lowStockItems.length + highDemandItems.length;
-  const _pageMeta = getPageMeta(location.pathname);
-  const _defaultRoute = getDefaultRoute(user.role);
-  const _roleFocus = getRoleFocus(user.role);
+  const unreadLowStockAlertKeys = useMemo(
+    () =>
+      getUnreadAlertKeySet(
+        lowStockItems,
+        READ_LOW_STOCK_ALERTS_KEY,
+        buildLowStockAlertKey,
+        alertReadVersion
+      ),
+    [alertReadVersion, lowStockItems]
+  );
+  const unreadHighDemandReminderKeys = useMemo(
+    () =>
+      getUnreadAlertKeySet(
+        highDemandItems,
+        READ_HIGH_DEMAND_ALERTS_KEY,
+        buildHighDemandAlertKey,
+        alertReadVersion
+      ),
+    [alertReadVersion, highDemandItems]
+  );
+  const lowStockAlertCount = lowStockItems.length;
+  const highDemandReminderCount = highDemandItems.length;
+  const unreadLowStockAlertCount = unreadLowStockAlertKeys.size;
+  const unreadHighDemandReminderCount = unreadHighDemandReminderKeys.size;
+  const totalAlertCount = lowStockAlertCount + highDemandReminderCount;
+  const defaultRoute = getDefaultRoute(user.role);
   const displayName = user.full_name || user.username || 'SmartCanteen user';
   const userInitials = getUserInitials(displayName);
-  const _greeting = getGreeting(currentTime);
   const formattedDate = formatWorkspaceDate(currentTime);
   const formattedTime = formatWorkspaceTime(currentTime);
   const workspaceStatus = isSynced ? 'Online and ready' : 'Offline cache active';
-  const _alertSummary =
+  const alertSummary =
     totalAlertCount > 0
       ? `${totalAlertCount} active alert${totalAlertCount > 1 ? 's' : ''}`
       : 'No active alerts';
-  const navQuery = navSearch.trim().toLowerCase();
-  const _filteredNavItems = visibleNavItems.filter((item) => {
-    if (!navQuery) {
-      return true;
-    }
+  useEffect(() => {
+    lowStockItemsRef.current = lowStockItems;
+  }, [lowStockItems]);
 
-    return (
-      item.name.toLowerCase().includes(navQuery) ||
-      getNavDescription(item.path).toLowerCase().includes(navQuery)
-    );
-  });
+  useEffect(() => {
+    highDemandItemsRef.current = highDemandItems;
+  }, [highDemandItems]);
 
-  async function loadLowStockAlerts({ notifyOnChange = true } = {}) {
+  const loadLowStockAlerts = useCallback(async ({ notifyOnChange = true } = {}) => {
     try {
       const data = await API.getLowStock();
       const items = Array.isArray(data)
@@ -524,6 +450,7 @@ export default function Layout({ children, onLogout }) {
       );
 
       setLowStockItems(visibleItems);
+      lowStockItemsRef.current = visibleItems;
 
       const nextSignature = buildLowStockSignature(unreadItems);
       const previousSignature = localStorage.getItem(LOW_STOCK_SIGNATURE_KEY) || '';
@@ -547,19 +474,21 @@ export default function Layout({ children, onLogout }) {
       return { visibleItems, unreadItems, hasFreshEntries };
     } catch {
       // Keep the last successful alert state if refresh fails.
+      const visibleItems = lowStockItemsRef.current;
+
       return {
-        visibleItems: lowStockItems,
+        visibleItems,
         unreadItems: filterUnreadAlerts(
-          lowStockItems,
+          visibleItems,
           READ_LOW_STOCK_ALERTS_KEY,
           buildLowStockAlertKey
         ),
         hasFreshEntries: false,
       };
     }
-  }
+  }, []);
 
-  async function loadHighDemandAlerts({ notifyOnChange = true } = {}) {
+  const loadHighDemandAlerts = useCallback(async ({ notifyOnChange = true } = {}) => {
     try {
       const response = await API.getPredictions();
       const items = normalizeHighDemandItems(response);
@@ -575,6 +504,7 @@ export default function Layout({ children, onLogout }) {
       );
 
       setHighDemandItems(visibleItems);
+      highDemandItemsRef.current = visibleItems;
 
       const nextSignature = buildHighDemandSignature(unreadItems);
       const previousSignature = localStorage.getItem(HIGH_DEMAND_SIGNATURE_KEY) || '';
@@ -598,19 +528,21 @@ export default function Layout({ children, onLogout }) {
       return { visibleItems, unreadItems, hasFreshEntries };
     } catch {
       // Keep the last successful forecast alert state if refresh fails.
+      const visibleItems = highDemandItemsRef.current;
+
       return {
-        visibleItems: highDemandItems,
+        visibleItems,
         unreadItems: filterUnreadAlerts(
-          highDemandItems,
+          visibleItems,
           READ_HIGH_DEMAND_ALERTS_KEY,
           buildHighDemandAlertKey
         ),
         hasFreshEntries: false,
       };
     }
-  }
+  }, []);
 
-  async function loadAlertData({ notifyOnChange = true } = {}) {
+  const loadAlertData = useCallback(async function runAlertDataLoad({ notifyOnChange = true } = {}) {
     if (alertsRequestInFlightRef.current) {
       queuedAlertRefreshRef.current = {
         notifyOnChange: Boolean(queuedAlertRefreshRef.current?.notifyOnChange || notifyOnChange),
@@ -648,12 +580,12 @@ export default function Layout({ children, onLogout }) {
       const queuedRefresh = queuedAlertRefreshRef.current;
       queuedAlertRefreshRef.current = null;
       if (queuedRefresh && navigator.onLine) {
-        window.setTimeout(() => loadAlertData(queuedRefresh), 0);
+        window.setTimeout(() => runAlertDataLoad(queuedRefresh), 0);
       }
     }
-  }
+  }, [loadHighDemandAlerts, loadLowStockAlerts]);
 
-  async function refreshOfflineData({ showSyncToast = false } = {}) {
+  const refreshOfflineData = useCallback(async ({ showSyncToast = false } = {}) => {
     setPendingSyncCount(countOfflineTransactions());
 
     if (!navigator.onLine) {
@@ -675,7 +607,7 @@ export default function Layout({ children, onLogout }) {
     } catch {
       setPendingSyncCount(countOfflineTransactions());
     }
-  }
+  }, [loadAlertData, user.role]);
 
   async function handleEnableAlerts() {
     const permission = await requestAlertPermission();
@@ -712,8 +644,28 @@ export default function Layout({ children, onLogout }) {
   }
 
   function openNotifications() {
+    setRemindersOpen(false);
+    setProfileOpen(false);
     setNotificationsOpen(true);
-    markAllNotificationsRead();
+  }
+
+  function openReminders() {
+    setNotificationsOpen(false);
+    setProfileOpen(false);
+    setRemindersOpen(true);
+  }
+
+  function requestLogout() {
+    setProfileOpen(false);
+    setMobileMenuOpen(false);
+    setNotificationsOpen(false);
+    setRemindersOpen(false);
+    setLogoutConfirmOpen(true);
+  }
+
+  function confirmLogout() {
+    setLogoutConfirmOpen(false);
+    onLogout();
   }
 
   async function handleWorkspaceRefresh() {
@@ -739,12 +691,32 @@ export default function Layout({ children, onLogout }) {
     }
   }
 
-  function markAllNotificationsRead() {
+  function updateUnreadAlertStatus(nextLowStockItems = lowStockItems, nextHighDemandItems = highDemandItems) {
+    const unreadLowStockItems = filterUnreadAlerts(
+      nextLowStockItems,
+      READ_LOW_STOCK_ALERTS_KEY,
+      buildLowStockAlertKey
+    );
+    const unreadHighDemandItems = filterUnreadAlerts(
+      nextHighDemandItems,
+      READ_HIGH_DEMAND_ALERTS_KEY,
+      buildHighDemandAlertKey
+    );
+
+    setHasUnreadAlerts(unreadLowStockItems.length + unreadHighDemandItems.length > 0);
+    setAlertReadVersion((currentVersion) => currentVersion + 1);
+  }
+
+  function markLowStockNotificationsRead() {
     markAlertItemsRead(READ_LOW_STOCK_ALERTS_KEY, lowStockItems, buildLowStockAlertKey);
-    markAlertItemsRead(READ_HIGH_DEMAND_ALERTS_KEY, highDemandItems, buildHighDemandAlertKey);
     persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, '');
+    updateUnreadAlertStatus(lowStockItems, highDemandItems);
+  }
+
+  function markHighDemandRemindersRead() {
+    markAlertItemsRead(READ_HIGH_DEMAND_ALERTS_KEY, highDemandItems, buildHighDemandAlertKey);
     persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, '');
-    setHasUnreadAlerts(false);
+    updateUnreadAlertStatus(lowStockItems, highDemandItems);
   }
 
   function dismissLowStockAlert(item) {
@@ -802,6 +774,7 @@ export default function Layout({ children, onLogout }) {
   function openLowStockAlert(item) {
     dismissLowStockAlert(item);
     setNotificationsOpen(false);
+    setRemindersOpen(false);
     navigate('/inventory', {
       state: {
         highlightProductId: item.id,
@@ -815,6 +788,7 @@ export default function Layout({ children, onLogout }) {
   function openHighDemandAlert(item) {
     dismissHighDemandAlert(item);
     setNotificationsOpen(false);
+    setRemindersOpen(false);
     navigate('/predictions', {
       state: {
         highlightProductId: item.product_id,
@@ -880,7 +854,7 @@ export default function Layout({ children, onLogout }) {
       window.removeEventListener(ALERT_REFRESH_EVENT, handleAlertRefreshRequest);
       disconnectRealtimeAlerts();
     };
-  }, []);
+  }, [loadAlertData, refreshOfflineData]);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');
@@ -902,6 +876,7 @@ export default function Layout({ children, onLogout }) {
   useEffect(() => {
     setMobileMenuOpen(false);
     setNotificationsOpen(false);
+    setRemindersOpen(false);
     setProfileOpen(false);
   }, [location.pathname]);
 
@@ -913,123 +888,88 @@ export default function Layout({ children, onLogout }) {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const _pulseCards = [
-    {
-      title: 'Workspace status',
-      value: workspaceStatus,
-      detail: `${formattedDate} at ${formattedTime}`,
-      Icon: CloudArrowUpIcon,
-      tone:
-        isSynced
-          ? 'border-cyan-200 bg-cyan-50/80 text-cyan-900'
-          : 'border-amber-200 bg-amber-50/90 text-amber-900',
-      actionLabel: workspaceRefreshing ? 'Refreshing...' : 'Refresh data',
-      onAction: handleWorkspaceRefresh,
-      actionDisabled: workspaceRefreshing,
-    },
-    {
-      title: 'Pending sync queue',
-      value: pendingSyncCount,
-      detail:
-        pendingSyncCount > 0
-          ? `${pendingSyncCount} transaction(s) will sync when service is available.`
-          : 'No pending offline transactions right now.',
-      Icon: ArrowPathIcon,
-      tone: 'border-emerald-200 bg-emerald-50/80 text-emerald-900',
-      actionLabel: navigator.onLine ? 'Sync now' : 'Offline',
-      onAction: handleWorkspaceRefresh,
-      actionDisabled: workspaceRefreshing || !navigator.onLine,
-    },
-    {
-      title: 'Alerts & demand watch',
-      value: totalAlertCount,
-      detail:
-        totalAlertCount > 0
-          ? `${lowStockItems.length} low stock, ${highDemandItems.length} high demand`
-          : 'No urgent alerts are currently active.',
-      Icon: BellAlertIcon,
-      tone:
-        totalAlertCount > 0
-          ? 'border-rose-200 bg-rose-50/90 text-rose-900'
-          : 'border-slate-200 bg-slate-50/90 text-slate-900',
-      actionLabel: 'Open alerts',
-      onAction: openNotifications,
-      actionDisabled: false,
-    },
-    {
-      title: 'Secure session',
-      value: user.role ? `${user.role}` : 'staff',
-      detail:
-        alertPermission === 'granted'
-          ? 'Phone alerts are enabled for this device.'
-          : 'Enable phone alerts or jump to AI planning tools.',
-      Icon: LockClosedIcon,
-      tone: 'border-violet-200 bg-violet-50/90 text-violet-900',
-      actionLabel:
-        alertPermission === 'granted' ? 'Open predictions' : 'Enable alerts',
-      onAction:
-        alertPermission === 'granted'
-          ? () => navigate('/predictions')
-          : handleEnableAlerts,
-      actionDisabled: false,
-    },
-  ];
-
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <nav
-        className={`z-30 hidden shrink-0 flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-300 shadow-2xl shadow-slate-950/20 transition-[width] duration-300 lg:flex ${
-          sidebarCollapsed ? 'w-24' : 'w-72'
+        className={`z-30 hidden shrink-0 flex-col border-r border-slate-900/80 bg-slate-950 text-slate-300 shadow-2xl shadow-slate-950/20 transition-[width] duration-300 lg:flex ${
+          sidebarCollapsed ? 'w-24' : 'w-80'
         }`}
       >
-        <div className={`${sidebarCollapsed ? 'p-4' : 'p-8'} transition-all duration-300`}>
-          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-2'} transition-all duration-300`}>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary font-black text-white shadow-lg shadow-primary/30">
+        <div className={`${sidebarCollapsed ? 'px-4 py-5' : 'p-5'} shrink-0 transition-all duration-300`}>
+          <Link
+            to={defaultRoute}
+            className={`flex items-center rounded-2xl transition ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}
+            title={sidebarCollapsed ? 'SmartCanteen' : undefined}
+          >
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-base font-black text-white shadow-lg shadow-primary/30">
               S
             </div>
             {!sidebarCollapsed && (
-              <h2 className="text-xl font-bold tracking-tight text-white">SmartCanteen</h2>
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-black tracking-tight text-white">
+                  SmartCanteen
+                </h2>
+                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300">
+                  Operations Workspace
+                </p>
+              </div>
             )}
-          </div>
-          {!sidebarCollapsed && (
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
-              Predictive System
-            </p>
-          )}
+          </Link>
+
         </div>
 
-        <div className={`custom-scrollbar flex-1 space-y-1.5 overflow-y-auto ${sidebarCollapsed ? 'px-3' : 'px-4'} transition-all duration-300`}>
+        <div className={`custom-scrollbar flex-1 overflow-y-auto ${sidebarCollapsed ? 'px-3' : 'px-4'} transition-all duration-300`}>
           {!sidebarCollapsed && (
-            <div className="mb-4 mt-2 border-t border-slate-800/60 px-3 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+            <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
               Operational Menu
             </div>
           )}
-          {visibleNavItems.map((item) => (
-            <Link
-              key={item.name}
-              to={item.path}
-              title={sidebarCollapsed ? item.name : undefined}
-              className={`group flex items-center rounded-2xl py-3 transition-all duration-200 ${
-                isActive(item.path)
-                  ? 'bg-gradient-to-r from-violet-600 to-primary text-white shadow-lg shadow-primary/30 ring-1 ring-white/10'
-                  : 'hover:translate-x-1 hover:bg-white/5 hover:text-white'
-              } ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-4'}`}
-            >
-              <item.icon
-                className={`h-5 w-5 stroke-[1.8] ${
-                  isActive(item.path) ? 'text-white' : 'text-slate-500 group-hover:text-violet-300'
-                }`}
-              />
-              {!sidebarCollapsed && <span className="text-sm font-semibold">{item.name}</span>}
-            </Link>
-          ))}
+
+          <div className="space-y-1.5">
+            {visibleNavItems.map((item) => {
+              const active = isActive(item.path);
+
+              return (
+                <Link
+                  key={item.name}
+                  to={item.path}
+                  title={sidebarCollapsed ? item.name : undefined}
+                  className={`group relative flex items-center rounded-2xl border py-3 transition-all duration-200 ${
+                    active
+                      ? 'border-white/10 bg-gradient-to-r from-violet-600 to-primary text-white shadow-lg shadow-primary/25'
+                      : 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+                  } ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-3.5'}`}
+                >
+                  <item.icon
+                    className={`h-5 w-5 shrink-0 stroke-[1.8] ${
+                      active ? 'text-white' : 'text-slate-500 group-hover:text-violet-300'
+                    }`}
+                  />
+                  {!sidebarCollapsed && (
+                    <>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-black">{item.name}</span>
+                        <span className={`mt-0.5 block truncate text-[11px] font-semibold ${
+                          active ? 'text-violet-100/80' : 'text-slate-500'
+                        }`}>
+                          {getNavDescription(item.path)}
+                        </span>
+                      </span>
+                      {active && <span className="h-2 w-2 rounded-full bg-white/80" />}
+                    </>
+                  )}
+                </Link>
+              );
+            })}
+
+          </div>
         </div>
 
-        <div className="shrink-0 border-t border-slate-800/60 p-4">
+        <div className="shrink-0 border-t border-slate-800/70 p-4">
           <button
-            onClick={onLogout}
+            onClick={requestLogout}
             title={sidebarCollapsed ? 'Logout' : undefined}
-            className={`flex w-full items-center rounded-xl py-3 text-sm font-bold text-slate-400 transition-all hover:bg-red-500/10 hover:text-red-400 ${
+            className={`flex w-full items-center rounded-xl border border-transparent py-3 text-sm font-bold text-slate-400 transition-all hover:border-red-400/20 hover:bg-red-500/10 hover:text-red-300 ${
               sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-4'
             }`}
           >
@@ -1040,11 +980,12 @@ export default function Layout({ children, onLogout }) {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-slate-200/70 bg-white/95 px-4 shadow-sm backdrop-blur sm:px-6">
-          <div className="flex items-center gap-2">
+        <header className="relative z-20 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200/70 bg-white/95 px-4 py-2 shadow-sm backdrop-blur sm:px-6">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="-ml-2 rounded-lg p-2 text-slate-500 hover:bg-slate-50 lg:hidden"
+              className="-ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-50 hover:text-slate-800 lg:hidden"
+              aria-label="Open navigation menu"
             >
               <Bars3Icon className="h-6 w-6" />
             </button>
@@ -1054,7 +995,7 @@ export default function Layout({ children, onLogout }) {
               onClick={() => setSidebarCollapsed((value) => !value)}
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="hidden rounded-lg border border-slate-200 bg-white p-2 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 lg:inline-flex"
+              className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 lg:inline-flex"
             >
               <ChevronRightIcon
                 className={`h-5 w-5 transition-transform duration-300 ${
@@ -1062,33 +1003,43 @@ export default function Layout({ children, onLogout }) {
                 }`}
               />
             </button>
+
+            <div className="min-w-0 flex-1" />
           </div>
 
-          <div className="flex-1" />
-
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="hidden items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 shadow-sm md:flex">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={handleWorkspaceRefresh}
+              disabled={workspaceRefreshing}
+              className="hidden items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 md:flex"
+              title={workspaceRefreshing ? 'Refreshing workspace data' : workspaceStatus}
+            >
               <span
                 className={`h-2.5 w-2.5 rounded-full ${
                   isSynced ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]' : 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.14)]'
                 }`}
               />
-              {isSynced ? 'System Online' : 'Offline Cache'}
-            </div>
-            <div className="hidden rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 shadow-sm lg:block">
+              {workspaceRefreshing ? 'Refreshing' : isSynced ? 'Online' : 'Offline'}
+            </button>
+            <div className="hidden rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 shadow-sm xl:block">
               {formattedDate}
+              <span className="mx-2 text-slate-300">|</span>
+              {formattedTime}
             </div>
             <div className="relative">
               <button
                 type="button"
                 onClick={() => (notificationsOpen ? setNotificationsOpen(false) : openNotifications())}
-                title={hasUnreadAlerts ? 'New notifications available' : 'Notifications'}
-                className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                title={unreadLowStockAlertCount > 0 ? 'Unread low stock notifications' : 'Notifications'}
+                className={`relative inline-flex h-11 w-11 items-center justify-center rounded-xl border bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 ${
+                  unreadLowStockAlertCount > 0 ? 'border-red-200 shadow-sm shadow-red-100' : 'border-slate-200'
+                }`}
               >
-                <BellAlertIcon className="h-6 w-6" />
-                {hasUnreadAlerts && totalAlertCount > 0 && (
+                <BellAlertIcon className="h-5 w-5" />
+                {unreadLowStockAlertCount > 0 && (
                   <span className="absolute -right-1 -top-1 flex min-h-[1.25rem] min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black text-white">
-                    {totalAlertCount > 9 ? '9+' : totalAlertCount}
+                    {unreadLowStockAlertCount > 9 ? '9+' : unreadLowStockAlertCount}
                   </span>
                 )}
               </button>
@@ -1101,15 +1052,15 @@ export default function Layout({ children, onLogout }) {
                     onClick={() => setNotificationsOpen(false)}
                     className="fixed inset-0 z-40 cursor-default bg-slate-900/10"
                   />
-                  <div className="fixed inset-x-4 top-20 z-50 max-h-[75vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl md:absolute md:inset-x-auto md:right-0 md:top-14 md:w-96">
-                    <div className="border-b border-slate-100 px-5 py-4">
+                  <div className="notification-popover fixed inset-x-4 top-20 z-50 max-h-[78vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl md:absolute md:inset-x-auto md:right-0 md:top-14 md:w-[27rem]">
+                    <div className="notification-panel-head border-b border-slate-100 px-5 py-4">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-black text-slate-900">Alerts & Forecast Notices</div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-black text-slate-900">Notifications</div>
                           <div className="mt-1 text-xs text-slate-500">
-                            {totalAlertCount > 0
-                              ? `${lowStockItems.length} low stock and ${highDemandItems.length} high demand alert${totalAlertCount > 1 ? 's' : ''}`
-                              : 'No low stock or high demand alerts right now'}
+                            {lowStockAlertCount > 0
+                              ? `${unreadLowStockAlertCount} unread of ${lowStockAlertCount} low stock notification${lowStockAlertCount > 1 ? 's' : ''}`
+                              : 'No low stock notifications right now'}
                           </div>
                         </div>
                         <div
@@ -1124,12 +1075,12 @@ export default function Layout({ children, onLogout }) {
                           {getPermissionLabel(alertPermission)}
                         </div>
                       </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {totalAlertCount > 0 && (
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                        {unreadLowStockAlertCount > 0 && (
                           <button
                             type="button"
-                            onClick={markAllNotificationsRead}
-                            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white transition hover:bg-black"
+                            onClick={markLowStockNotificationsRead}
+                            className="notification-action rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white transition hover:bg-black"
                           >
                             Read all
                           </button>
@@ -1138,7 +1089,7 @@ export default function Layout({ children, onLogout }) {
                           <button
                             type="button"
                             onClick={handleEnableAlerts}
-                            className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                            className="notification-action rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
                           >
                             Enable phone alerts
                           </button>
@@ -1146,7 +1097,7 @@ export default function Layout({ children, onLogout }) {
                         <button
                           type="button"
                           onClick={() => loadAlertData({ notifyOnChange: false })}
-                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
                         >
                           <ArrowPathIcon className={`h-4 w-4 ${alertsLoading ? 'animate-spin' : ''}`} />
                           Refresh
@@ -1157,37 +1108,25 @@ export default function Layout({ children, onLogout }) {
                             setNotificationsOpen(false);
                             navigate('/inventory');
                           }}
-                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
                         >
                           Open inventory
-                          <ChevronRightIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNotificationsOpen(false);
-                            navigate('/predictions');
-                          }}
-                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Open predictions
                           <ChevronRightIcon className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="max-h-[45vh] space-y-4 overflow-y-auto p-4 custom-scrollbar">
-                      {alertsLoading && totalAlertCount === 0 ? (
+                    <div className="max-h-[52vh] space-y-4 overflow-y-auto p-4 custom-scrollbar">
+                      {alertsLoading && lowStockAlertCount === 0 ? (
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                          Loading alerts...
+                          Loading low stock notifications...
                         </div>
-                      ) : totalAlertCount === 0 ? (
+                      ) : lowStockAlertCount === 0 ? (
                         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-                          <div className="text-sm font-bold text-slate-700">No urgent alerts right now</div>
+                          <div className="text-sm font-bold text-slate-700">No low stock notifications right now</div>
                           <div className="mt-1 text-xs text-slate-500">{formatCheckTime(lastAlertCheck)}</div>
                         </div>
                       ) : (
-                        <>
                           <div className="space-y-3">
                             <div className="px-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
                               Low Stock
@@ -1197,16 +1136,23 @@ export default function Layout({ children, onLogout }) {
                                 No low stock items right now.
                               </div>
                             ) : (
-                              lowStockItems.map((item) => (
+                              lowStockItems.map((item) => {
+                                const isUnread = unreadLowStockAlertKeys.has(buildLowStockAlertKey(item));
+
+                                return (
                                 <div
                                   key={item.id}
-                                  className="relative w-full rounded-2xl border border-red-100 bg-red-50/60 p-4 transition hover:border-red-200 hover:bg-red-100/70"
+                                  className={`notification-alert-card relative w-full rounded-2xl border p-4 transition ${
+                                    isUnread
+                                      ? 'notification-alert-card-danger border-red-200 bg-red-50/80 shadow-sm ring-2 ring-red-100 hover:border-red-300 hover:bg-red-100/80'
+                                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                                  }`}
                                 >
                                   <button
                                     type="button"
                                     onClick={() => dismissLowStockAlert(item)}
                                     aria-label={`Dismiss ${item.name} low stock alert`}
-                                    className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-red-500 transition hover:bg-white/80 hover:text-red-700"
+                                    className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-red-500 transition hover:bg-red-500/10 hover:text-red-700"
                                   >
                                     <XMarkIcon className="h-4 w-4" />
                                   </button>
@@ -1223,17 +1169,26 @@ export default function Layout({ children, onLogout }) {
                                       </div>
                                       <div className="mt-1 text-xs text-slate-500">{item.category || 'General'}</div>
                                     </div>
-                                    <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-widest text-red-600">
-                                      Low
-                                    </span>
+                                    <div className="flex shrink-0 flex-col items-end gap-1">
+                                      {isUnread && (
+                                        <span className="rounded-full bg-red-600 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white">
+                                          Unread
+                                        </span>
+                                      )}
+                                      <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
+                                        isUnread ? 'bg-white text-red-600' : 'bg-slate-100 text-slate-500'
+                                      }`}>
+                                        Low
+                                      </span>
+                                    </div>
                                   </div>
 
                                   <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                                    <div className="rounded-xl bg-white px-3 py-2">
+                                    <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
                                       <div className="font-bold uppercase tracking-widest text-slate-400">Current</div>
                                       <div className="mt-1 text-sm font-black text-slate-900">{item.stock}</div>
                                     </div>
-                                    <div className="rounded-xl bg-white px-3 py-2">
+                                    <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
                                       <div className="font-bold uppercase tracking-widest text-slate-400">Minimum</div>
                                       <div className="mt-1 text-sm font-black text-slate-900">{item.min_stock}</div>
                                     </div>
@@ -1244,85 +1199,14 @@ export default function Layout({ children, onLogout }) {
                                   </div>
                                   </button>
                                 </div>
-                              ))
+                                );
+                              })
                             )}
                           </div>
-
-                          <div className="space-y-3">
-                            <div className="px-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
-                              High Demand Tomorrow
-                            </div>
-                            <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-                              {getHighDemandAlertMeaning()}
-                            </div>
-                            {highDemandItems.length === 0 ? (
-                              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
-                                No high demand forecast alerts right now.
-                              </div>
-                            ) : (
-                              highDemandItems.map((item) => (
-                                <div
-                                  key={item.product_id}
-                                  className="relative w-full rounded-2xl border border-sky-100 bg-sky-50/70 p-4 transition hover:border-sky-200 hover:bg-sky-100/70"
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => dismissHighDemandAlert(item)}
-                                    aria-label={`Dismiss ${item.product_name} high demand alert`}
-                                    className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-sky-500 transition hover:bg-white/80 hover:text-sky-700"
-                                  >
-                                    <XMarkIcon className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => openHighDemandAlert(item)}
-                                    className="w-full pr-10 text-left focus:outline-none focus:ring-2 focus:ring-sky-200"
-                                  >
-                                    <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <ArrowTrendingUpIcon className="h-4 w-4 shrink-0 text-sky-600" />
-                                        <div className="truncate text-sm font-black text-slate-900">{item.product_name}</div>
-                                      </div>
-                                      <div className="mt-1 text-xs text-slate-500">{item.category || 'General'}</div>
-                                    </div>
-                                    <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-widest text-sky-700">
-                                      High demand
-                                    </span>
-                                  </div>
-
-                                  <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                                    <div className="rounded-xl bg-white px-3 py-2">
-                                      <div className="font-bold uppercase tracking-widest text-slate-400">Tomorrow</div>
-                                      <div className="mt-1 text-sm font-black text-slate-900">{item.predicted_quantity}</div>
-                                    </div>
-                                    <div className="rounded-xl bg-white px-3 py-2">
-                                      <div className="font-bold uppercase tracking-widest text-slate-400">Average</div>
-                                      <div className="mt-1 text-sm font-black text-slate-900">{item.historical_average.toFixed(1)}</div>
-                                    </div>
-                                    <div className="rounded-xl bg-white px-3 py-2">
-                                      <div className="font-bold uppercase tracking-widest text-slate-400">Stock gap</div>
-                                      <div className="mt-1 text-sm font-black text-slate-900">{item.stock_gap}</div>
-                                    </div>
-                                  </div>
-                                  <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs text-slate-600">
-                                    <span className="font-black uppercase tracking-widest text-slate-400">Why this alert</span>
-                                    <div className="mt-1 text-sm text-slate-700">{getHighDemandReason(item)}</div>
-                                  </div>
-                                  <div className="mt-3 flex items-center justify-end gap-1 text-xs font-black uppercase tracking-widest text-sky-700">
-                                    Open predictions
-                                    <ChevronRightIcon className="h-4 w-4" />
-                                  </div>
-                                  </button>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </>
                       )}
                     </div>
 
-                    <div className="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+                    <div className="notification-footer border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
                       {formatCheckTime(lastAlertCheck)}
                     </div>
                   </div>
@@ -1333,87 +1217,376 @@ export default function Layout({ children, onLogout }) {
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setProfileOpen((value) => !value)}
-                className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm transition hover:border-primary/30 hover:shadow-md"
+                onClick={() => (remindersOpen ? setRemindersOpen(false) : openReminders())}
+                title={unreadHighDemandReminderCount > 0 ? 'Unread high demand reminders' : 'Reminders'}
+                className={`relative inline-flex h-11 w-11 items-center justify-center rounded-xl border bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 ${
+                  unreadHighDemandReminderCount > 0 ? 'border-sky-200 shadow-sm shadow-sky-100' : 'border-slate-200'
+                }`}
               >
-                <div className="hidden flex-col items-end sm:flex">
-                  <span className="leading-none text-sm font-black text-slate-900">{displayName}</span>
-                  <span className="mt-1 text-[10px] font-bold uppercase tracking-widest text-primary">
-                    {user.role || 'staff'}
+                <ClockIcon className="h-5 w-5" />
+                {unreadHighDemandReminderCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex min-h-[1.25rem] min-w-[1.25rem] items-center justify-center rounded-full bg-sky-500 px-1 text-[10px] font-black text-white">
+                    {unreadHighDemandReminderCount > 9 ? '9+' : unreadHighDemandReminderCount}
                   </span>
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-black text-white shadow-sm">
-                  {userInitials}
-                </div>
-                <ChevronDownIcon
-                  className={`hidden h-4 w-4 text-slate-400 transition-transform sm:block ${
-                    profileOpen ? 'rotate-180' : ''
-                  }`}
-                />
+                )}
               </button>
 
-              {profileOpen && (
+              {remindersOpen && (
                 <>
                   <button
                     type="button"
-                    aria-label="Close profile menu"
-                    onClick={() => setProfileOpen(false)}
-                    className="fixed inset-0 z-40 cursor-default bg-transparent"
+                    aria-label="Close reminders"
+                    onClick={() => setRemindersOpen(false)}
+                    className="fixed inset-0 z-40 cursor-default bg-slate-900/10"
                   />
-                  <div className="absolute right-0 top-14 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-                    <div className="bg-slate-50 px-4 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-sm font-black text-white">
-                          {userInitials}
-                        </div>
+                  <div className="notification-popover fixed inset-x-4 top-20 z-50 max-h-[78vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl md:absolute md:inset-x-auto md:right-0 md:top-14 md:w-[27rem]">
+                    <div className="notification-panel-head border-b border-slate-100 px-5 py-4">
+                      <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-black text-slate-900">{displayName}</div>
-                          <div className="mt-1 text-[10px] font-black uppercase tracking-widest text-primary">
-                            {user.role || 'staff'}
+                          <div className="text-sm font-black text-slate-900">Reminders</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {highDemandReminderCount > 0
+                              ? `${unreadHighDemandReminderCount} unread of ${highDemandReminderCount} high demand reminder${highDemandReminderCount > 1 ? 's' : ''} for tomorrow`
+                              : 'No high demand reminders right now'}
                           </div>
                         </div>
+                        <div
+                          className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                            alertPermission === 'granted'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : alertPermission === 'unsupported'
+                                ? 'bg-slate-100 text-slate-600'
+                                : 'bg-amber-50 text-amber-700'
+                          }`}
+                        >
+                          {getPermissionLabel(alertPermission)}
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                        {unreadHighDemandReminderCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={markHighDemandRemindersRead}
+                            className="notification-action rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white transition hover:bg-black"
+                          >
+                            Read all
+                          </button>
+                        )}
+                        {alertPermission !== 'granted' && alertPermission !== 'unsupported' && (
+                          <button
+                            type="button"
+                            onClick={handleEnableAlerts}
+                            className="notification-action rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Enable phone alerts
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => loadAlertData({ notifyOnChange: false })}
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                        >
+                          <ArrowPathIcon className={`h-4 w-4 ${alertsLoading ? 'animate-spin' : ''}`} />
+                          Refresh
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRemindersOpen(false);
+                            navigate('/predictions');
+                          }}
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Open predictions
+                          <ChevronRightIcon className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
 
-                    <div className="p-2">
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        <Cog6ToothIcon className="h-5 w-5 text-slate-400" />
-                        Settings
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDarkMode((value) => !value)}
-                        className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        <span className="inline-flex items-center gap-3">
-                          <MoonIcon className="h-5 w-5 text-slate-400" />
-                          Dark Mode
-                        </span>
-                        <span
-                          className={`h-5 w-9 rounded-full p-0.5 transition ${
-                            darkMode ? 'bg-primary' : 'bg-slate-200'
-                          }`}
-                        >
-                          <span
-                            className={`block h-4 w-4 rounded-full bg-white shadow-sm transition ${
-                              darkMode ? 'translate-x-4' : ''
-                            }`}
-                          />
-                        </span>
-                      </button>
+                    <div className="max-h-[52vh] space-y-4 overflow-y-auto p-4 custom-scrollbar">
+                      {alertsLoading && highDemandReminderCount === 0 ? (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                          Loading high demand reminders...
+                        </div>
+                      ) : highDemandReminderCount === 0 ? (
+                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
+                          <div className="text-sm font-bold text-slate-700">No high demand reminders right now</div>
+                          <div className="mt-1 text-xs text-slate-500">{formatCheckTime(lastAlertCheck)}</div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="px-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                            High Demand Tomorrow
+                          </div>
+                          <div className="notification-info-strip rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                            {getHighDemandAlertMeaning()}
+                          </div>
+                          {highDemandItems.map((item) => {
+                            const isUnread = unreadHighDemandReminderKeys.has(buildHighDemandAlertKey(item));
+
+                            return (
+                            <div
+                              key={item.product_id}
+                              className={`notification-alert-card relative w-full rounded-2xl border p-4 transition ${
+                                isUnread
+                                  ? 'notification-alert-card-info border-sky-200 bg-sky-50/80 shadow-sm ring-2 ring-sky-100 hover:border-sky-300 hover:bg-sky-100/80'
+                                  : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => dismissHighDemandAlert(item)}
+                                aria-label={`Dismiss ${item.product_name} high demand reminder`}
+                                className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-sky-500 transition hover:bg-sky-500/10 hover:text-sky-700"
+                              >
+                                <XMarkIcon className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openHighDemandAlert(item)}
+                                className="w-full pr-10 text-left focus:outline-none focus:ring-2 focus:ring-sky-200"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <ArrowTrendingUpIcon className="h-4 w-4 shrink-0 text-sky-600" />
+                                      <div className="truncate text-sm font-black text-slate-900">
+                                        {item.product_name}
+                                      </div>
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-500">{item.category || 'General'}</div>
+                                  </div>
+                                  <div className="flex shrink-0 flex-col items-end gap-1">
+                                    {isUnread && (
+                                      <span className="rounded-full bg-sky-600 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white">
+                                        Unread
+                                      </span>
+                                    )}
+                                    <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
+                                      isUnread ? 'bg-white text-sky-700' : 'bg-slate-100 text-slate-500'
+                                    }`}>
+                                      High demand
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                                  <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
+                                    <div className="font-bold uppercase tracking-widest text-slate-400">Tomorrow</div>
+                                    <div className="mt-1 text-sm font-black text-slate-900">{item.predicted_quantity}</div>
+                                  </div>
+                                  <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
+                                    <div className="font-bold uppercase tracking-widest text-slate-400">Average</div>
+                                    <div className="mt-1 text-sm font-black text-slate-900">{item.historical_average.toFixed(1)}</div>
+                                  </div>
+                                  <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
+                                    <div className="font-bold uppercase tracking-widest text-slate-400">Stock gap</div>
+                                    <div className="mt-1 text-sm font-black text-slate-900">{item.stock_gap}</div>
+                                  </div>
+                                </div>
+                                <div className="notification-alert-metric mt-3 rounded-xl bg-white px-3 py-2 text-xs text-slate-600">
+                                  <span className="font-black uppercase tracking-widest text-slate-400">Why this reminder</span>
+                                  <div className="mt-1 text-sm text-slate-700">{getHighDemandReason(item)}</div>
+                                </div>
+                                <div className="mt-3 flex items-center justify-end gap-1 text-xs font-black uppercase tracking-widest text-sky-700">
+                                  Open predictions
+                                  <ChevronRightIcon className="h-4 w-4" />
+                                </div>
+                              </button>
+                            </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="notification-footer border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+                      {formatCheckTime(lastAlertCheck)}
                     </div>
                   </div>
                 </>
               )}
             </div>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setNotificationsOpen(false);
+                  setRemindersOpen(false);
+                  setProfileOpen((value) => !value);
+                }}
+                className="flex h-11 max-w-[16rem] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 shadow-sm transition hover:border-primary/30 hover:shadow-md sm:px-2.5"
+                aria-label="Open profile menu"
+              >
+                <div className="hidden min-w-0 flex-col items-end md:flex">
+                  <span className="max-w-[10rem] truncate leading-none text-sm font-black text-slate-900">
+                    {displayName}
+                  </span>
+                  <span className="mt-1 text-[10px] font-bold uppercase tracking-widest text-primary">
+                    {user.role || 'staff'}
+                  </span>
+                </div>
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-white shadow-sm">
+                  {userInitials}
+                </div>
+                <ChevronDownIcon
+                  className={`hidden h-4 w-4 shrink-0 text-slate-400 transition-transform sm:block ${
+                    profileOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </header>
 
-        <main className="ui-uniform custom-scrollbar flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="mx-auto h-full max-w-7xl">
+        {profileOpen && (
+          <>
+            <button
+              type="button"
+              aria-label="Close profile menu"
+              onClick={() => setProfileOpen(false)}
+              className="fixed inset-0 z-[80] cursor-default bg-slate-950/10 backdrop-blur-[1px]"
+            />
+            <div
+              className={`profile-popover fixed right-4 top-16 z-[90] w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border shadow-2xl sm:right-6 ${
+                darkMode
+                  ? 'border-slate-800 bg-slate-950 text-slate-100 shadow-black/50'
+                  : 'border-slate-200 bg-white text-slate-900'
+              }`}
+            >
+              <div
+                className={`profile-popover-head border-b px-3 py-3 ${
+                  darkMode ? 'border-slate-800 bg-slate-900' : 'border-slate-100 bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-white">
+                    {userInitials}
+                  </div>
+                  <div className="min-w-0">
+                    <div className={`truncate text-sm font-black ${darkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+                      {displayName}
+                    </div>
+                    <div className="mt-1 text-[10px] font-black uppercase tracking-widest text-primary">
+                      {user.role || 'staff'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProfileOpen(false);
+                    navigate(defaultRoute);
+                  }}
+                  className={`profile-action flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
+                    darkMode ? 'text-slate-100 hover:bg-slate-800/80' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <HomeIcon className={`h-5 w-5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                  Home workspace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDarkMode((value) => !value)}
+                  className={`profile-action flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
+                    darkMode ? 'text-slate-100 hover:bg-slate-800/80' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-3">
+                    <MoonIcon className={`h-5 w-5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                    Dark Mode
+                  </span>
+                  <span
+                    className={`h-5 w-9 rounded-full p-0.5 transition ${
+                      darkMode ? 'bg-primary' : 'bg-slate-200'
+                    }`}
+                  >
+                    <span
+                      className={`block h-4 w-4 rounded-full bg-white shadow-sm transition ${
+                        darkMode ? 'translate-x-4' : ''
+                      }`}
+                    />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={requestLogout}
+                  className={`profile-action mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
+                    darkMode ? 'text-red-300 hover:bg-red-950/30' : 'text-red-600 hover:bg-red-50'
+                  }`}
+                >
+                  <ArrowRightOnRectangleIcon className="h-5 w-5" />
+                  Logout
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {logoutConfirmOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+            <div
+              className={`w-full max-w-sm overflow-hidden rounded-2xl border shadow-2xl ${
+                darkMode
+                  ? 'border-slate-800 bg-slate-950 text-slate-100 shadow-black/50'
+                  : 'border-slate-200 bg-white text-slate-900'
+              }`}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="logout-confirm-title"
+            >
+              <div className={`border-b px-5 py-4 ${darkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${
+                      darkMode ? 'bg-red-950/40 text-red-300' : 'bg-red-50 text-red-600'
+                    }`}
+                  >
+                    <ArrowRightOnRectangleIcon className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div id="logout-confirm-title" className="text-base font-black">
+                      Log out?
+                    </div>
+                    <div className={`mt-1 text-sm leading-6 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      You will return to the sign-in screen and any open workspace menus will close.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 p-4 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setLogoutConfirmOpen(false)}
+                  className={`rounded-xl border px-4 py-2.5 text-sm font-black transition ${
+                    darkMode
+                      ? 'border-slate-700 text-slate-100 hover:bg-slate-800'
+                      : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmLogout}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-black text-white transition ${
+                    darkMode ? 'bg-red-600 hover:bg-red-500' : 'bg-red-600 hover:bg-red-700'
+                  }`}
+                >
+                  Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <main className="ui-uniform custom-scrollbar min-w-0 flex-1 overflow-y-auto bg-slate-50/40 p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto h-full w-full max-w-[1600px]">
             {!isSynced && (
               <DismissibleAlert
                 resetKey={`${isSynced}-${pendingSyncCount}`}
@@ -1438,44 +1611,74 @@ export default function Layout({ children, onLogout }) {
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <nav className="fixed inset-y-0 left-0 flex w-72 flex-col bg-slate-900 shadow-2xl animate-in slide-in-from-left duration-300">
-            <div className="flex items-center justify-between p-8">
+          <nav className="fixed inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col bg-slate-950 text-slate-300 shadow-2xl animate-in slide-in-from-left duration-300">
+            <div className="flex items-center justify-between p-5">
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary font-black text-white">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary font-black text-white shadow-lg shadow-primary/30">
                   S
                 </div>
-                <h2 className="text-xl font-bold tracking-tight text-white">SmartCanteen</h2>
+                <div>
+                  <h2 className="text-lg font-black tracking-tight text-white">SmartCanteen</h2>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300">
+                    {user.role || 'staff'} workspace
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-1 text-slate-500 hover:text-white"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:bg-white/10 hover:text-white"
+                aria-label="Close navigation menu"
               >
                 <XMarkIcon className="h-6 w-6" />
               </button>
             </div>
 
-            <div className="flex-1 space-y-1 px-4">
-              {visibleNavItems.map((item) => (
-                <Link
-                  key={item.name}
-                  to={item.path}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 rounded-xl px-4 py-3 transition-all ${
-                    isActive(item.path)
-                      ? 'bg-primary text-white shadow-lg shadow-primary/20'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <item.icon className="h-5 w-5" />
-                  <span className="text-sm font-semibold">{item.name}</span>
-                </Link>
-              ))}
+            <div className="px-5 pb-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black text-white">{workspaceStatus}</div>
+                    <div className="mt-1 truncate text-xs font-semibold text-slate-400">{alertSummary}</div>
+                  </div>
+                  <CloudArrowUpIcon className={`h-5 w-5 shrink-0 ${isSynced ? 'text-emerald-300' : 'text-amber-300'}`} />
+                </div>
+              </div>
             </div>
 
-            <div className="border-t border-slate-800 p-4">
+            <div className="custom-scrollbar flex-1 space-y-1 overflow-y-auto px-4 pb-4">
+              {visibleNavItems.map((item) => {
+                const active = isActive(item.path);
+
+                return (
+                  <Link
+                    key={item.name}
+                    to={item.path}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3.5 transition-all ${
+                      active
+                        ? 'border-white/10 bg-primary text-white shadow-lg shadow-primary/20'
+                        : 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+                    }`}
+                  >
+                    <item.icon className="h-5 w-5 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-black">{item.name}</span>
+                      <span className={`mt-0.5 block truncate text-[11px] font-semibold ${
+                        active ? 'text-violet-100/80' : 'text-slate-500'
+                      }`}>
+                        {getNavDescription(item.path)}
+                      </span>
+                    </span>
+                  </Link>
+                );
+              })}
+
+            </div>
+
+            <div className="border-t border-slate-800/80 p-4">
               <button
-                onClick={onLogout}
-                className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-slate-400 hover:text-red-400"
+                onClick={requestLogout}
+                className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-slate-400 transition hover:bg-red-500/10 hover:text-red-300"
               >
                 <ArrowRightOnRectangleIcon className="h-5 w-5" /> Logout
               </button>

@@ -740,6 +740,101 @@ html.dark body {
     background: #202426;
   }
 
+  html.dark header .notification-popover {
+    background: #111617;
+    border-color: var(--sc-dark-border-strong);
+    color: var(--sc-dark-body);
+  }
+
+  html.dark header .notification-panel-head,
+  html.dark header .notification-footer {
+    background: #111617;
+    border-color: var(--sc-dark-border);
+  }
+
+  html.dark header .notification-action {
+    background: #171d1f;
+    border-color: var(--sc-dark-border-strong);
+    color: var(--sc-dark-heading);
+  }
+
+  html.dark header .notification-action.bg-slate-900 {
+    background: #24292b;
+    color: var(--sc-dark-heading);
+  }
+
+  html.dark header .notification-action:hover {
+    background: #22282a;
+    border-color: rgba(217, 222, 229, 0.3);
+  }
+
+  html.dark header .notification-alert-card {
+    background: #15191b;
+    border-color: var(--sc-dark-border-strong);
+  }
+
+  html.dark header .notification-alert-card:hover {
+    background: #181f21;
+  }
+
+  html.dark header .notification-alert-card-danger {
+    border-color: rgba(255, 122, 168, 0.38);
+  }
+
+  html.dark header .notification-alert-card-info {
+    border-color: rgba(53, 215, 232, 0.34);
+  }
+
+  html.dark header .notification-alert-metric {
+    background: #0e1314;
+    border: 1px solid var(--sc-dark-border);
+  }
+
+  html.dark header .notification-info-strip {
+    background: rgba(53, 215, 232, 0.08);
+    border-color: rgba(53, 215, 232, 0.22);
+    color: var(--sc-dark-cyan);
+  }
+
+  html.dark header .notification-popover .bg-emerald-50 {
+    background: rgba(66, 243, 166, 0.1);
+    color: var(--sc-dark-green);
+  }
+
+  html.dark .profile-popover {
+    background: #111617;
+    border-color: var(--sc-dark-border-strong);
+    color: var(--sc-dark-body);
+  }
+
+  html.dark .profile-popover-head {
+    background: #171d1f;
+    border-color: var(--sc-dark-border);
+  }
+
+  html.dark .profile-popover .text-slate-900,
+  html.dark .profile-popover .text-slate-700,
+  html.dark .profile-popover .text-slate-600 {
+    color: var(--sc-dark-heading);
+  }
+
+  html.dark .profile-popover .text-slate-500,
+  html.dark .profile-popover .text-slate-400 {
+    color: var(--sc-dark-muted);
+  }
+
+  html.dark .profile-action:hover {
+    background: #202426;
+  }
+
+  html.dark .profile-action.text-red-600 {
+    color: var(--sc-dark-pink);
+  }
+
+  html.dark .profile-action.text-red-600:hover {
+    background: rgba(255, 122, 168, 0.1);
+  }
+
   html.dark .fixed.inset-0.bg-slate-900\/10 {
     @apply bg-slate-950/60;
   }

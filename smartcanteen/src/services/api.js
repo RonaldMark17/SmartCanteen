@@ -358,7 +358,7 @@ async function performRequest(method, path, body = null) {
       continue;
     }
 
-    if (res.status === 401) {
+    if (res.status === 401 && !String(path || '').startsWith('/auth/login')) {
       clearSession();
       window.location.href = '/';
       return null;
