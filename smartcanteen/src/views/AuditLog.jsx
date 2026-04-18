@@ -5,6 +5,7 @@ import {
   ArrowPathIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ClockIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 
@@ -125,35 +126,44 @@ export default function AuditLog() {
 
   return (
     <div className="view-shell-static">
-      <div className="view-header md:flex-row md:items-start">
-        <h1 className="view-title flex items-center gap-2">
-          <ShieldCheckIcon className="w-6 h-6 text-slate-700" /> Audit Log
-        </h1>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-          <button
-            type="button"
-            onClick={() => loadLogs({ showLoading: true })}
-            className="action-button py-3"
-          >
-            <ArrowPathIcon className="h-5 w-5" />
-            Refresh
-          </button>
+      <section className="panel-card shrink-0">
+        <div className="view-header md:flex-row md:items-center">
+          <div>
+            <div className="view-eyebrow">
+              <ShieldCheckIcon className="h-4 w-4" />
+              Security Trail
+            </div>
+            <h1 className="view-title mt-3">Audit Log</h1>
+            <p className="view-subtitle max-w-3xl">
+              System actions securely tracked for accountability. All timestamps use Philippine time (UTC+8).
+            </p>
+          </div>
 
-          <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-            <div className="font-bold">Philippine Time Now</div>
-            <div className="mt-1">{philippineNow}</div>
-            {lastUpdated && (
-              <div className="mt-2 text-xs font-semibold text-sky-700">
-                Last updated: {formatPhilippineDateTime(lastUpdated)}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => loadLogs({ showLoading: true })}
+              className="action-button h-11"
+            >
+              <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+
+            <div className="rounded-[20px] bg-sky-50 px-4 py-3 text-sm text-sky-800 shadow-sm ring-1 ring-sky-100">
+              <div className="flex items-center gap-2 font-black">
+                <ClockIcon className="h-4 w-4" />
+                Philippine Time Now
               </div>
-            )}
+              <div className="mt-1 font-semibold">{philippineNow}</div>
+              {lastUpdated && (
+                <div className="mt-1 text-xs font-bold text-sky-700">
+                  Last updated: {formatPhilippineDateTime(lastUpdated)}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-
-      <div>
-        <p className="text-sm text-slate-500">System actions securely tracked for accountability. All timestamps below use Philippine time (UTC+8).</p>
-      </div>
+      </section>
 
       {error && (
         <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
@@ -162,6 +172,17 @@ export default function AuditLog() {
       )}
 
       <div className="data-card flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 flex-col gap-2 border-b border-slate-100 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-[22px] font-extrabold tracking-tight text-slate-900">Activity Feed</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Login attempts, inventory reviews, seed activity, and cashier shift events.
+            </p>
+          </div>
+          <span className="self-start rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600 sm:self-center">
+            {formatCount(logs.length)} activities
+          </span>
+        </div>
         <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-auto md:block">
           <table className="min-w-full text-left text-sm text-slate-600">
             <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">
