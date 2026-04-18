@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Request, Q
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -272,6 +273,24 @@ def _persist_transaction(
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_analytics_indexes():
+    index_statements = [
+        "CREATE INDEX IF NOT EXISTS ix_transactions_created_at ON transactions(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_transaction_items_transaction_id ON transaction_items(transaction_id)",
+        "CREATE INDEX IF NOT EXISTS ix_transaction_items_product_id ON transaction_items(product_id)",
+    ]
+
+    try:
+        with engine.begin() as connection:
+            for statement in index_statements:
+                connection.execute(text(statement))
+    except Exception as exc:
+        print(f"Analytics index setup skipped: {exc}")
+
+
+_ensure_analytics_indexes()
 
 app = FastAPI(
     title="SmartCanteen AI",
@@ -857,21 +876,25 @@ def summary(
 ):
     today_start, today_end = get_ph_day_bounds_utc_naive(get_ph_today())
 
-    today_txns   = db.query(models.Transaction).filter(
-        models.Transaction.created_at.between(today_start, today_end)).all()
-    all_txns     = db.query(models.Transaction).all()
+    today_revenue, today_transactions = db.query(
+        func.coalesce(func.sum(models.Transaction.total), 0),
+        func.count(models.Transaction.id),
+    ).filter(models.Transaction.created_at.between(today_start, today_end)).one()
+    total_revenue = db.query(
+        func.coalesce(func.sum(models.Transaction.total), 0)
+    ).scalar()
     low_stock_ct = db.query(models.Product).filter(
         models.Product.is_active == True,
         models.Product.stock < models.Product.min_stock,
     ).count()
 
     return {
-        "today_revenue":      round(sum(t.total for t in today_txns), 2),
-        "today_transactions": len(today_txns),
+        "today_revenue":      round(float(today_revenue or 0), 2),
+        "today_transactions": int(today_transactions or 0),
         "total_products":     db.query(models.Product).filter(
                                   models.Product.is_active == True).count(),
         "low_stock_count":    low_stock_ct,
-        "total_revenue":      round(sum(t.total for t in all_txns), 2),
+        "total_revenue":      round(float(total_revenue or 0), 2),
     }
 
 
@@ -891,13 +914,13 @@ def daily_sales(
     if date_range["end"] is not None:
         query = query.filter(models.Transaction.created_at <= date_range["end"])
 
-    txns = query.all()
+    txns = query.with_entities(models.Transaction.created_at, models.Transaction.total).all()
 
     bucket: dict = {}
-    for t in txns:
-        k = to_ph_time(t.created_at).date().isoformat()
+    for created_at, total in txns:
+        k = to_ph_time(created_at).date().isoformat()
         bucket.setdefault(k, {"date": k, "revenue": 0.0, "transactions": 0})
-        bucket[k]["revenue"]      += t.total
+        bucket[k]["revenue"]      += float(total or 0)
         bucket[k]["transactions"] += 1
 
     result = []

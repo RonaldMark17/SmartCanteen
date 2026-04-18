@@ -55,6 +55,7 @@ const EMPTY_HEATMAP = Array.from(
   (_, index) => ({
     hour: SCHOOL_START_HOUR + index,
     sales: 0,
+    transactions: 0,
   })
 );
 
@@ -108,6 +109,20 @@ function formatCurrency(value) {
   return `PHP ${numeric.toLocaleString('en-PH', {
     minimumFractionDigits: hasFraction ? 2 : 0,
     maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatCompactCurrency(value) {
+  const numeric = toNumber(value);
+
+  if (Math.abs(numeric) < 1000) {
+    return formatCurrency(numeric);
+  }
+
+  return `PHP ${numeric.toLocaleString('en-PH', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: Math.abs(numeric) >= 100000 ? 0 : 1,
   })}`;
 }
 
@@ -287,25 +302,16 @@ function buildYearOptions(selectedYear) {
   return years.sort((left, right) => Number(right) - Number(left));
 }
 
-function buildTransactionTrendPoints(transactions, period, selectedRange) {
+function buildTrendPoints(dailySales, heatmap, period, selectedRange) {
   if (period === 'day') {
-    const buckets = EMPTY_HEATMAP.map((item) => ({
-      label: formatHour(item.hour),
-      hour: item.hour,
-      revenue: 0,
-      transactions: 0,
-    }));
-
-    transactions.forEach((transaction) => {
-      const hour = getPhilippineDateParts(transaction.created_at)?.hour;
-      const bucket = buckets.find((item) => item.hour === hour);
-
-      if (!bucket) {
-        return;
-      }
-
-      bucket.revenue += transaction.total;
-      bucket.transactions += 1;
+    const byHour = new Map(heatmap.map((item) => [toNumber(item.hour), item]));
+    const buckets = EMPTY_HEATMAP.map((item) => {
+      const bucket = byHour.get(item.hour) || item;
+      return {
+        label: formatHour(item.hour),
+        revenue: toNumber(bucket.sales),
+        transactions: toNumber(bucket.transactions),
+      };
     });
 
     return {
@@ -319,14 +325,14 @@ function buildTransactionTrendPoints(transactions, period, selectedRange) {
     const revenueByMonth = Array.from({ length: 12 }, () => 0);
     const transactionsByMonth = Array.from({ length: 12 }, () => 0);
 
-    transactions.forEach((transaction) => {
-      const parts = getPhilippineDateParts(transaction.created_at);
+    dailySales.forEach((item) => {
+      const parts = getPhilippineDateParts(item.date);
       if (!parts?.month) {
         return;
       }
 
-      revenueByMonth[parts.month - 1] += transaction.total;
-      transactionsByMonth[parts.month - 1] += 1;
+      revenueByMonth[parts.month - 1] += item.revenue;
+      transactionsByMonth[parts.month - 1] += item.transactions;
     });
 
     return {
@@ -337,19 +343,7 @@ function buildTransactionTrendPoints(transactions, period, selectedRange) {
   }
 
   const dayKeys = buildDateKeysInRange(selectedRange.startDate, selectedRange.endDate).filter(isSchoolDay);
-  const revenueByDay = new Map(dayKeys.map((dayKey) => [dayKey, 0]));
-  const transactionsByDay = new Map(dayKeys.map((dayKey) => [dayKey, 0]));
-
-  transactions.forEach((transaction) => {
-    const dayKey = getPhilippineDateKey(transaction.created_at);
-
-    if (!revenueByDay.has(dayKey)) {
-      return;
-    }
-
-    revenueByDay.set(dayKey, revenueByDay.get(dayKey) + transaction.total);
-    transactionsByDay.set(dayKey, transactionsByDay.get(dayKey) + 1);
-  });
+  const dailyByDate = new Map(dailySales.map((item) => [item.date, item]));
 
   return {
     labels: dayKeys.map((dayKey) =>
@@ -358,30 +352,22 @@ function buildTransactionTrendPoints(transactions, period, selectedRange) {
         day: 'numeric',
       })
     ),
-    values: dayKeys.map((dayKey) => Number((revenueByDay.get(dayKey) || 0).toFixed(2))),
-    counts: dayKeys.map((dayKey) => transactionsByDay.get(dayKey) || 0),
+    values: dayKeys.map((dayKey) => Number(toNumber(dailyByDate.get(dayKey)?.revenue).toFixed(2))),
+    counts: dayKeys.map((dayKey) => toNumber(dailyByDate.get(dayKey)?.transactions)),
   };
 }
 
-function buildSalesHeatmapBuckets(transactions, period, selectedRange) {
+function buildSalesHeatmapBuckets(dailySales, heatmap, period, selectedRange) {
   if (period === 'day') {
-    const buckets = EMPTY_HEATMAP.map((item) => ({
-      key: `hour-${item.hour}`,
-      label: formatHour(item.hour),
-      sales: 0,
-      transactions: 0,
-    }));
-
-    transactions.forEach((transaction) => {
-      const hour = getPhilippineDateParts(transaction.created_at)?.hour;
-      const bucket = buckets.find((item) => item.key === `hour-${hour}`);
-
-      if (!bucket) {
-        return;
-      }
-
-      bucket.sales += transaction.total;
-      bucket.transactions += 1;
+    const byHour = new Map(heatmap.map((item) => [toNumber(item.hour), item]));
+    const buckets = EMPTY_HEATMAP.map((item) => {
+      const bucket = byHour.get(item.hour) || item;
+      return {
+        key: `hour-${item.hour}`,
+        label: formatHour(item.hour),
+        sales: toNumber(bucket.sales),
+        transactions: toNumber(bucket.transactions),
+      };
     });
 
     return buckets.map((item) => ({ ...item, sales: Number(item.sales.toFixed(2)) }));
@@ -395,16 +381,16 @@ function buildSalesHeatmapBuckets(transactions, period, selectedRange) {
       transactions: 0,
     }));
 
-    transactions.forEach((transaction) => {
-      const month = getPhilippineDateParts(transaction.created_at)?.month;
+    dailySales.forEach((item) => {
+      const month = getPhilippineDateParts(item.date)?.month;
       const bucket = buckets[Number(month || 0) - 1];
 
       if (!bucket) {
         return;
       }
 
-      bucket.sales += transaction.total;
-      bucket.transactions += 1;
+      bucket.sales += item.revenue;
+      bucket.transactions += item.transactions;
     });
 
     return buckets.map((item) => ({ ...item, sales: Number(item.sales.toFixed(2)) }));
@@ -420,21 +406,17 @@ function buildSalesHeatmapBuckets(transactions, period, selectedRange) {
     sales: 0,
     transactions: 0,
   }));
-  const byKey = new Map(buckets.map((item) => [item.key, item]));
+  const byKey = new Map(dailySales.map((item) => [item.date, item]));
 
-  transactions.forEach((transaction) => {
-    const dayKey = getPhilippineDateKey(transaction.created_at);
-    const bucket = byKey.get(dayKey);
+  return buckets.map((item) => {
+    const bucket = byKey.get(item.key);
 
-    if (!bucket) {
-      return;
-    }
-
-    bucket.sales += transaction.total;
-    bucket.transactions += 1;
+    return {
+      ...item,
+      sales: Number(toNumber(bucket?.revenue).toFixed(2)),
+      transactions: toNumber(bucket?.transactions),
+    };
   });
-
-  return buckets.map((item) => ({ ...item, sales: Number(item.sales.toFixed(2)) }));
 }
 
 function getHeatmapIntensity(sales, maxSales) {
@@ -490,26 +472,12 @@ function normalizeHeatmap(value) {
       {
         hour: toNumber(item?.hour),
         sales: toNumber(item?.sales),
+        transactions: toNumber(item?.transactions),
       },
     ])
   );
 
   return EMPTY_HEATMAP.map((item) => byHour.get(item.hour) || item);
-}
-
-function normalizeTransactions(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((transaction) => ({
-      ...transaction,
-      created_at: transaction?.created_at || '',
-      total: toNumber(transaction?.total),
-      items: Array.isArray(transaction?.items) ? transaction.items : [],
-    }))
-    .filter((transaction) => transaction.created_at);
 }
 
 function getErrorMessage(result, fallback) {
@@ -680,7 +648,6 @@ export default function Analytics() {
     daily: [],
     top: [],
     heatmap: EMPTY_HEATMAP,
-    transactions: [],
   });
 
   useEffect(() => {
@@ -693,12 +660,15 @@ export default function Analytics() {
         startDate: selectedRange.startDate,
         endDate: selectedRange.endDate,
       };
+      const heatmapRequest =
+        period === 'day'
+          ? API.getHourlyHeatmap(queryOptions)
+          : Promise.resolve(EMPTY_HEATMAP);
 
-      const [dailyResult, topResult, heatmapResult, transactionsResult] = await Promise.allSettled([
+      const [dailyResult, topResult, heatmapResult] = await Promise.allSettled([
         API.getDailySales(queryOptions),
         API.getTopProducts(queryOptions),
-        API.getHourlyHeatmap(queryOptions),
-        API.getTransactions(selectedRange.startDate, selectedRange.endDate, { limit: 5000 }),
+        heatmapRequest,
       ]);
 
       if (cancelled) {
@@ -718,10 +688,6 @@ export default function Analytics() {
           heatmapResult.status === 'fulfilled'
             ? normalizeHeatmap(heatmapResult.value)
             : EMPTY_HEATMAP,
-        transactions:
-          transactionsResult.status === 'fulfilled'
-            ? normalizeTransactions(transactionsResult.value)
-            : [],
       };
 
       setData(nextData);
@@ -730,11 +696,11 @@ export default function Analytics() {
         getErrorMessage(dailyResult, 'Failed to load revenue trend.'),
         getErrorMessage(topResult, 'Failed to load top products.'),
         getErrorMessage(heatmapResult, 'Failed to load hourly heatmap.'),
-        getErrorMessage(transactionsResult, 'Failed to load transactions.'),
       ].filter(Boolean);
 
       if (failures.length > 0) {
-        const allFailed = failures.length === 4;
+        const expectedRequestCount = period === 'day' ? 3 : 2;
+        const allFailed = failures.length === expectedRequestCount;
         setError(
           allFailed
             ? failures[0]
@@ -750,7 +716,7 @@ export default function Analytics() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey, selectedRange]);
+  }, [period, reloadKey, selectedRange]);
 
   const referenceDate = buildReferenceDate(period, selectedDate, selectedMonth, selectedYear);
   const periodTitle = getPeriodTitle(period);
@@ -758,12 +724,12 @@ export default function Analytics() {
   const revenueTrendTitle = getRevenueTrendTitle(period, referenceDate);
   const yearOptions = buildYearOptions(selectedYear);
   const trendPoints = useMemo(
-    () => buildTransactionTrendPoints(data.transactions, period, selectedRange),
-    [data.transactions, period, selectedRange]
+    () => buildTrendPoints(data.daily, data.heatmap, period, selectedRange),
+    [data.daily, data.heatmap, period, selectedRange]
   );
   const heatmapBuckets = useMemo(
-    () => buildSalesHeatmapBuckets(data.transactions, period, selectedRange),
-    [data.transactions, period, selectedRange]
+    () => buildSalesHeatmapBuckets(data.daily, data.heatmap, period, selectedRange),
+    [data.daily, data.heatmap, period, selectedRange]
   );
   const hasTrendData =
     trendPoints.values.some((value) => value > 0) ||
@@ -771,14 +737,15 @@ export default function Analytics() {
   const hasTopData = data.top.length > 0;
   const hasHeatmapData = heatmapBuckets.some((item) => item.sales > 0);
   const summary = useMemo(() => {
-    const totalRevenue = data.transactions.reduce(
-      (sum, transaction) => sum + transaction.total,
+    const totalRevenue = data.daily.reduce(
+      (sum, item) => sum + item.revenue,
       0
     );
-    const totalTransactions = data.transactions.length;
-    const activeSchoolDays = new Set(
-      data.transactions.map((transaction) => getPhilippineDateKey(transaction.created_at))
-    ).size;
+    const totalTransactions = data.daily.reduce(
+      (sum, item) => sum + item.transactions,
+      0
+    );
+    const activeSchoolDays = data.daily.filter((item) => item.transactions > 0).length;
     const trackedSchoolDays = data.daily.length;
     const averageTicket = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
     const averageDailyRevenue =
@@ -794,7 +761,7 @@ export default function Analytics() {
       averageDailyRevenue,
       topProduct,
     };
-  }, [data.daily.length, data.top, data.transactions]);
+  }, [data.daily, data.top]);
 
   const lineChartData = useMemo(
     () => ({
@@ -1286,8 +1253,8 @@ export default function Analytics() {
                   <div className="text-sm font-black">{item.label}</div>
                   {isPeak && <FireIcon className="h-4 w-4 shrink-0" />}
                 </div>
-                <div className="mt-3 truncate text-sm font-black">
-                  {formatCurrency(item.sales)}
+                <div className="mt-3 truncate text-sm font-black" aria-label={formatCurrency(item.sales)}>
+                  {formatCompactCurrency(item.sales)}
                 </div>
                 <div className="mt-1 truncate text-[11px] font-bold opacity-80">
                   {formatNumber(item.transactions)} {pluralize(item.transactions, 'txn')}
