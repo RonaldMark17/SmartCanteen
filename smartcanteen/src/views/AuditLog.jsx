@@ -124,16 +124,16 @@ export default function AuditLog() {
   const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+    <div className="view-shell-static">
+      <div className="view-header md:flex-row md:items-start">
+        <h1 className="view-title flex items-center gap-2">
           <ShieldCheckIcon className="w-6 h-6 text-slate-700" /> Audit Log
         </h1>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
           <button
             type="button"
             onClick={() => loadLogs({ showLoading: true })}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            className="action-button py-3"
           >
             <ArrowPathIcon className="h-5 w-5" />
             Refresh
@@ -161,7 +161,7 @@ export default function AuditLog() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="data-card flex min-h-0 flex-1 flex-col">
         <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-auto md:block">
           <table className="min-w-full text-left text-sm text-slate-600">
             <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">

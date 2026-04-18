@@ -158,7 +158,8 @@ export function getRealtimeAlertsUrl() {
     return null;
   }
 
-  const apiBaseUrl = new URL(API_BASE || API_ROOT_PATH, window.location.origin);
+  const realtimeBase = API_FALLBACK_BASE || API_BASE || API_ROOT_PATH;
+  const apiBaseUrl = new URL(realtimeBase, window.location.origin);
   apiBaseUrl.protocol = apiBaseUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   apiBaseUrl.pathname = `${trimTrailingSlash(apiBaseUrl.pathname)}/realtime/alerts`;
   apiBaseUrl.search = '';

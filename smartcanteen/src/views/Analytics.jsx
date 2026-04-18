@@ -540,7 +540,7 @@ function Panel({ icon, title, meta, children, className = '' }) {
 
   return (
     <section
-      className={`flex min-h-[390px] flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 ${className}`}
+      className={`panel-card flex min-h-[390px] flex-col ${className}`}
     >
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
@@ -587,7 +587,7 @@ function MetricCard({ title, value, detail, icon, tone = 'slate' }) {
   const palette = toneClasses[tone] || toneClasses.slate;
 
   return (
-    <article className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <article className="relative overflow-hidden rounded-[20px] bg-white p-4 shadow-sm ring-1 ring-slate-100 sm:p-5">
       <div className={`absolute inset-x-0 top-0 h-1 ${palette.bar}`} />
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
@@ -611,8 +611,8 @@ function MetricCard({ title, value, detail, icon, tone = 'slate' }) {
 
 function AnalyticsSkeleton() {
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto pb-8 pr-2 custom-scrollbar">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+    <div className="view-shell custom-scrollbar">
+      <div className="view-header">
         <SkeletonText lines={['h-8 w-44', 'h-4 w-72']} />
         <div className="flex flex-wrap gap-3">
           <Skeleton className="h-9 w-32 rounded-full" />
@@ -634,18 +634,18 @@ function AnalyticsSkeleton() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-3">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
+        <div className="panel-card xl:col-span-3">
           <Skeleton className="mb-5 h-10 w-64 rounded-xl" />
           <Skeleton className="h-[280px] w-full rounded-2xl" />
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-2">
+        <div className="panel-card xl:col-span-2">
           <Skeleton className="mb-5 h-10 w-56 rounded-xl" />
           <Skeleton className="h-[280px] w-full rounded-2xl" />
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="panel-card">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <Skeleton className="h-10 w-72 rounded-xl" />
           <Skeleton className="h-7 w-32 rounded-full" />
@@ -1045,17 +1045,17 @@ export default function Analytics() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto pb-8 pr-2 custom-scrollbar">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+    <div className="view-shell custom-scrollbar">
+      <div className="view-header">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.22em] text-teal-700">
+          <div className="view-eyebrow">
             <CalendarDaysIcon className="h-4 w-4" />
             School Days
           </div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950">
+          <h1 className="view-title mt-3">
             Analytics
           </h1>
-          <p className="mt-1 text-sm font-medium text-slate-500">
+          <p className="view-subtitle">
             Sales performance for {periodDescription}
           </p>
         </div>
@@ -1137,7 +1137,7 @@ export default function Analytics() {
           <button
             type="button"
             onClick={handleExportAnalytics}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+            className="action-button"
           >
             <ArrowDownTrayIcon className="h-4 w-4" />
             Export CSV
@@ -1145,7 +1145,7 @@ export default function Analytics() {
           <button
             type="button"
             onClick={() => setReloadKey((value) => value + 1)}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+            className="action-button"
           >
             <ArrowPathIcon className="h-4 w-4" />
             Refresh
@@ -1194,7 +1194,7 @@ export default function Analytics() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
         <Panel
           icon={ArrowTrendingUpIcon}
           title={revenueTrendTitle}
@@ -1238,7 +1238,7 @@ export default function Analytics() {
         </Panel>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <section className="panel-card">
         <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">

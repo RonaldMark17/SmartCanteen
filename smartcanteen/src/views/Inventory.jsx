@@ -226,23 +226,23 @@ export default function Inventory() {
   }, [currentPage, totalPages]);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col gap-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="view-shell-static relative">
+      <div className="view-header md:flex-row md:items-center">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
-          <p className="text-sm text-slate-500">Manage products and stock levels</p>
+          <h1 className="view-title">Inventory</h1>
+          <p className="view-subtitle">Manage products and stock levels</p>
         </div>
         
         <div className="flex w-full flex-wrap gap-3 md:w-auto">
           <button 
             onClick={exportCSVReport} 
-            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-all"
+            className="action-button"
           >
             <ArrowDownTrayIcon className="w-5 h-5" /> Export CSV
           </button>
           
           {isAdmin && (
-            <button onClick={openAddModal} className="bg-primary hover:bg-primary-dark text-white px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-primary/20 transition-all">
+            <button onClick={openAddModal} className="primary-action-button">
               <PlusIcon className="w-5 h-5" /> Add Product
             </button>
           )}
@@ -261,7 +261,7 @@ export default function Inventory() {
         </DismissibleAlert>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="data-card flex min-h-0 flex-1 flex-col">
         <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-y-auto md:block">
           <table className="w-full text-left text-sm text-slate-600">
             <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200 sticky top-0">

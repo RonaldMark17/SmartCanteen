@@ -91,7 +91,9 @@ export function connectRealtimeAlertStream(onAlertChange) {
       }
     };
     socket.onerror = () => {
-      socket?.close();
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
     };
     socket.onclose = scheduleReconnect;
   };
@@ -117,8 +119,14 @@ export function connectRealtimeAlertStream(onAlertChange) {
     window.removeEventListener('online', handleOnline);
     window.removeEventListener('offline', handleOffline);
 
-    if (socket && socket.readyState < WebSocket.CLOSING) {
+    if (socket?.readyState === WebSocket.OPEN) {
       socket.close();
+    } else if (socket?.readyState === WebSocket.CONNECTING) {
+      const pendingSocket = socket;
+      pendingSocket.onopen = () => pendingSocket.close();
+      pendingSocket.onmessage = null;
+      pendingSocket.onerror = null;
+      pendingSocket.onclose = null;
     }
     socket = null;
   };

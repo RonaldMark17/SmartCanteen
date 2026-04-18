@@ -20,6 +20,7 @@ import backend.schemas as schemas
 import backend.auth as auth
 import backend.analytics_helpers as analytics_helpers
 import backend.ml_predictor as ml_predictor
+from backend.demo_data import seed_demo_canteen_database
 from backend.database import engine, get_db, Base
 from backend.time_utils import (
     build_ph_date_range_bounds,
@@ -893,6 +894,7 @@ def predict_tomorrow(
             "predictions": result.get("predictions", []),  # ✅ safe
             "weekly_sales_trend": result.get("weekly_sales_trend", []),
             "summary": result.get("summary", {}),
+            "tomorrow_sales_outlook": result.get("tomorrow_sales_outlook", {}),
             "insights": result.get("insights", []),
             "data_source": result.get("data_source", "heuristic"),
             "generated_at": datetime.utcnow().isoformat()
@@ -913,6 +915,7 @@ def predict_tomorrow(
                 "model_backed_predictions": 0,
                 "heuristic_predictions": 0,
             },
+            "tomorrow_sales_outlook": {},
             "insights": [],
             "data_source": "error",
             "error": str(e),
@@ -962,46 +965,12 @@ def health():
 
 
 @app.post("/api/seed", tags=["System"])
-def seed(db: Session = Depends(get_db)):
-    """One-time demo data seeder. Idempotent."""
-    if db.query(models.User).count() > 0:
-        return {"message": "Already seeded — nothing changed."}
-
-    # Users
-    db.add_all([
-        models.User(username="admin",   full_name="Admin User",
-                    password_hash=auth.get_password_hash("admin123"),   role="admin"),
-        models.User(username="cashier", full_name="Main Cashier",
-                    password_hash=auth.get_password_hash("cashier123"), role="cashier"),
-        models.User(username="staff",   full_name="Kitchen Staff",
-                    password_hash=auth.get_password_hash("staff123"),   role="staff"),
-    ])
-
-    # Products (typical Filipino school canteen)
-    db.add_all([
-        models.Product(name="Rice (per order)",      category="Staple",   price=15.0,  stock=200, min_stock=30),
-        models.Product(name="Pork Adobo",            category="Viand",    price=45.0,  stock=50,  min_stock=10),
-        models.Product(name="Chicken Tinola",        category="Soup",     price=50.0,  stock=40,  min_stock=10),
-        models.Product(name="Sinigang na Baboy",     category="Soup",     price=55.0,  stock=35,  min_stock=8),
-        models.Product(name="Ginisang Ampalaya",     category="Viand",    price=35.0,  stock=30,  min_stock=8),
-        models.Product(name="Lumpia (2 pcs)",        category="Snacks",   price=20.0,  stock=80,  min_stock=20),
-        models.Product(name="Pandesal",              category="Bread",    price=5.0,   stock=100, min_stock=25),
-        models.Product(name="Banana Cue",            category="Snacks",   price=15.0,  stock=60,  min_stock=15),
-        models.Product(name="Soft Drinks (small)",   category="Drinks",   price=20.0,  stock=120, min_stock=20),
-        models.Product(name="Water (500ml)",         category="Drinks",   price=15.0,  stock=150, min_stock=30),
-        models.Product(name="Mango Float (slice)",   category="Dessert",  price=30.0,  stock=20,  min_stock=5),
-        models.Product(name="Biko (per slice)",      category="Dessert",  price=25.0,  stock=15,  min_stock=4),
-    ])
-    db.commit()
-
-    return {
-        "message": "✅ Seed complete!",
-        "credentials": {
-            "admin":   "admin / admin123",
-            "cashier": "cashier / cashier123",
-            "staff":   "staff / staff123",
-        },
-    }
+def seed(
+    reset_demo: bool = Query(False, description="Rebuild the local canteen demo dataset."),
+    db: Session = Depends(get_db),
+):
+    """Seed realistic SmartCanteen demo products, sales, weather, and school events."""
+    return seed_demo_canteen_database(db, reset=reset_demo)
 
 
 @app.get("/{full_path:path}", include_in_schema=False)

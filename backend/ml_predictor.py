@@ -37,24 +37,24 @@ DEFAULT_METRICS = {
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 SCHOOL_WEEKDAYS = [0, 1, 2, 3, 4]
 WEATHER_FACTORS = {"clear": 1.0, "cloudy": 0.96, "rainy": 0.84}
-EVENT_FACTORS = {"none": 1.0, "intramurals": 1.28, "exams": 0.9, "halfday": 0.62}
+EVENT_FACTORS = {"none": 1.0, "intramurals": 1.28, "exams": 0.9, "halfday": 0.62, "holiday": 0.0}
 
 CATEGORY_FACTORS = {
     "drinks": {
         "weather": {"rainy": 0.72, "cloudy": 0.95, "clear": 1.05},
-        "event": {"intramurals": 1.55, "exams": 0.92, "halfday": 0.74, "none": 1.0},
+        "event": {"intramurals": 1.55, "exams": 0.92, "halfday": 0.74, "holiday": 0.0, "none": 1.0},
     },
     "soup": {
         "weather": {"rainy": 1.45, "cloudy": 1.12, "clear": 0.96},
-        "event": {"intramurals": 0.85, "exams": 1.05, "halfday": 0.72, "none": 1.0},
+        "event": {"intramurals": 0.85, "exams": 1.05, "halfday": 0.72, "holiday": 0.0, "none": 1.0},
     },
     "dessert": {
         "weather": {"rainy": 0.88, "cloudy": 0.98, "clear": 1.08},
-        "event": {"intramurals": 1.1, "exams": 0.94, "halfday": 0.78, "none": 1.0},
+        "event": {"intramurals": 1.1, "exams": 0.94, "halfday": 0.78, "holiday": 0.0, "none": 1.0},
     },
     "snacks": {
         "weather": {"rainy": 0.95, "cloudy": 0.98, "clear": 1.06},
-        "event": {"intramurals": 1.18, "exams": 0.96, "halfday": 0.82, "none": 1.0},
+        "event": {"intramurals": 1.18, "exams": 0.96, "halfday": 0.82, "holiday": 0.0, "none": 1.0},
     },
 }
 
@@ -78,6 +78,18 @@ HEURISTIC_FEATURE_GROUPS = [
     "weekday baseline",
     "weather adjustment",
     "event adjustment",
+]
+TOMORROW_OUTLOOK_FEATURE_GROUPS = [
+    "tomorrow weekday",
+    "today sales",
+    "recent 3-7 day trend",
+    "attendance forecast",
+    "weather forecast",
+    "school event",
+    "planned menu proxy",
+    "inventory availability",
+    "allowance timing",
+    "same weekday benchmark",
 ]
 PREDICTION_CACHE_TTL_SECONDS = 180
 _PREDICTION_RESULT_CACHE: Dict[tuple, Dict] = {}
@@ -178,6 +190,12 @@ def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event
 
 def _empty_weekly_trend() -> List[Dict]:
     return [{"date": WEEKDAY_LABELS[day], "predicted_sales": 0} for day in SCHOOL_WEEKDAYS]
+
+
+def _next_school_day(day_value):
+    while day_value.weekday() >= 5:
+        day_value += timedelta(days=1)
+    return day_value
 
 
 def _fallback_metrics(algorithm: str) -> Dict:
@@ -426,12 +444,13 @@ def _refresh_weather_history_from_archive(
 
 
 def _ensure_driver_history(db: Session, sales_df: pd.DataFrame) -> Dict:
+    prediction_day = _next_school_day(get_ph_tomorrow())
     if sales_df.empty:
         start_date = get_ph_today() - timedelta(days=180)
-        end_date = get_ph_tomorrow()
+        end_date = prediction_day
     else:
         start_date = min(sales_df["date"]).to_pydatetime().date() if isinstance(min(sales_df["date"]), pd.Timestamp) else min(sales_df["date"])
-        end_date = max(max(sales_df["date"]), get_ph_tomorrow())
+        end_date = max(max(sales_df["date"]), prediction_day)
 
     weather_rows = (
         db.query(models.WeatherHistory)
@@ -587,6 +606,7 @@ def _build_feature_summary(driver_daily: pd.DataFrame, driver_range: Dict) -> Di
     return {
         "model_feature_groups": MODEL_FEATURE_GROUPS,
         "heuristic_feature_groups": HEURISTIC_FEATURE_GROUPS,
+        "tomorrow_outlook_feature_groups": TOMORROW_OUTLOOK_FEATURE_GROUPS,
         "historical_drivers": {
             "weather_days": int(len(historical_driver_daily)),
             "event_days": int(len(historical_driver_daily)),
@@ -700,6 +720,116 @@ def _safe_mape(y_true, y_pred) -> float | None:
 
     denominator = np.maximum(np.abs(actual), 1.0)
     return float(np.mean(np.abs(actual - predicted) / denominator) * 100)
+
+
+def _safe_wape(y_true, y_pred) -> float | None:
+    actual = np.array(y_true, dtype=float)
+    predicted = np.array(y_pred, dtype=float)
+    if actual.size == 0 or predicted.size == 0:
+        return None
+
+    actual_total = float(np.sum(np.abs(actual)))
+    if actual_total <= 0:
+        return 0.0 if float(np.sum(np.abs(predicted))) <= 0 else 100.0
+
+    return float(np.sum(np.abs(actual - predicted)) / actual_total * 100)
+
+
+def _format_percent_metric(value: float | None, cap: float = 99.9) -> str:
+    if value is None or not np.isfinite(value):
+        value = cap
+    return f"{min(max(float(value), 0.0), cap):.1f}%"
+
+
+def _format_accuracy_metric(error_rate: float | None) -> str:
+    if error_rate is None or not np.isfinite(error_rate):
+        error_rate = 100.0
+    return f"{min(99.9, max(0.0, 100.0 - float(error_rate))):.1f}%"
+
+
+def _validation_context_from_row(row) -> tuple[str, str, bool]:
+    weather_scores = {
+        "clear": float(row.get("weather_clear", 0) or 0),
+        "cloudy": float(row.get("weather_cloudy", 0) or 0),
+        "rainy": float(row.get("weather_rainy", 0) or 0),
+    }
+    weather = max(weather_scores, key=weather_scores.get)
+    if weather_scores[weather] <= 0:
+        weather = "clear"
+
+    event_scores = {
+        "holiday": float(row.get("event_holiday", 0) or 0),
+        "halfday": float(row.get("event_halfday", 0) or 0),
+        "intramurals": float(row.get("event_intramurals", 0) or 0),
+        "exams": float(row.get("event_exams", 0) or 0),
+        "none": float(row.get("event_none", 0) or 0),
+    }
+    is_school_day = float(row.get("is_school_day", 1) or 0) >= 0.5
+    event = max(event_scores, key=event_scores.get)
+    if not is_school_day:
+        event = "holiday"
+    elif event_scores[event] <= 0:
+        event = "none"
+
+    return weather, event, is_school_day
+
+
+def _build_validation_metrics(validation_records: List[Dict], algorithm: str) -> Dict:
+    if not validation_records:
+        return _fallback_metrics(algorithm)
+
+    school_records = [
+        record
+        for record in validation_records
+        if record.get("is_school_day", True)
+    ]
+    metric_records = school_records or validation_records
+
+    item_actual = np.array([record["actual"] for record in metric_records], dtype=float)
+    item_predicted = np.array([record["predicted"] for record in metric_records], dtype=float)
+    if item_actual.size == 0 or item_predicted.size == 0:
+        return _fallback_metrics(algorithm)
+
+    item_rmse = float(np.sqrt(mean_squared_error(item_actual, item_predicted)))
+    item_wape = _safe_wape(item_actual, item_predicted)
+    item_mape = _safe_mape(item_actual[item_actual > 0], item_predicted[item_actual > 0])
+
+    daily_totals = {}
+    for record in metric_records:
+        date_key = record.get("date") or "unknown"
+        entry = daily_totals.setdefault(date_key, {"actual": 0.0, "predicted": 0.0})
+        entry["actual"] += float(record["actual"])
+        entry["predicted"] += float(record["predicted"])
+
+    daily_actual = np.array([entry["actual"] for entry in daily_totals.values()], dtype=float)
+    daily_predicted = np.array([entry["predicted"] for entry in daily_totals.values()], dtype=float)
+    canteen_wape = _safe_wape(daily_actual, daily_predicted)
+    try:
+        canteen_r2 = r2_score(daily_actual, daily_predicted) if len(daily_actual) > 1 else 0.0
+    except Exception:
+        canteen_r2 = 0.0
+
+    if not np.isfinite(canteen_r2):
+        canteen_r2 = 0.0
+
+    display_error_rate = canteen_wape if canteen_wape is not None else item_wape
+    if display_error_rate is None:
+        display_error_rate = 100.0
+
+    return {
+        "rmse": f"{item_rmse:.2f}",
+        "mape": _format_percent_metric(display_error_rate),
+        "wape": _format_percent_metric(display_error_rate),
+        "item_wape": _format_percent_metric(item_wape),
+        "item_mape": _format_percent_metric(item_mape),
+        "canteen_wape": _format_percent_metric(canteen_wape),
+        "accuracy": _format_accuracy_metric(display_error_rate),
+        "r2": f"{canteen_r2:.2f}",
+        "error_rate": _format_percent_metric(display_error_rate),
+        "accuracy_basis": "school-day canteen WAPE",
+        "validation_days": len(daily_totals),
+        "validation_rows": len(metric_records),
+    }
 
 
 def _build_daily_sales(product_df: pd.DataFrame, series_end_date=None) -> pd.DataFrame:
@@ -1065,6 +1195,18 @@ def _choose_blend_weight(history_points: int, model_mape: float | None, heuristi
     return float(min(0.8, max(0.2, base_weight)))
 
 
+def _filter_validation_values(values, evaluation_mask):
+    if not evaluation_mask:
+        return list(values)
+
+    filtered = [
+        value
+        for value, include in zip(values, evaluation_mask)
+        if include
+    ]
+    return filtered or list(values)
+
+
 def _select_blend_weight(
     y_true,
     y_pred_model,
@@ -1072,22 +1214,26 @@ def _select_blend_weight(
     history_points: int,
     model_mape: float | None,
     heuristic_mape: float | None,
+    evaluation_mask=None,
 ) -> float:
     candidate_weights = [0.0, 0.2, 0.35, 0.5, 0.65, 0.8, 1.0]
     preferred_weight = _choose_blend_weight(history_points, model_mape, heuristic_mape)
     best_weight = preferred_weight
     best_score = None
+    eval_true = _filter_validation_values(y_true, evaluation_mask)
+    eval_model = _filter_validation_values(y_pred_model, evaluation_mask)
+    eval_heuristic = _filter_validation_values(y_pred_heuristic, evaluation_mask)
 
     for weight in candidate_weights:
         blended = [
             (model_value * weight) + (heuristic_value * (1 - weight))
-            for model_value, heuristic_value in zip(y_pred_model, y_pred_heuristic)
+            for model_value, heuristic_value in zip(eval_model, eval_heuristic)
         ]
-        blended_mape = _safe_mape(y_true, blended)
-        if blended_mape is None:
+        blended_error = _safe_wape(eval_true, blended)
+        if blended_error is None:
             continue
 
-        score = blended_mape + (abs(weight - preferred_weight) * 0.5)
+        score = blended_error + (abs(weight - preferred_weight) * 0.25)
         if best_score is None or score < best_score:
             best_score = score
             best_weight = weight
@@ -1331,17 +1477,25 @@ def _ml_prediction(
     y_test = [float(value) for value in test_df["quantity"].tolist()]
     y_pred_model = [max(0.0, float(value)) for value in raw_predictions]
     y_pred_heuristic = []
+    validation_context = []
     for _, test_row in test_df.iterrows():
         history_cutoff = int(test_row["series_index"])
         past_daily = daily.iloc[:history_cutoff].copy()
+        validation_weather, validation_event, is_school_day = _validation_context_from_row(test_row)
         heuristic_prediction = _heuristic_prediction(
             past_daily,
             category,
             int(test_row["day_of_week"]),
-            "clear",
-            "none",
+            validation_weather,
+            validation_event,
         )["prediction"]
         y_pred_heuristic.append(float(heuristic_prediction))
+        validation_context.append(
+            {
+                "date": pd.to_datetime(test_row["date"]).date().isoformat(),
+                "is_school_day": is_school_day,
+            }
+        )
 
     if len(y_test) < 3:
         return {
@@ -1351,8 +1505,12 @@ def _ml_prediction(
             "reason": "Backtest window was too small to validate the model.",
         }
 
-    model_mape = _safe_mape(y_test, y_pred_model)
-    heuristic_mape = _safe_mape(y_test, y_pred_heuristic)
+    evaluation_mask = [context["is_school_day"] for context in validation_context]
+    evaluation_y_test = _filter_validation_values(y_test, evaluation_mask)
+    evaluation_y_pred_model = _filter_validation_values(y_pred_model, evaluation_mask)
+    evaluation_y_pred_heuristic = _filter_validation_values(y_pred_heuristic, evaluation_mask)
+    model_mape = _safe_wape(evaluation_y_test, evaluation_y_pred_model)
+    heuristic_mape = _safe_wape(evaluation_y_test, evaluation_y_pred_heuristic)
 
     blend_weight = _select_blend_weight(
         y_test,
@@ -1361,6 +1519,7 @@ def _ml_prediction(
         len(model_df),
         model_mape,
         heuristic_mape,
+        evaluation_mask=evaluation_mask,
     )
     blended_validation_predictions = [
         (model_value * blend_weight) + (heuristic_value * (1 - blend_weight))
@@ -1405,6 +1564,7 @@ def _ml_prediction(
         "prediction": prediction,
         "y_test": list(y_test),
         "y_pred": [float(value) for value in blended_validation_predictions],
+        "validation_context": validation_context,
         "reason": "",
     }
 
@@ -1519,6 +1679,312 @@ def _build_weekly_sales_trend(
     return trend
 
 
+def _build_daily_revenue(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["date", "revenue", "quantity", "day_of_week"])
+
+    revenue_df = df.copy()
+    revenue_df["revenue"] = revenue_df["quantity"] * revenue_df["price"]
+    daily_revenue = (
+        revenue_df.groupby("date")
+        .agg(
+            revenue=("revenue", "sum"),
+            quantity=("quantity", "sum"),
+            day_of_week=("day_of_week", "first"),
+        )
+        .reset_index()
+        .sort_values("date")
+    )
+    return daily_revenue
+
+
+def _sum_revenue_between(daily_revenue: pd.DataFrame, start_date, end_date) -> float:
+    if daily_revenue.empty:
+        return 0.0
+
+    mask = (daily_revenue["date"] >= start_date) & (daily_revenue["date"] <= end_date)
+    return float(daily_revenue.loc[mask, "revenue"].sum())
+
+
+def _average_revenue_between(daily_revenue: pd.DataFrame, start_date, end_date) -> float:
+    total_days = max(1, (end_date - start_date).days + 1)
+    return _sum_revenue_between(daily_revenue, start_date, end_date) / total_days
+
+
+def _revenue_on_date(daily_revenue: pd.DataFrame, day_value) -> float:
+    if daily_revenue.empty:
+        return 0.0
+
+    rows = daily_revenue.loc[daily_revenue["date"] == day_value]
+    if rows.empty:
+        return 0.0
+    return float(rows["revenue"].sum())
+
+
+def _same_weekday_average(daily_revenue: pd.DataFrame, weekday: int, tomorrow_value) -> float:
+    if daily_revenue.empty:
+        return 0.0
+
+    weekday_rows = daily_revenue.loc[
+        (daily_revenue["day_of_week"] == weekday) & (daily_revenue["date"] < tomorrow_value)
+    ].tail(4)
+    if weekday_rows.empty:
+        return 0.0
+    return float(weekday_rows["revenue"].mean())
+
+
+def _recent_revenue_trend(daily_revenue: pd.DataFrame, today_value) -> str:
+    recent_avg = _average_revenue_between(daily_revenue, today_value - timedelta(days=2), today_value)
+    previous_avg = _average_revenue_between(
+        daily_revenue,
+        today_value - timedelta(days=6),
+        today_value - timedelta(days=3),
+    )
+
+    if recent_avg <= 0 and previous_avg <= 0:
+        return "stable"
+    if previous_avg <= 0:
+        return "rising"
+    if recent_avg > previous_avg * 1.08:
+        return "rising"
+    if recent_avg < previous_avg * 0.92:
+        return "declining"
+    return "stable"
+
+
+def _estimate_attendance_forecast(tomorrow_value, event: str) -> int:
+    weekday_factor = {
+        0: 1.04,
+        1: 1.0,
+        2: 1.0,
+        3: 0.98,
+        4: 0.92,
+        5: 0.2,
+        6: 0.12,
+    }.get(tomorrow_value.weekday(), 1.0)
+    event_factor = {
+        "none": 1.0,
+        "intramurals": 1.05,
+        "exams": 0.9,
+        "halfday": 0.72,
+        "holiday": 0.0,
+    }.get(event, 1.0)
+    return int(round(1180 * weekday_factor * event_factor))
+
+
+def _infer_allowance_timing(tomorrow_value) -> Dict:
+    if tomorrow_value.weekday() == 0:
+        return {
+            "value": "start_week",
+            "label": "Start of week",
+            "modifier": 1.08,
+            "source": "calendar_allowance_pattern",
+        }
+    if tomorrow_value.weekday() == 4:
+        return {
+            "value": "end_week",
+            "label": "End of week",
+            "modifier": 0.92,
+            "source": "calendar_allowance_pattern",
+        }
+    return {
+        "value": "normal",
+        "label": "Normal",
+        "modifier": 1.0,
+        "source": "calendar_allowance_pattern",
+    }
+
+
+def _infer_stock_level(predictions: List[Dict], summary: Dict) -> Dict:
+    total_stock_gap = sum(float(prediction.get("stock_gap") or 0) for prediction in predictions)
+    restock_count = int(summary.get("restock_count") or 0)
+    waste_count = int(summary.get("waste_risk_count") or 0)
+
+    if total_stock_gap >= 40 or restock_count >= 6:
+        return {
+            "value": "critical",
+            "label": "Critical",
+            "modifier": 0.58,
+            "source": "inventory_forecast",
+            "total_stock_gap": total_stock_gap,
+        }
+    if total_stock_gap > 0 or restock_count > 0:
+        return {
+            "value": "low",
+            "label": "Low",
+            "modifier": 0.82,
+            "source": "inventory_forecast",
+            "total_stock_gap": total_stock_gap,
+        }
+    if waste_count > 0:
+        return {
+            "value": "high",
+            "label": "High",
+            "modifier": 1.03,
+            "source": "inventory_forecast",
+            "total_stock_gap": total_stock_gap,
+        }
+    return {
+        "value": "balanced",
+        "label": "Balanced",
+        "modifier": 1.0,
+        "source": "inventory_forecast",
+        "total_stock_gap": total_stock_gap,
+    }
+
+
+def _infer_planned_menu_proxy(predictions: List[Dict]) -> Dict:
+    if not predictions:
+        return {
+            "value": "No menu signal yet",
+            "source": "forecast",
+            "modifier": 0.94,
+        }
+
+    top_items = sorted(
+        predictions,
+        key=lambda prediction: prediction.get("predicted_quantity", 0),
+        reverse=True,
+    )[:2]
+    item_names = [item.get("product_name") for item in top_items if item.get("product_name")]
+    top_quantity = sum(float(item.get("predicted_quantity") or 0) for item in top_items)
+    menu_label = " + ".join(item_names) if item_names else "Forecasted top sellers"
+
+    return {
+        "value": menu_label,
+        "source": "forecasted top demand",
+        "modifier": 1.08 if top_quantity > 0 else 0.94,
+    }
+
+
+def _weather_label(weather: str) -> str:
+    return {
+        "clear": "Hot / Clear",
+        "cloudy": "Cool / Cloudy",
+        "rainy": "Rainy",
+    }.get(weather, "Hot / Clear")
+
+
+def _outlook_level(estimated_sales: float, benchmark_sales: float) -> str:
+    if estimated_sales <= 0:
+        return "unavailable"
+    if benchmark_sales <= 0:
+        return "normal"
+    ratio = estimated_sales / benchmark_sales
+    if ratio >= 1.08:
+        return "high"
+    if ratio <= 0.92:
+        return "low"
+    return "normal"
+
+
+def _outlook_label(level: str) -> str:
+    return {
+        "high": "High Tomorrow Sales",
+        "normal": "Normal Tomorrow Sales",
+        "low": "Low Tomorrow Sales",
+        "unavailable": "Waiting for Sales Data",
+    }.get(level, "Waiting for Sales Data")
+
+
+def _build_tomorrow_sales_outlook(
+    df: pd.DataFrame,
+    predictions: List[Dict],
+    summary: Dict,
+    tomorrow_driver: Dict,
+    weather: str,
+    event: str,
+) -> Dict:
+    today = get_ph_today()
+    tomorrow = _next_school_day(get_ph_tomorrow())
+    daily_revenue = _build_daily_revenue(df)
+    today_sales = _revenue_on_date(daily_revenue, today)
+    last_7_day_avg = _average_revenue_between(daily_revenue, today - timedelta(days=6), today)
+    last_3_day_avg = _average_revenue_between(daily_revenue, today - timedelta(days=2), today)
+    same_day_last_week = _revenue_on_date(daily_revenue, tomorrow - timedelta(days=7))
+    same_weekday_avg = _same_weekday_average(daily_revenue, tomorrow.weekday(), tomorrow)
+    benchmark_sales = same_day_last_week or same_weekday_avg or last_7_day_avg or today_sales
+    benchmark_source = (
+        "same_day_last_week"
+        if same_day_last_week > 0
+        else "same_weekday_average"
+        if same_weekday_avg > 0
+        else "last_7_day_average"
+        if last_7_day_avg > 0
+        else "today_sales"
+        if today_sales > 0
+        else "none"
+    )
+    stock_level = _infer_stock_level(predictions, summary)
+    menu_proxy = _infer_planned_menu_proxy(predictions)
+    allowance_timing = _infer_allowance_timing(tomorrow)
+    attendance_forecast = _estimate_attendance_forecast(tomorrow, event)
+    estimated_sales = float(summary.get("expected_revenue") or 0)
+    level = _outlook_level(estimated_sales, benchmark_sales)
+    model_backed = int(summary.get("model_backed_predictions") or 0)
+    total_products = max(1, int(summary.get("total_products") or 0))
+
+    inputs = {
+        "tomorrow_day": {
+            "value": tomorrow.strftime("%A"),
+            "weekday_index": tomorrow.weekday(),
+            "date": tomorrow.isoformat(),
+            "source": "calendar",
+        },
+        "today_sales": {
+            "value": round(today_sales, 2),
+            "source": "transactions_today",
+        },
+        "last_7_day_avg": {
+            "value": round(last_7_day_avg, 2),
+            "source": "transactions_last_7_days",
+        },
+        "last_3_day_avg": {
+            "value": round(last_3_day_avg, 2),
+            "source": "transactions_last_3_days",
+        },
+        "recent_sales_trend": {
+            "value": _recent_revenue_trend(daily_revenue, today),
+            "source": "last_3_days_vs_previous_4_days",
+        },
+        "attendance_forecast": {
+            "value": attendance_forecast,
+            "source": "school_day_event_proxy",
+        },
+        "weather_forecast": {
+            "value": _weather_label(weather),
+            "weather": weather,
+            "temperature_c": round(float(tomorrow_driver.get("temperature_c") or 30.0), 1),
+            "rainfall_mm": round(float(tomorrow_driver.get("rainfall_mm") or 0.0), 2),
+            "source": tomorrow_driver.get("weather_source") or "selected",
+        },
+        "event": {
+            "value": tomorrow_driver.get("event_label") or "Regular School Day",
+            "event_type": event,
+            "source": tomorrow_driver.get("event_source") or "selected",
+        },
+        "planned_menu": menu_proxy,
+        "stock_level": stock_level,
+        "allowance_timing": allowance_timing,
+        "same_day_last_week": {
+            "value": round(same_day_last_week, 2),
+            "source": "transactions_same_calendar_weekday",
+        },
+    }
+
+    return {
+        "level": level,
+        "label": _outlook_label(level),
+        "estimated_sales": round(estimated_sales, 2),
+        "benchmark_sales": round(float(benchmark_sales or 0), 2),
+        "benchmark_source": benchmark_source,
+        "demand_index": round(estimated_sales / benchmark_sales, 3) if benchmark_sales > 0 else 1.0,
+        "confidence": "high" if model_backed / total_products >= 0.6 else "medium" if model_backed > 0 else "low",
+        "inputs": inputs,
+        "feature_groups": TOMORROW_OUTLOOK_FEATURE_GROUPS,
+    }
+
+
 def _build_insights(predictions: List[Dict], summary: Dict, data_source: str) -> List[Dict]:
     insights = []
 
@@ -1596,23 +2062,34 @@ def predict_tomorrow_sales(
     driver_daily = _fetch_driver_daily_frame(db, driver_range["start_date"], driver_range["end_date"])
     feature_summary = _build_feature_summary(driver_daily, driver_range)
     products = db.query(models.Product).filter(models.Product.is_active == True).all()
+    tomorrow = _next_school_day(get_ph_tomorrow())
 
     if not products:
+        tomorrow_driver = _build_tomorrow_driver_row(driver_daily, tomorrow, weather, event)
+        empty_summary = {
+            "total_products": 0,
+            "restock_count": 0,
+            "waste_risk_count": 0,
+            "expected_revenue": 0.0,
+            "expected_units": 0,
+            "model_backed_predictions": 0,
+            "heuristic_predictions": 0,
+        }
         result = {
             "metrics": _fallback_metrics(algorithm),
             "algorithm_metrics": _build_algorithm_metrics(algorithm, _fallback_metrics(algorithm)),
             "feature_summary": feature_summary,
             "predictions": [],
             "weekly_sales_trend": _empty_weekly_trend(),
-            "summary": {
-                "total_products": 0,
-                "restock_count": 0,
-                "waste_risk_count": 0,
-                "expected_revenue": 0.0,
-                "expected_units": 0,
-                "model_backed_predictions": 0,
-                "heuristic_predictions": 0,
-            },
+            "summary": empty_summary,
+            "tomorrow_sales_outlook": _build_tomorrow_sales_outlook(
+                df,
+                [],
+                empty_summary,
+                tomorrow_driver,
+                weather,
+                event,
+            ),
             "insights": _build_insights([], {"total_products": 0}, "heuristic"),
             "data_source": "heuristic",
         }
@@ -1622,7 +2099,6 @@ def predict_tomorrow_sales(
         }
         return result
 
-    tomorrow = get_ph_tomorrow()
     tomorrow_weekday = tomorrow.weekday()
     series_end_date = df["date"].max() if not df.empty else None
     context_lookup = _build_context_daily_lookup(df, series_end_date=series_end_date)
@@ -1631,8 +2107,7 @@ def predict_tomorrow_sales(
     tomorrow_driver = _build_tomorrow_driver_row(driver_daily, tomorrow, weather, event)
 
     predictions = []
-    global_y_test = []
-    global_y_pred = []
+    validation_records = []
     model_backed_predictions = 0
 
     for product in products:
@@ -1677,8 +2152,19 @@ def predict_tomorrow_sales(
             predicted_quantity = ml_result["prediction"]
             prediction_source = "ml+heuristic"
             model_backed_predictions += 1
-            global_y_test.extend(ml_result["y_test"])
-            global_y_pred.extend(ml_result["y_pred"])
+            for actual, predicted, context in zip(
+                ml_result.get("y_test", []),
+                ml_result.get("y_pred", []),
+                ml_result.get("validation_context", []),
+            ):
+                validation_records.append(
+                    {
+                        "actual": float(actual),
+                        "predicted": float(predicted),
+                        "date": context.get("date"),
+                        "is_school_day": bool(context.get("is_school_day", True)),
+                    }
+                )
             active_feature_groups = MODEL_FEATURE_GROUPS
             fallback_reason = ""
         else:
@@ -1733,26 +2219,7 @@ def predict_tomorrow_sales(
 
     weekly_sales_trend = _build_weekly_sales_trend(df, weather, event)
 
-    if global_y_test and global_y_pred:
-        overall_rmse = np.sqrt(mean_squared_error(global_y_test, global_y_pred))
-        overall_mape = _safe_mape(global_y_test, global_y_pred) or 0.0
-        try:
-            overall_r2 = r2_score(global_y_test, global_y_pred) if len(global_y_test) > 1 else 0.0
-        except Exception:
-            overall_r2 = 0.0
-
-        if not np.isfinite(overall_r2):
-            overall_r2 = 0.0
-
-        metrics = {
-            "rmse": f"{overall_rmse:.2f}",
-            "mape": f"{min(overall_mape, 99.9):.1f}%",
-            "accuracy": f"{max(0.0, 100 - overall_mape):.1f}%",
-            "r2": f"{overall_r2:.2f}",
-            "error_rate": f"{min(overall_mape, 99.9):.1f}%",
-        }
-    else:
-        metrics = _fallback_metrics(algorithm)
+    metrics = _build_validation_metrics(validation_records, algorithm)
 
     summary = {
         "total_products": len(predictions),
@@ -1772,6 +2239,14 @@ def predict_tomorrow_sales(
     }
 
     data_source = "ml+heuristic" if model_backed_predictions > 0 else "heuristic"
+    tomorrow_sales_outlook = _build_tomorrow_sales_outlook(
+        df,
+        predictions,
+        summary,
+        tomorrow_driver,
+        weather,
+        event,
+    )
 
     result = {
         "metrics": metrics,
@@ -1780,6 +2255,7 @@ def predict_tomorrow_sales(
         "predictions": predictions,
         "weekly_sales_trend": weekly_sales_trend,
         "summary": summary,
+        "tomorrow_sales_outlook": tomorrow_sales_outlook,
         "insights": _build_insights(predictions, summary, data_source),
         "data_source": data_source,
     }

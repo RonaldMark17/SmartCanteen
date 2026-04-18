@@ -44,7 +44,7 @@ import { Bar, Doughnut } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
-const DEFAULT_METRICS = { accuracy: '91.6%' };
+const DEFAULT_METRICS = { accuracy: '0.00%' };
 const PERIOD_OPTIONS = [
   { key: 'day', label: 'Day' },
   { key: 'month', label: 'Month' },
@@ -433,7 +433,7 @@ function SnapshotCard({ title, value, detail, icon, tone = 'slate', onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`group flex min-h-[120px] items-start justify-between gap-4 rounded-2xl border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+      className={`group flex min-h-[120px] items-start justify-between gap-4 rounded-[20px] border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:p-5 ${
         toneClasses[tone] || toneClasses.slate
       }`}
     >
@@ -481,7 +481,7 @@ function ManagerChecklistCard({ item, onClick }) {
 
 function DashboardSkeleton() {
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto pb-8 pr-2">
+    <div className="view-shell">
       <div className="shrink-0 space-y-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <SkeletonText lines={['w-56 h-8', 'w-40 h-4']} />
@@ -852,12 +852,12 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto pb-8 pr-2 custom-scrollbar">
+    <div className="view-shell custom-scrollbar">
       <div className="shrink-0">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="view-header">
           <div>
-            <h1 className="text-2xl font-black text-slate-900">Dashboard Overview</h1>
-            <p className="text-sm text-slate-500">{getPeriodDescription(period, referenceDate)}</p>
+            <h1 className="view-title">Dashboard Overview</h1>
+            <p className="view-subtitle">{getPeriodDescription(period, referenceDate)}</p>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -938,14 +938,14 @@ export default function Dashboard() {
               <button
                 type="button"
                 onClick={() => setReloadKey((value) => value + 1)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                className="action-button"
               >
                 Refresh
               </button>
               <button
                 type="button"
                 onClick={handleExportSummary}
-                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                className="action-button"
               >
                 <ArrowDownTrayIcon className="h-5 w-5" /> Export Summary
               </button>
@@ -999,7 +999,7 @@ export default function Dashboard() {
                 AI Model Accuracy
                 <ArrowTopRightOnSquareIcon className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
               </p>
-              <p className="mt-1 text-2xl font-black tracking-tight">{metrics?.accuracy || '91.6%'}</p>
+              <p className="mt-1 text-2xl font-black tracking-tight">{metrics?.accuracy || '0.00%'}</p>
             </div>
             <div className="rounded-xl bg-white/10 p-2 backdrop-blur-md">
               <SparklesIcon className="h-6 w-6 text-fuchsia-300" />
@@ -1062,10 +1062,10 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="grid h-auto min-h-[350px] shrink-0 grid-cols-1 gap-6 lg:grid-cols-3">
+      <div className="grid h-auto min-h-[350px] shrink-0 grid-cols-1 gap-5 lg:grid-cols-3">
         <div
           onClick={() => navigate('/analytics')}
-          className="group flex cursor-pointer flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all hover:border-primary/40 hover:shadow-md lg:col-span-2"
+          className="panel-card group flex cursor-pointer flex-col transition-all hover:-translate-y-0.5 hover:shadow-md lg:col-span-2"
         >
           <h3 className="mb-4 flex items-center justify-between text-sm font-bold uppercase tracking-wider text-slate-800">
             <span className="flex items-center gap-2">
@@ -1092,7 +1092,7 @@ export default function Dashboard() {
 
         <div
           onClick={() => navigate('/analytics')}
-          className="group flex cursor-pointer flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+          className="panel-card group flex cursor-pointer flex-col transition-all hover:-translate-y-0.5 hover:shadow-md"
         >
           <h3 className="mb-4 flex items-center justify-between text-sm font-bold uppercase tracking-wider text-slate-800">
             <span className="flex items-center gap-2">
@@ -1133,8 +1133,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid shrink-0 grid-cols-1 gap-6 xl:grid-cols-3">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="grid shrink-0 grid-cols-1 gap-5 xl:grid-cols-3">
+        <section className="panel-card">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
@@ -1192,7 +1192,7 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="panel-card">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
@@ -1238,7 +1238,7 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="panel-card">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
@@ -1261,10 +1261,10 @@ export default function Dashboard() {
         </section>
       </div>
 
-      <div className="grid shrink-0 grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid shrink-0 grid-cols-1 gap-5 lg:grid-cols-2">
         <div
           onClick={() => navigate('/transactions')}
-          className="group flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+          className="data-card group flex cursor-pointer flex-col transition-all hover:-translate-y-0.5 hover:shadow-md"
         >
           <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 p-6">
             <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
@@ -1355,7 +1355,7 @@ export default function Dashboard() {
 
         <div
           onClick={() => navigate('/predictions')}
-          className="group flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+          className="panel-card group flex cursor-pointer flex-col overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-md"
         >
           <div className="mb-4 flex items-center justify-between">
             <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
@@ -1420,7 +1420,7 @@ function StatCard({ title, value, icon, color, alert = false, onClick }) {
   return (
     <div
       onClick={onClick}
-      className={`group relative flex cursor-pointer flex-col justify-center overflow-hidden rounded-2xl border bg-white p-5 shadow-sm transition-all hover:-translate-y-1 hover:shadow-md ${
+      className={`group relative flex cursor-pointer flex-col justify-center overflow-hidden rounded-[20px] border bg-white p-4 shadow-sm transition-all hover:-translate-y-1 hover:shadow-md sm:p-5 ${
         alert ? 'border-red-400 ring-4 ring-red-50' : 'border-slate-200'
       }`}
     >

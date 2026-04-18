@@ -8,14 +8,17 @@ import {
   BellAlertIcon,
   BuildingStorefrontIcon,
   ChartBarIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
   CloudArrowUpIcon,
+  Cog6ToothIcon,
   CubeIcon,
   ExclamationTriangleIcon,
   HomeIcon,
   LockClosedIcon,
   MagnifyingGlassIcon,
+  MoonIcon,
   ShieldCheckIcon,
   SparklesIcon,
   UserCircleIcon,
@@ -46,6 +49,7 @@ const DISMISSED_HIGH_DEMAND_ALERTS_KEY = 'sc_dismissed_high_demand_alerts';
 const READ_LOW_STOCK_ALERTS_KEY = 'sc_read_low_stock_alerts';
 const READ_HIGH_DEMAND_ALERTS_KEY = 'sc_read_high_demand_alerts';
 const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
+const DARK_MODE_STORAGE_KEY = 'sc_dark_mode';
 const LOW_STOCK_POLL_MS = 10000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
 
@@ -68,6 +72,14 @@ function getStoredSidebarCollapsed() {
 function getStoredUnreadAlerts() {
   try {
     return localStorage.getItem(UNREAD_ALERTS_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function getStoredDarkMode() {
+  try {
+    return localStorage.getItem(DARK_MODE_STORAGE_KEY) === '1';
   } catch {
     return false;
   }
@@ -438,6 +450,8 @@ export default function Layout({ children, onLogout }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getStoredSidebarCollapsed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(getStoredDarkMode);
   const [lowStockItems, setLowStockItems] = useState([]);
   const [highDemandItems, setHighDemandItems] = useState([]);
   const [alertsLoading, setAlertsLoading] = useState(true);
@@ -472,7 +486,7 @@ export default function Layout({ children, onLogout }) {
   const _defaultRoute = getDefaultRoute(user.role);
   const _roleFocus = getRoleFocus(user.role);
   const displayName = user.full_name || user.username || 'SmartCanteen user';
-  const _userInitials = getUserInitials(displayName);
+  const userInitials = getUserInitials(displayName);
   const _greeting = getGreeting(currentTime);
   const formattedDate = formatWorkspaceDate(currentTime);
   const formattedTime = formatWorkspaceTime(currentTime);
@@ -874,6 +888,11 @@ export default function Layout({ children, onLogout }) {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+    localStorage.setItem(DARK_MODE_STORAGE_KEY, darkMode ? '1' : '0');
+  }, [darkMode]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(UNREAD_ALERTS_STORAGE_KEY, hasUnreadAlerts ? '1' : '0');
     } catch {
@@ -884,6 +903,7 @@ export default function Layout({ children, onLogout }) {
   useEffect(() => {
     setMobileMenuOpen(false);
     setNotificationsOpen(false);
+    setProfileOpen(false);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -959,7 +979,7 @@ export default function Layout({ children, onLogout }) {
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <nav
-        className={`z-30 hidden shrink-0 flex-col bg-slate-900 text-slate-300 shadow-xl transition-[width] duration-300 lg:flex ${
+        className={`z-30 hidden shrink-0 flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-300 shadow-2xl shadow-slate-950/20 transition-[width] duration-300 lg:flex ${
           sidebarCollapsed ? 'w-24' : 'w-72'
         }`}
       >
@@ -981,7 +1001,7 @@ export default function Layout({ children, onLogout }) {
 
         <div className={`custom-scrollbar flex-1 space-y-1.5 overflow-y-auto ${sidebarCollapsed ? 'px-3' : 'px-4'} transition-all duration-300`}>
           {!sidebarCollapsed && (
-            <div className="mb-4 mt-2 px-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+            <div className="mb-4 mt-2 border-t border-slate-800/60 px-3 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
               Operational Menu
             </div>
           )}
@@ -990,15 +1010,15 @@ export default function Layout({ children, onLogout }) {
               key={item.name}
               to={item.path}
               title={sidebarCollapsed ? item.name : undefined}
-              className={`group flex items-center rounded-xl py-3 transition-all duration-200 ${
+              className={`group flex items-center rounded-2xl py-3 transition-all duration-200 ${
                 isActive(item.path)
-                  ? 'bg-primary text-white shadow-lg shadow-primary/20'
-                  : 'hover:bg-slate-800 hover:text-white'
+                  ? 'bg-gradient-to-r from-violet-600 to-primary text-white shadow-lg shadow-primary/30 ring-1 ring-white/10'
+                  : 'hover:translate-x-1 hover:bg-white/5 hover:text-white'
               } ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-4'}`}
             >
               <item.icon
-                className={`h-5 w-5 ${
-                  isActive(item.path) ? 'text-white' : 'text-slate-500 group-hover:text-primary'
+                className={`h-5 w-5 stroke-[1.8] ${
+                  isActive(item.path) ? 'text-white' : 'text-slate-500 group-hover:text-violet-300'
                 }`}
               />
               {!sidebarCollapsed && <span className="text-sm font-semibold">{item.name}</span>}
@@ -1006,7 +1026,7 @@ export default function Layout({ children, onLogout }) {
           ))}
         </div>
 
-        <div className="shrink-0 border-t border-slate-800 p-4">
+        <div className="shrink-0 border-t border-slate-800/60 p-4">
           <button
             onClick={onLogout}
             title={sidebarCollapsed ? 'Logout' : undefined}
@@ -1021,7 +1041,7 @@ export default function Layout({ children, onLogout }) {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6">
+        <header className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-slate-200/70 bg-white/95 px-4 shadow-sm backdrop-blur sm:px-6">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -1048,6 +1068,17 @@ export default function Layout({ children, onLogout }) {
           <div className="flex-1" />
 
           <div className="flex items-center gap-3 sm:gap-4">
+            <div className="hidden items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 shadow-sm md:flex">
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${
+                  isSynced ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]' : 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.14)]'
+                }`}
+              />
+              {isSynced ? 'System Online' : 'Offline Cache'}
+            </div>
+            <div className="hidden rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 shadow-sm lg:block">
+              {formattedDate}
+            </div>
             <div className="relative">
               <button
                 type="button"
@@ -1300,19 +1331,105 @@ export default function Layout({ children, onLogout }) {
               )}
             </div>
 
-            <div className="hidden sm:flex flex-col items-end">
-              <span className="leading-none text-sm font-black text-slate-900">{user.full_name}</span>
-              <span className="mt-1 text-[10px] font-bold uppercase tracking-widest text-primary">
-                {user.role}
-              </span>
-            </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100">
-              <UserCircleIcon className="h-7 w-7 text-slate-400" />
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setProfileOpen((value) => !value)}
+                className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm transition hover:border-primary/30 hover:shadow-md"
+              >
+                <div className="hidden flex-col items-end sm:flex">
+                  <span className="leading-none text-sm font-black text-slate-900">{displayName}</span>
+                  <span className="mt-1 text-[10px] font-bold uppercase tracking-widest text-primary">
+                    {user.role || 'staff'}
+                  </span>
+                </div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-black text-white shadow-sm">
+                  {userInitials}
+                </div>
+                <ChevronDownIcon
+                  className={`hidden h-4 w-4 text-slate-400 transition-transform sm:block ${
+                    profileOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {profileOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Close profile menu"
+                    onClick={() => setProfileOpen(false)}
+                    className="fixed inset-0 z-40 cursor-default bg-transparent"
+                  />
+                  <div className="absolute right-0 top-14 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                    <div className="bg-slate-50 px-4 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-sm font-black text-white">
+                          {userInitials}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-black text-slate-900">{displayName}</div>
+                          <div className="mt-1 text-[10px] font-black uppercase tracking-widest text-primary">
+                            {user.role || 'staff'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-2">
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        <UserCircleIcon className="h-5 w-5 text-slate-400" />
+                        Profile
+                      </button>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        <Cog6ToothIcon className="h-5 w-5 text-slate-400" />
+                        Settings
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDarkMode((value) => !value)}
+                        className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        <span className="inline-flex items-center gap-3">
+                          <MoonIcon className="h-5 w-5 text-slate-400" />
+                          Dark Mode
+                        </span>
+                        <span
+                          className={`h-5 w-9 rounded-full p-0.5 transition ${
+                            darkMode ? 'bg-primary' : 'bg-slate-200'
+                          }`}
+                        >
+                          <span
+                            className={`block h-4 w-4 rounded-full bg-white shadow-sm transition ${
+                              darkMode ? 'translate-x-4' : ''
+                            }`}
+                          />
+                        </span>
+                      </button>
+                      <div className="my-2 border-t border-slate-100" />
+                      <button
+                        type="button"
+                        onClick={onLogout}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black text-red-600 transition hover:bg-red-50"
+                      >
+                        <ArrowRightOnRectangleIcon className="h-5 w-5" />
+                        Logout
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </header>
 
-        <main className="custom-scrollbar flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <main className="ui-uniform custom-scrollbar flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="mx-auto h-full max-w-7xl">
             {!isSynced && (
               <DismissibleAlert

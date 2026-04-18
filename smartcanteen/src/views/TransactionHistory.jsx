@@ -222,11 +222,11 @@ export default function TransactionHistory() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="view-shell-static">
+      <div className="view-header md:flex-row md:items-center">
         <div>
-          <h1 className="text-2xl font-black text-slate-900">Transaction History</h1>
-          <p className="text-sm text-slate-500">Review past sales and inspect transaction details.</p>
+          <h1 className="view-title">Transaction History</h1>
+          <p className="view-subtitle">Review past sales and inspect transaction details.</p>
         </div>
 
         <div className="flex w-full flex-wrap items-center gap-3 md:w-auto md:flex-nowrap">
@@ -234,7 +234,7 @@ export default function TransactionHistory() {
             type="button"
             onClick={exportTransactionsCsv}
             disabled={loading || filteredTxns.length === 0}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="action-button"
           >
             <ArrowDownTrayIcon className="h-5 w-5" />
             Export CSV
@@ -245,7 +245,7 @@ export default function TransactionHistory() {
               setCurrentPage(1);
               setReloadKey((value) => value + 1);
             }}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            className="action-button"
           >
             Refresh
           </button>
@@ -268,7 +268,7 @@ export default function TransactionHistory() {
         </DismissibleAlert>
       )}
 
-      <div className="grid grid-cols-1 gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-4">
+      <div className="control-surface grid grid-cols-1 gap-4 md:grid-cols-4">
         <div className="relative md:col-span-2">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
           <input
@@ -308,7 +308,7 @@ export default function TransactionHistory() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="data-card flex min-h-0 flex-1 flex-col">
         <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-y-auto md:block">
           <table className="w-full text-left text-sm text-slate-600">
             <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">

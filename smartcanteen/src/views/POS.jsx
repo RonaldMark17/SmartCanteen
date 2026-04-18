@@ -332,11 +332,11 @@ export default function POS() {
   };
 
   return (
-    <div className="relative flex h-full flex-col">
-      <div className="mb-4 flex shrink-0 items-start justify-between gap-4">
+    <div className="view-shell-static relative">
+      <div className="view-header shrink-0 md:flex-row md:items-start">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Point of Sale</h1>
-          <p className="text-sm text-slate-500">Process orders and manage transactions</p>
+          <h1 className="view-title">Point of Sale</h1>
+          <p className="view-subtitle">Process orders and manage transactions</p>
         </div>
 
         <button
@@ -367,7 +367,7 @@ export default function POS() {
 
       <div className="custom-scrollbar flex-1 overflow-y-auto pb-4">
         <div className="flex min-h-[75vh] flex-col gap-4">
-          <div className="shrink-0 space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="control-surface shrink-0 space-y-3">
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
               <input
@@ -411,7 +411,7 @@ export default function POS() {
               return (
                 <div
                   key={product.id}
-                  className={`relative flex flex-col items-center rounded-xl border p-4 text-center shadow-sm transition-all ${
+                  className={`relative flex flex-col items-center rounded-[20px] border p-4 text-center shadow-sm transition-all ${
                     product.stock === 0
                       ? 'border-slate-200 bg-white opacity-50 grayscale'
                       : isSelected
@@ -521,7 +521,7 @@ export default function POS() {
           </div>
 
           {filteredProducts.length > 0 && (
-            <div className="flex shrink-0 flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="data-card flex shrink-0 flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm font-semibold text-slate-600">
                 Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(filteredProducts.length)} products
               </div>
