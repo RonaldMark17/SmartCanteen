@@ -12,6 +12,14 @@ body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
 
+html.dark {
+  color-scheme: dark;
+}
+
+html.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
 @layer components {
   .view-shell {
     @apply flex h-full min-h-0 flex-col gap-4 overflow-y-auto bg-slate-50/40 pb-6 pr-2;
@@ -108,6 +116,129 @@ body {
 
   .ui-uniform tbody.divide-y.divide-slate-100 > tr:hover {
     @apply bg-violet-50/40;
+  }
+}
+
+@layer utilities {
+  html.dark .ui-uniform {
+    @apply bg-slate-950 text-slate-100;
+  }
+
+  html.dark .view-shell,
+  html.dark .view-shell-static {
+    @apply bg-slate-950/95 text-slate-100;
+  }
+
+  html.dark .view-title,
+  html.dark .ui-uniform h1,
+  html.dark .ui-uniform h2,
+  html.dark .ui-uniform h3,
+  html.dark .ui-uniform .text-slate-950,
+  html.dark .ui-uniform .text-slate-900,
+  html.dark .ui-uniform .text-slate-800 {
+    @apply text-slate-100;
+  }
+
+  html.dark .view-subtitle,
+  html.dark .ui-uniform .text-slate-700,
+  html.dark .ui-uniform .text-slate-600,
+  html.dark .ui-uniform .text-slate-500 {
+    @apply text-slate-300;
+  }
+
+  html.dark .ui-uniform .text-slate-400 {
+    @apply text-slate-500;
+  }
+
+  html.dark .panel-card,
+  html.dark .data-card,
+  html.dark .control-surface,
+  html.dark .ui-uniform .bg-white {
+    @apply bg-slate-900 text-slate-100 ring-slate-800;
+  }
+
+  html.dark .ui-uniform .bg-white\/95,
+  html.dark .ui-uniform .bg-white\/90,
+  html.dark .ui-uniform .bg-white\/80,
+  html.dark .ui-uniform .bg-white\/70 {
+    @apply bg-slate-900/90;
+  }
+
+  html.dark .ui-uniform .bg-slate-50,
+  html.dark .ui-uniform .bg-slate-50\/40,
+  html.dark .ui-uniform .bg-slate-50\/50,
+  html.dark .ui-uniform .bg-slate-50\/60,
+  html.dark .ui-uniform .bg-slate-50\/70,
+  html.dark .ui-uniform .bg-slate-50\/80,
+  html.dark .ui-uniform .bg-slate-50\/90,
+  html.dark .ui-uniform .bg-slate-100 {
+    @apply bg-slate-800/70;
+  }
+
+  html.dark .ui-uniform .border-slate-100,
+  html.dark .ui-uniform .border-slate-200,
+  html.dark .ui-uniform .ring-slate-100,
+  html.dark .ui-uniform .ring-slate-200 {
+    @apply border-slate-800 ring-slate-800;
+  }
+
+  html.dark .action-button,
+  html.dark .ui-uniform button.bg-white,
+  html.dark .ui-uniform a.bg-white {
+    @apply border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-600 hover:bg-slate-800;
+  }
+
+  html.dark .field-control,
+  html.dark .ui-uniform input,
+  html.dark .ui-uniform select,
+  html.dark .ui-uniform textarea {
+    @apply border-slate-700 bg-slate-800 text-slate-100 placeholder:text-slate-500 focus:border-primary focus:bg-slate-900;
+  }
+
+  html.dark .ui-uniform thead.bg-slate-50,
+  html.dark .ui-uniform thead.border-b.border-slate-200.bg-slate-50 {
+    @apply bg-slate-800 text-slate-300;
+  }
+
+  html.dark .ui-uniform tbody.divide-y.divide-slate-100,
+  html.dark .ui-uniform .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+    @apply divide-slate-800;
+  }
+
+  html.dark .ui-uniform tbody.divide-y.divide-slate-100 > tr:hover {
+    @apply bg-violet-950/30;
+  }
+
+  html.dark header.bg-white\/95 {
+    @apply border-slate-800 bg-slate-950/95 text-slate-100;
+  }
+
+  html.dark header .bg-white {
+    @apply bg-slate-900 text-slate-100;
+  }
+
+  html.dark header .bg-slate-50 {
+    @apply bg-slate-800 text-slate-100;
+  }
+
+  html.dark header .border-slate-200,
+  html.dark header .border-slate-200\/70 {
+    @apply border-slate-800;
+  }
+
+  html.dark header .text-slate-900,
+  html.dark header .text-slate-700,
+  html.dark header .text-slate-600 {
+    @apply text-slate-100;
+  }
+
+  html.dark header .text-slate-500,
+  html.dark header .text-slate-400 {
+    @apply text-slate-400;
+  }
+
+  html.dark .fixed.inset-0.bg-slate-900\/10 {
+    @apply bg-slate-950/60;
   }
 }
 

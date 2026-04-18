@@ -21,7 +21,6 @@ import {
   MoonIcon,
   ShieldCheckIcon,
   SparklesIcon,
-  UserCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from './DismissibleAlert';
@@ -1381,13 +1380,6 @@ export default function Layout({ children, onLogout }) {
                         type="button"
                         className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
                       >
-                        <UserCircleIcon className="h-5 w-5 text-slate-400" />
-                        Profile
-                      </button>
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-                      >
                         <Cog6ToothIcon className="h-5 w-5 text-slate-400" />
                         Settings
                       </button>
@@ -1411,15 +1403,6 @@ export default function Layout({ children, onLogout }) {
                             }`}
                           />
                         </span>
-                      </button>
-                      <div className="my-2 border-t border-slate-100" />
-                      <button
-                        type="button"
-                        onClick={onLogout}
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black text-red-600 transition hover:bg-red-50"
-                      >
-                        <ArrowRightOnRectangleIcon className="h-5 w-5" />
-                        Logout
                       </button>
                     </div>
                   </div>

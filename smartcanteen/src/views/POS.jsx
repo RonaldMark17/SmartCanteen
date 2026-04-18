@@ -625,12 +625,6 @@ export default function POS() {
                     </div>
                     <div className="mt-1 text-base font-black">{totalUnits}</div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
-                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
-                      Subtotal
-                    </div>
-                    <div className="mt-1 text-sm font-black">{formatCurrency(subtotal)}</div>
-                  </div>
                   <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5">
                     <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-100">
                       Total
@@ -682,7 +676,7 @@ export default function POS() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-5">
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-4">
                   <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
                     <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
                       Items
@@ -694,12 +688,6 @@ export default function POS() {
                       Units
                     </div>
                     <div className="mt-1 text-xl font-black">{totalUnits}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
-                      Subtotal
-                    </div>
-                    <div className="mt-1 text-base font-black">{formatCurrency(subtotal)}</div>
                   </div>
                   <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3">
                     <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-emerald-100">
@@ -927,10 +915,6 @@ export default function POS() {
 
                   <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
                     <div className="flex items-center justify-between text-sm text-slate-300">
-                      <span>Subtotal</span>
-                      <span className="font-bold text-white">{formatCurrency(subtotal)}</span>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-sm text-slate-300">
                       <span>Discount</span>
                       <span className="font-bold text-white">
                         - {formatCurrency(numericDiscount)}
@@ -1209,10 +1193,6 @@ export default function POS() {
 
                   <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
                     <div className="flex items-center justify-between text-sm text-slate-300">
-                      <span>Subtotal</span>
-                      <span className="font-bold text-white">{formatCurrency(subtotal)}</span>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-sm text-slate-300">
                       <span>Discount</span>
                       <span className="font-bold text-white">- {formatCurrency(numericDiscount)}</span>
                     </div>
@@ -1290,12 +1270,6 @@ export default function POS() {
               </div>
 
               <div className="space-y-2 border-t-2 border-dashed border-slate-200 pt-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Subtotal</span>
-                  <span className="font-bold text-slate-900">
-                    {formatCurrency(receiptData.total + Number(receiptData.discount || 0))}
-                  </span>
-                </div>
                 {Number(receiptData.discount || 0) > 0 && (
                   <div className="flex justify-between text-sm text-red-500">
                     <span>Discount</span>

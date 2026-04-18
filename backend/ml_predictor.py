@@ -4,6 +4,7 @@ import copy
 import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -24,8 +25,28 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     xgb = None
 
-from . import models
-from .time_utils import get_ph_recent_cutoff_utc_naive, get_ph_today, get_ph_tomorrow, to_ph_time
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_DATABASE_PATH = PROJECT_ROOT / "canteen.db"
+
+if (
+    not os.getenv("DATABASE_URL")
+    and not os.getenv("POSTGRES_URL")
+    and PROJECT_DATABASE_PATH.exists()
+):
+    os.environ["DATABASE_URL"] = f"sqlite:///{PROJECT_DATABASE_PATH.as_posix()}"
+
+try:
+    from . import models
+    from .time_utils import get_ph_recent_cutoff_utc_naive, get_ph_today, get_ph_tomorrow, to_ph_time
+except ImportError:  # Allows `python ml_predictor.py` from the backend folder.
+    import sys
+
+    project_root_path = str(PROJECT_ROOT)
+    if project_root_path not in sys.path:
+        sys.path.insert(0, project_root_path)
+
+    import backend.models as models
+    from backend.time_utils import get_ph_recent_cutoff_utc_naive, get_ph_today, get_ph_tomorrow, to_ph_time
 
 
 DEFAULT_METRICS = {
@@ -2264,3 +2285,108 @@ def predict_tomorrow_sales(
         "result": copy.deepcopy(result),
     }
     return result
+
+
+CLI_ALGORITHMS = ("XGBoost", "Random Forest", "LSTM")
+ZERO_CLI_METRICS = {
+    "accuracy": "0.00%",
+    "error_rate": "0.00%",
+    "mape": "0.00%",
+    "rmse": "0.00",
+    "r2": "0.00",
+}
+
+
+def _coerce_metric_number(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return float(value)
+
+    cleaned = str(value).strip().replace("%", "")
+    if not cleaned:
+        return None
+
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _format_cli_percent(value) -> str:
+    number = _coerce_metric_number(value)
+    if number is None or not np.isfinite(number):
+        return ZERO_CLI_METRICS["error_rate"]
+    return f"{number:.1f}%"
+
+
+def _format_cli_decimal(value) -> str:
+    number = _coerce_metric_number(value)
+    if number is None or not np.isfinite(number):
+        return ZERO_CLI_METRICS["rmse"]
+    return f"{number:.2f}"
+
+
+def _normalize_cli_metrics(metrics: Dict | None) -> Dict:
+    metrics = metrics or {}
+    error_rate = metrics.get("error_rate") or metrics.get("wape") or metrics.get("mape")
+    mape = metrics.get("mape") or error_rate
+
+    return {
+        "accuracy": _format_cli_percent(metrics.get("accuracy")),
+        "error_rate": _format_cli_percent(error_rate),
+        "mape": _format_cli_percent(mape),
+        "rmse": _format_cli_decimal(metrics.get("rmse")),
+        "r2": _format_cli_decimal(metrics.get("r2") or metrics.get("r_squared")),
+    }
+
+
+def _load_cli_session():
+    try:
+        from backend.database import SessionLocal, SQLALCHEMY_DATABASE_URL
+    except ImportError:
+        from .database import SessionLocal, SQLALCHEMY_DATABASE_URL
+
+    return SessionLocal, SQLALCHEMY_DATABASE_URL
+
+
+def get_cli_model_metrics() -> Dict[str, Dict]:
+    SessionLocal, _ = _load_cli_session()
+    db = SessionLocal()
+
+    try:
+        model_metrics = {}
+        for algorithm in CLI_ALGORITHMS:
+            try:
+                result = predict_tomorrow_sales(db, algorithm=algorithm)
+                model_metrics[algorithm] = _normalize_cli_metrics(result.get("metrics"))
+            except Exception as exc:
+                model_metrics[algorithm] = {**ZERO_CLI_METRICS, "error": str(exc)}
+        return model_metrics
+    finally:
+        db.close()
+
+
+def print_cli_model_metrics() -> None:
+    _, database_url = _load_cli_session()
+    model_metrics = get_cli_model_metrics()
+
+    print("SmartCanteen AI Model Metrics")
+    print(f"Database: {database_url}")
+    print("")
+
+    for algorithm in CLI_ALGORITHMS:
+        metrics = model_metrics.get(algorithm, ZERO_CLI_METRICS)
+        print(algorithm)
+        print(f"accuracy: {metrics['accuracy']}")
+        print(f"error_rate: {metrics['error_rate']}")
+        print(f"mape: {metrics['mape']}")
+        print(f"rmse: {metrics['rmse']}")
+        print(f"r2: {metrics['r2']}")
+        if metrics.get("error"):
+            print(f"note: {metrics['error']}")
+        print("")
+
+
+if __name__ == "__main__":
+    print_cli_model_metrics()
