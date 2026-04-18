@@ -43,7 +43,7 @@ import { Line } from 'react-chartjs-2';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
 const DEFAULT_ALGORITHM = 'XGBoost';
-const MODEL_ALGORITHMS = ['XGBoost', 'Random Forest', 'LSTM'];
+const MODEL_ALGORITHMS = [DEFAULT_ALGORITHM];
 const OPENWEATHER_API_KEY = import.meta.env.VITE_OPENWEATHERMAP_API_KEY?.trim() || '';
 const OPENWEATHER_LAT = import.meta.env.VITE_OPENWEATHERMAP_LAT?.trim() || '';
 const OPENWEATHER_LON = import.meta.env.VITE_OPENWEATHERMAP_LON?.trim() || '';
@@ -158,8 +158,6 @@ const RISK_META = {
 };
 const ALGORITHM_REFERENCE_METRICS = {
   XGBoost: { accuracy: '91.6%', rmse: '4.21', mape: '8.4%', error_rate: '8.4%', r2: '0.87' },
-  'Random Forest': { accuracy: '90.9%', rmse: '4.88', mape: '9.1%', error_rate: '9.1%', r2: '0.83' },
-  LSTM: { accuracy: '89.8%', rmse: '5.12', mape: '10.2%', error_rate: '10.2%', r2: '0.79' },
 };
 const DEFAULT_METRICS = ALGORITHM_REFERENCE_METRICS.XGBoost;
 const EMPTY_MODEL_METRICS = {
@@ -173,8 +171,6 @@ const EMPTY_MODEL_METRICS = {
 };
 const MODEL_METRIC_TONES = {
   XGBoost: 'bg-blue-50 ring-blue-100 text-blue-700',
-  'Random Forest': 'bg-emerald-50 ring-emerald-100 text-emerald-700',
-  LSTM: 'bg-fuchsia-50 ring-fuchsia-100 text-fuchsia-700',
 };
 const SCHOOL_WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const SCHOOL_WEEKDAY_SALES_WEIGHTS = {
@@ -1983,7 +1979,6 @@ function TomorrowSalesOutlookInputs({
   eventProfile,
   initialInputs,
   loading,
-  onAlgorithmChange,
   onEventChange,
   onSyncWeather,
   onUpdatePlan,
@@ -2284,21 +2279,12 @@ function TomorrowSalesOutlookInputs({
           Auto-filled from transactions, inventory, weather, school-day context, and forecasted product demand.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm">
+          <div className="flex items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm">
             <span className="whitespace-nowrap text-slate-500">AI Model</span>
-            <select
-              value={selectedAlgorithm}
-              onChange={(eventTarget) => onAlgorithmChange(eventTarget.target.value)}
-              disabled={loading}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-black text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {MODEL_ALGORITHMS.map((modelName) => (
-                <option key={modelName} value={modelName}>
-                  {modelName}
-                </option>
-              ))}
-            </select>
-          </label>
+            <span className="rounded-xl border border-blue-100 bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">
+              {selectedAlgorithm || DEFAULT_ALGORITHM}
+            </span>
+          </div>
           <button
             type="button"
             onClick={onUpdatePlan}
@@ -2512,7 +2498,7 @@ function PredictionRecommendationsSkeleton() {
 
 export default function Predictions() {
   const location = useLocation();
-  const [algorithm, setAlgorithm] = useState(DEFAULT_ALGORITHM);
+  const algorithm = DEFAULT_ALGORITHM;
   const [weather, setWeather] = useState('hot_dry');
   const [event, setEvent] = useState('none');
   const [search, setSearch] = useState('');
@@ -2717,18 +2703,6 @@ export default function Predictions() {
         setLoading(false);
       }
     }
-  }
-
-  function handleAlgorithmChange(nextAlgorithm) {
-    if (nextAlgorithm === algorithm) {
-      return;
-    }
-
-    setAlgorithm(nextAlgorithm);
-    loadForecast({
-      algorithmOverride: nextAlgorithm,
-      leadingNotice: `AI model changed to ${nextAlgorithm}. Forecast refreshed with the selected model.`,
-    });
   }
 
   async function syncWeatherFromOpenWeatherMap() {
@@ -3371,7 +3345,6 @@ export default function Predictions() {
             eventProfile={eventProfile}
             initialInputs={tomorrowSalesInputs}
             loading={loading}
-            onAlgorithmChange={handleAlgorithmChange}
             onEventChange={setEvent}
             onSyncWeather={syncWeatherFromOpenWeatherMap}
             onUpdatePlan={() => loadForecast()}
@@ -3589,7 +3562,7 @@ export default function Predictions() {
                 </span>
               </div>
 
-              <div className="mb-4 grid grid-cols-1 gap-3 2xl:grid-cols-[0.95fr,1.25fr]">
+              <div className="mb-4">
                 <div className="rounded-[20px] bg-slate-50 px-4 py-3 ring-1 ring-slate-100">
                   <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
                     Weekly Summary
@@ -3601,76 +3574,6 @@ export default function Predictions() {
                         <span>{item}</span>
                       </div>
                     ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[20px] bg-slate-50 px-4 py-3 ring-1 ring-slate-100">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
-                        Live AI Model Accuracy
-                      </div>
-                      <div className="mt-1 text-xs font-semibold text-slate-500">
-                        Real-time metrics from the current canteen database.
-                      </div>
-                    </div>
-                    <span className="self-start rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500 shadow-sm">
-                      {forecast.metrics.accuracy_basis || 'School-day WAPE'}
-                    </span>
-                  </div>
-                  <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-3">
-                    {liveModelMetricRows.map((model) => {
-                      const isSelected = model.name === algorithm;
-
-                      return (
-                      <button
-                        key={model.name}
-                        type="button"
-                        onClick={() => handleAlgorithmChange(model.name)}
-                        aria-pressed={isSelected}
-                        className={`rounded-xl bg-white p-3 text-left shadow-sm ring-1 transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/40 ${
-                          isSelected ? 'scale-[1.01] ring-2 ring-slate-900' : ''
-                        } ${model.tone}`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="truncate text-sm font-black text-slate-900">{model.name}</div>
-                          <span
-                            className={`rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest ${
-                              isSelected ? 'text-blue-700' : ''
-                            }`}
-                          >
-                            {isSelected ? 'Selected' : 'Live'}
-                          </span>
-                        </div>
-                        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                          <div className="rounded-lg bg-white/70 px-2 py-2">
-                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                              Accuracy
-                            </div>
-                            <div className="mt-1 text-base font-black text-slate-900">
-                              {model.metrics.accuracy}
-                            </div>
-                          </div>
-                          <div className="rounded-lg bg-white/70 px-2 py-2">
-                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                              Error
-                            </div>
-                            <div className="mt-1 text-base font-black text-slate-900">
-                              {model.metrics.error_rate}
-                            </div>
-                          </div>
-                          <div className="rounded-lg bg-white/70 px-2 py-2">
-                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                              R2
-                            </div>
-                            <div className="mt-1 text-base font-black text-slate-900">
-                              {model.metrics.r2}
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                    })}
                   </div>
                 </div>
               </div>

@@ -875,6 +875,7 @@ def hourly_heatmap(
 
 @app.get("/api/predictions/tomorrow", tags=["Predictions"])
 def predict_tomorrow(
+    background_tasks: BackgroundTasks,
     algorithm: str = "XGBoost",
     weather: str = "clear",
     event: str = "none",
@@ -884,9 +885,18 @@ def predict_tomorrow(
     """Fulfills Research Objective (d): Predict demand to reduce food waste."""
     try:
         result = ml_predictor.predict_tomorrow_sales(db, algorithm, weather, event)
+        if result.get("cache_refresh_needed"):
+            if ml_predictor.begin_prediction_cache_refresh(algorithm, weather, event):
+                background_tasks.add_task(
+                    ml_predictor.refresh_prediction_cache,
+                    algorithm,
+                    weather,
+                    event,
+                )
 
         return {
             "metrics": result.get("metrics", {}),
+            "algorithm_metrics": result.get("algorithm_metrics", {}),
             "feature_summary": result.get("feature_summary", {}),
             "predictions": result.get("predictions", []),  # ✅ safe
             "weekly_sales_trend": result.get("weekly_sales_trend", []),
@@ -894,6 +904,9 @@ def predict_tomorrow(
             "tomorrow_sales_outlook": result.get("tomorrow_sales_outlook", {}),
             "insights": result.get("insights", []),
             "data_source": result.get("data_source", "heuristic"),
+            "cache_status": result.get("cache_status", "fresh"),
+            "cache_updated_at": result.get("cache_updated_at"),
+            "cache_refresh_needed": result.get("cache_refresh_needed", False),
             "generated_at": datetime.utcnow().isoformat()
         }
 

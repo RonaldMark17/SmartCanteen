@@ -13,13 +13,9 @@ from urllib.request import urlopen
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.neural_network import MLPRegressor
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 try:
     import xgboost as xgb
@@ -52,9 +48,9 @@ except ImportError:  # Allows `python ml_predictor.py` from the backend folder.
 
 DEFAULT_METRICS = {
     "XGBoost": {"rmse": "4.21", "mape": "8.4%", "accuracy": "91.6%", "r2": "0.87", "error_rate": "8.4%"},
-    "LSTM": {"rmse": "5.12", "mape": "10.2%", "accuracy": "89.8%", "r2": "0.79", "error_rate": "10.2%"},
-    "Random Forest": {"rmse": "4.88", "mape": "9.1%", "accuracy": "90.9%", "r2": "0.83", "error_rate": "9.1%"},
 }
+BEST_ALGORITHM = "XGBoost"
+SUPPORTED_ALGORITHMS = (BEST_ALGORITHM,)
 
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 SCHOOL_WEEKDAYS = [0, 1, 2, 3, 4]
@@ -114,9 +110,19 @@ TOMORROW_OUTLOOK_FEATURE_GROUPS = [
     "same weekday benchmark",
 ]
 PREDICTION_CACHE_TTL_SECONDS = 180
+PREDICTION_CACHE_VERSION = "xgb-shared-v2"
+REFRESH_ARCHIVE_WEATHER_ON_PREDICTION = os.getenv("FORECAST_REFRESH_ARCHIVE_WEATHER", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+OPEN_METEO_TIMEOUT_SECONDS = float(os.getenv("FORECAST_OPEN_METEO_TIMEOUT_SECONDS", "4"))
 _PREDICTION_RESULT_CACHE: Dict[tuple, Dict] = {}
 _PREDICTION_CACHE_LOCK = threading.Lock()
 _PREDICTION_INFLIGHT: Dict[tuple, threading.Event] = {}
+_PERSISTENT_REFRESH_LOCK = threading.Lock()
+_PERSISTENT_REFRESH_INFLIGHT = set()
 
 FORECAST_FEATURE_COLUMNS = [
     "days_idx",
@@ -196,6 +202,82 @@ def _store_prediction_result(cache_keys, result: Dict) -> None:
             }
 
 
+def _build_prediction_request_key(algorithm: str, weather: str, event: str) -> str:
+    return json.dumps(
+        [_normalize_algorithm(algorithm), weather or "clear", event or "none"],
+        separators=(",", ":"),
+    )
+
+
+def _serialize_prediction_signature(cache_key: tuple) -> str:
+    return json.dumps(list(cache_key), separators=(",", ":"), default=str)
+
+
+def _with_cache_metadata(result: Dict, status: str, cache_row=None, refresh_needed: bool = False) -> Dict:
+    response = copy.deepcopy(result)
+    response["cache_status"] = status
+    response["cache_refresh_needed"] = bool(refresh_needed)
+    if cache_row is not None:
+        response["cache_updated_at"] = (
+            cache_row.updated_at.isoformat()
+            if getattr(cache_row, "updated_at", None)
+            else None
+        )
+    return response
+
+
+def _load_persistent_prediction_cache(db: Session, request_key: str):
+    return (
+        db.query(models.PredictionCache)
+        .filter(models.PredictionCache.request_key == request_key)
+        .first()
+    )
+
+
+def _decode_persistent_prediction_payload(cache_row) -> Dict | None:
+    if not cache_row or not cache_row.payload:
+        return None
+
+    try:
+        payload = json.loads(cache_row.payload)
+    except (TypeError, ValueError):
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def _store_persistent_prediction_cache(
+    db: Session,
+    request_key: str,
+    data_signature: str,
+    result: Dict,
+) -> None:
+    cache_row = _load_persistent_prediction_cache(db, request_key)
+    if cache_row is None:
+        cache_row = models.PredictionCache(request_key=request_key)
+        db.add(cache_row)
+
+    cache_row.data_signature = data_signature
+    cache_row.payload = json.dumps(result, separators=(",", ":"), default=str)
+    cache_row.updated_at = datetime.utcnow()
+    db.commit()
+
+
+def begin_prediction_cache_refresh(algorithm: str, weather: str, event: str) -> bool:
+    request_key = _build_prediction_request_key(algorithm, weather, event)
+    with _PERSISTENT_REFRESH_LOCK:
+        if request_key in _PERSISTENT_REFRESH_INFLIGHT:
+            return False
+        _PERSISTENT_REFRESH_INFLIGHT.add(request_key)
+        return True
+
+
+def _finish_prediction_cache_refresh(algorithm: str, weather: str, event: str) -> None:
+    request_key = _build_prediction_request_key(algorithm, weather, event)
+    with _PERSISTENT_REFRESH_LOCK:
+        _PERSISTENT_REFRESH_INFLIGHT.discard(request_key)
+
+
 def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event: str) -> tuple:
     tx_count, tx_max = db.query(
         func.count(models.Transaction.id),
@@ -205,17 +287,9 @@ def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event
         func.count(models.Product.id),
         func.max(models.Product.updated_at),
     ).filter(models.Product.is_active == True).one()
-    weather_count, weather_updated_max = db.query(
-        func.count(models.WeatherHistory.id),
-        func.max(models.WeatherHistory.updated_at),
-    ).one()
-    event_count, event_updated_max = db.query(
-        func.count(models.SchoolEventHistory.id),
-        func.max(models.SchoolEventHistory.updated_at),
-    ).one()
-
     return (
         get_ph_today().isoformat(),
+        PREDICTION_CACHE_VERSION,
         algorithm,
         weather,
         event,
@@ -223,10 +297,6 @@ def _build_prediction_cache_key(db: Session, algorithm: str, weather: str, event
         tx_max.isoformat() if tx_max else "",
         int(product_count or 0),
         product_updated_max.isoformat() if product_updated_max else "",
-        int(weather_count or 0),
-        weather_updated_max.isoformat() if weather_updated_max else "",
-        int(event_count or 0),
-        event_updated_max.isoformat() if event_updated_max else "",
     )
 
 
@@ -241,16 +311,18 @@ def _next_school_day(day_value):
 
 
 def _fallback_metrics(algorithm: str) -> Dict:
-    return DEFAULT_METRICS.get(algorithm, DEFAULT_METRICS["Random Forest"])
+    return DEFAULT_METRICS[BEST_ALGORITHM]
 
 
 def _build_algorithm_metrics(selected_algorithm: str, selected_metrics: Dict) -> Dict:
-    comparison = {
-        name: values.copy()
-        for name, values in DEFAULT_METRICS.items()
-    }
+    selected_algorithm = _normalize_algorithm(selected_algorithm)
+    comparison = {BEST_ALGORITHM: DEFAULT_METRICS[BEST_ALGORITHM].copy()}
     comparison[selected_algorithm] = selected_metrics.copy()
     return comparison
+
+
+def _normalize_algorithm(algorithm: str) -> str:
+    return algorithm if algorithm in SUPPORTED_ALGORITHMS else BEST_ALGORITHM
 
 
 def _resolve_time_slot(hour: int) -> str:
@@ -391,7 +463,7 @@ def _fetch_open_meteo_archive(start_date, end_date) -> Dict:
     request_url = f"{OPEN_METEO_ARCHIVE_URL}?{query}"
 
     try:
-        with urlopen(request_url, timeout=20) as response:
+        with urlopen(request_url, timeout=OPEN_METEO_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (URLError, TimeoutError, json.JSONDecodeError, ValueError):
         return {}
@@ -443,6 +515,9 @@ def _refresh_weather_history_from_archive(
     start_date,
     end_date,
 ) -> None:
+    if not REFRESH_ARCHIVE_WEATHER_ON_PREDICTION:
+        return
+
     historical_end_date = min(end_date, get_ph_today())
     if start_date > historical_end_date:
         return
@@ -664,6 +739,9 @@ def _fetch_sales_df(db: Session, days_back: int = 90) -> pd.DataFrame:
     cutoff = get_ph_recent_cutoff_utc_naive(days_back)
     transactions = (
         db.query(models.Transaction)
+        .options(
+            selectinload(models.Transaction.items).selectinload(models.TransactionItem.product)
+        )
         .filter(models.Transaction.created_at >= cutoff)
         .all()
     )
@@ -713,32 +791,16 @@ def _fetch_sales_df(db: Session, days_back: int = 90) -> pd.DataFrame:
 
 
 def _build_model(algorithm: str):
-    if algorithm == "XGBoost" and xgb is not None:
-        return xgb.XGBRegressor(
-            objective="reg:squarederror",
-            n_estimators=90,
-            max_depth=3,
-            learning_rate=0.07,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            random_state=42,
-        )
-    if algorithm == "LSTM":
-        return make_pipeline(
-            StandardScaler(),
-            MLPRegressor(
-                hidden_layer_sizes=(32, 16),
-                alpha=0.001,
-                learning_rate_init=0.01,
-                early_stopping=True,
-                max_iter=1000,
-                random_state=42,
-            ),
-        )
-    return RandomForestRegressor(
-        n_estimators=120,
-        max_depth=8,
-        min_samples_leaf=2,
+    if _normalize_algorithm(algorithm) != BEST_ALGORITHM or xgb is None:
+        raise RuntimeError("XGBoost is the only enabled prediction model.")
+
+    return xgb.XGBRegressor(
+        objective="reg:squarederror",
+        n_estimators=45,
+        max_depth=3,
+        learning_rate=0.07,
+        subsample=0.9,
+        colsample_bytree=0.9,
         random_state=42,
     )
 
@@ -1458,107 +1520,133 @@ def _heuristic_prediction(
     }
 
 
-def _ml_prediction(
-    daily: pd.DataFrame,
-    category: str,
-    tomorrow_weekday: int,
-    weather: str,
-    event: str,
+def _shared_ml_predictions(
+    product_contexts: List[Dict],
     algorithm: str,
-    category_daily: pd.DataFrame | None = None,
-    global_daily: pd.DataFrame | None = None,
-    driver_daily: pd.DataFrame | None = None,
-    tomorrow_driver: Dict | None = None,
-) -> Dict:
-    if not _is_model_ready(daily):
-        return {
+    tomorrow_weekday: int,
+    driver_daily: pd.DataFrame | None,
+    tomorrow_driver: Dict | None,
+    global_daily: pd.DataFrame | None,
+) -> Dict[int, Dict]:
+    results = {
+        int(context["product"].id): {
             "prediction": None,
             "y_test": [],
             "y_pred": [],
-            "reason": _build_history_gap_reason(daily),
+            "validation_context": [],
+            "reason": _build_history_gap_reason(context["daily"]),
         }
+        for context in product_contexts
+    }
 
-    model_df = _build_feature_frame(
-        daily,
-        category_daily=category_daily,
-        global_daily=global_daily,
-        driver_daily=driver_daily,
-    )
-    if len(model_df) < 8:
-        return {
-            "prediction": None,
-            "y_test": [],
-            "y_pred": [],
-            "reason": "Not enough clean training rows after feature engineering.",
-        }
+    if xgb is None:
+        for result in results.values():
+            result["reason"] = "XGBoost is not installed, so heuristic forecasting was used."
+        return results
 
-    validation_window = max(3, int(np.ceil(len(model_df) * 0.2)))
-    if len(model_df) - validation_window < 6:
-        return {
-            "prediction": None,
-            "y_test": [],
-            "y_pred": [],
-            "reason": "Time-based split left too little history for training.",
-        }
+    train_parts = []
+    test_parts = []
+    validation_rows = []
+    future_rows = []
+    eligible_contexts = []
 
-    train_df = model_df.iloc[:-validation_window]
-    test_df = model_df.iloc[-validation_window:]
+    for context in product_contexts:
+        product = context["product"]
+        product_id = int(product.id)
+        daily = context["daily"]
+        category = context["category_key"]
+        category_daily = context.get("category_daily")
 
-    model = _build_model(algorithm)
-    try:
-        model.fit(train_df[FORECAST_FEATURE_COLUMNS].values, train_df["quantity"].values)
-        raw_predictions = model.predict(test_df[FORECAST_FEATURE_COLUMNS].values)
-    except Exception:
-        return {
-            "prediction": None,
-            "y_test": [],
-            "y_pred": [],
-            "reason": "Model training failed on the available history.",
-        }
+        if not _is_model_ready(daily):
+            continue
 
-    y_test = [float(value) for value in test_df["quantity"].tolist()]
-    y_pred_model = [max(0.0, float(value)) for value in raw_predictions]
-    y_pred_heuristic = []
-    validation_context = []
-    for _, test_row in test_df.iterrows():
-        history_cutoff = int(test_row["series_index"])
-        past_daily = daily.iloc[:history_cutoff].copy()
-        validation_weather, validation_event, is_school_day = _validation_context_from_row(test_row)
-        heuristic_prediction = _heuristic_prediction(
-            past_daily,
-            category,
-            int(test_row["day_of_week"]),
-            validation_weather,
-            validation_event,
-        )["prediction"]
-        y_pred_heuristic.append(float(heuristic_prediction))
-        validation_context.append(
-            {
-                "date": pd.to_datetime(test_row["date"]).date().isoformat(),
-                "is_school_day": is_school_day,
-            }
+        model_df = _build_feature_frame(
+            daily,
+            category_daily=category_daily,
+            global_daily=global_daily,
+            driver_daily=driver_daily,
         )
+        if len(model_df) < 8:
+            results[product_id]["reason"] = "Not enough clean training rows after feature engineering."
+            continue
 
-    if len(y_test) < 3:
-        return {
-            "prediction": None,
-            "y_test": [],
-            "y_pred": [],
-            "reason": "Backtest window was too small to validate the model.",
-        }
+        validation_window = max(3, int(np.ceil(len(model_df) * 0.2)))
+        if len(model_df) - validation_window < 6:
+            results[product_id]["reason"] = "Time-based split left too little history for training."
+            continue
 
-    evaluation_mask = [context["is_school_day"] for context in validation_context]
+        train_df = model_df.iloc[:-validation_window]
+        test_df = model_df.iloc[-validation_window:]
+        train_parts.append(train_df[[*FORECAST_FEATURE_COLUMNS, "quantity"]])
+        test_parts.append(test_df[FORECAST_FEATURE_COLUMNS])
+
+        for _, test_row in test_df.iterrows():
+            history_cutoff = int(test_row["series_index"])
+            past_daily = daily.iloc[:history_cutoff].copy()
+            validation_weather, validation_event, is_school_day = _validation_context_from_row(test_row)
+            heuristic_prediction = _heuristic_prediction(
+                past_daily,
+                category,
+                int(test_row["day_of_week"]),
+                validation_weather,
+                validation_event,
+            )["prediction"]
+            validation_rows.append(
+                {
+                    "product_id": product_id,
+                    "actual": float(test_row["quantity"]),
+                    "heuristic": float(heuristic_prediction),
+                    "context": {
+                        "date": pd.to_datetime(test_row["date"]).date().isoformat(),
+                        "is_school_day": is_school_day,
+                    },
+                }
+            )
+
+        future_rows.append(
+            _build_future_features(
+                daily,
+                tomorrow_weekday,
+                category_daily=category_daily,
+                global_daily=global_daily,
+                tomorrow_driver=tomorrow_driver,
+            )[0]
+        )
+        eligible_contexts.append({**context, "model_df": model_df})
+
+    if not train_parts or not test_parts or not validation_rows:
+        return results
+
+    try:
+        validation_model = _build_model(algorithm)
+        train_frame = pd.concat(train_parts, ignore_index=True)
+        test_frame = pd.concat(test_parts, ignore_index=True)
+        validation_model.fit(
+            train_frame[FORECAST_FEATURE_COLUMNS].values,
+            train_frame["quantity"].values,
+        )
+        raw_validation_predictions = validation_model.predict(test_frame[FORECAST_FEATURE_COLUMNS].values)
+    except Exception:
+        for context in eligible_contexts:
+            results[int(context["product"].id)]["reason"] = "Shared model training failed on the available history."
+        return results
+
+    y_test = [row["actual"] for row in validation_rows]
+    y_pred_model = [max(0.0, float(value)) for value in raw_validation_predictions]
+    y_pred_heuristic = [row["heuristic"] for row in validation_rows]
+    evaluation_mask = [row["context"]["is_school_day"] for row in validation_rows]
     evaluation_y_test = _filter_validation_values(y_test, evaluation_mask)
     evaluation_y_pred_model = _filter_validation_values(y_pred_model, evaluation_mask)
     evaluation_y_pred_heuristic = _filter_validation_values(y_pred_heuristic, evaluation_mask)
     model_mape = _safe_wape(evaluation_y_test, evaluation_y_pred_model)
     heuristic_mape = _safe_wape(evaluation_y_test, evaluation_y_pred_heuristic)
+    average_history_points = int(np.mean([len(context["model_df"]) for context in eligible_contexts]))
 
     blend_weight = _select_blend_weight(
         y_test,
         y_pred_model,
         y_pred_heuristic,
-        len(model_df),
+        average_history_points,
         model_mape,
         heuristic_mape,
         evaluation_mask=evaluation_mask,
@@ -1568,47 +1656,30 @@ def _ml_prediction(
         for model_value, heuristic_value in zip(y_pred_model, y_pred_heuristic)
     ]
 
-    final_model = _build_model(algorithm)
+    for row, blended_prediction in zip(validation_rows, blended_validation_predictions):
+        result = results[row["product_id"]]
+        result["y_test"].append(float(row["actual"]))
+        result["y_pred"].append(float(blended_prediction))
+        result["validation_context"].append(row["context"])
+
     try:
-        final_model.fit(model_df[FORECAST_FEATURE_COLUMNS].values, model_df["quantity"].values)
-        future_raw_prediction = float(
-            final_model.predict(
-                _build_future_features(
-                    daily,
-                    tomorrow_weekday,
-                    category_daily=category_daily,
-                    global_daily=global_daily,
-                    tomorrow_driver=tomorrow_driver,
-                )
-            )[0]
-        )
+        future_predictions = validation_model.predict(np.vstack(future_rows))
     except Exception:
-        return {
-            "prediction": None,
-            "y_test": [],
-            "y_pred": [],
-            "reason": "Future feature generation failed for tomorrow's forecast.",
-        }
+        for context in eligible_contexts:
+            results[int(context["product"].id)]["reason"] = "Shared future forecast failed for tomorrow's features."
+        return results
 
-    future_heuristic_prediction = _heuristic_prediction(
-        daily,
-        category,
-        tomorrow_weekday,
-        weather,
-        event,
-    )["prediction"]
-    prediction = max(
-        0,
-        round((future_raw_prediction * blend_weight) + (future_heuristic_prediction * (1 - blend_weight))),
-    )
+    for context, future_prediction in zip(eligible_contexts, future_predictions):
+        product_id = int(context["product"].id)
+        future_heuristic_prediction = float(context["heuristic"]["prediction"])
+        prediction = max(
+            0,
+            round((max(0.0, float(future_prediction)) * blend_weight) + (future_heuristic_prediction * (1 - blend_weight))),
+        )
+        results[product_id]["prediction"] = prediction
+        results[product_id]["reason"] = ""
 
-    return {
-        "prediction": prediction,
-        "y_test": list(y_test),
-        "y_pred": [float(value) for value in blended_validation_predictions],
-        "validation_context": validation_context,
-        "reason": "",
-    }
+    return results
 
 
 def _build_recommendation(predicted_quantity: int, stock: int, min_stock: int) -> Dict:
@@ -1683,33 +1754,15 @@ def _build_weekly_sales_trend(
     }
     multiplier = _get_overall_factor(weather, event)
 
-    model_ready = len(daily_revenue) >= 8
-    model = None
-    if model_ready:
-        model = RandomForestRegressor(n_estimators=120, max_depth=6, random_state=42)
-        model_df = daily_revenue.copy()
-        model_df["days_idx"] = range(len(model_df))
-        X_train = model_df[["days_idx", "day_of_week"]].values
-        y_train = model_df["revenue"].values
-        model.fit(X_train, y_train)
-
     trend = []
     for offset, future_day in enumerate(SCHOOL_WEEKDAYS, start=1):
         weekday_baseline = weekday_baselines.get(future_day, overall_baseline)
         recent_weekday_baseline = recent_weekday_baselines.get(future_day, weekday_baseline)
-        heuristic_value = (
+        predicted_value = (
             (weekday_baseline * 0.6)
             + (recent_weekday_baseline * 0.25)
             + (recent_baseline * 0.15)
         ) * multiplier
-
-        if model is not None:
-            ml_value = float(
-                model.predict(np.array([[len(daily_revenue) + offset + 1, future_day]]))[0]
-            )
-            predicted_value = (ml_value * 0.65) + (heuristic_value * 0.35)
-        else:
-            predicted_value = heuristic_value
 
         trend.append(
             {
@@ -2088,18 +2141,44 @@ def _build_insights(predictions: List[Dict], summary: Dict, data_source: str) ->
 
 def predict_tomorrow_sales(
     db: Session,
-    algorithm: str = "XGBoost",
+    algorithm: str = BEST_ALGORITHM,
     weather: str = "clear",
     event: str = "none",
+    allow_stale: bool = True,
 ) -> Dict:
+    algorithm = _normalize_algorithm(algorithm)
     cache_key = _build_prediction_cache_key(db, algorithm, weather, event)
+    request_key = _build_prediction_request_key(algorithm, weather, event)
+    data_signature = _serialize_prediction_signature(cache_key)
+
+    now_utc = datetime.utcnow()
+    with _PREDICTION_CACHE_LOCK:
+        _prune_prediction_cache(now_utc)
+        cached_result = _get_cached_prediction_result(cache_key, now_utc)
+    if cached_result is not None:
+        return _with_cache_metadata(cached_result, "fresh")
+
+    persistent_cache = _load_persistent_prediction_cache(db, request_key)
+    persistent_payload = _decode_persistent_prediction_payload(persistent_cache)
+    if persistent_payload is not None:
+        if persistent_cache.data_signature == data_signature:
+            _store_prediction_result({cache_key}, persistent_payload)
+            return _with_cache_metadata(persistent_payload, "fresh", persistent_cache)
+        if allow_stale:
+            return _with_cache_metadata(
+                persistent_payload,
+                "stale",
+                persistent_cache,
+                refresh_needed=True,
+            )
+
     while True:
         now_utc = datetime.utcnow()
         with _PREDICTION_CACHE_LOCK:
             _prune_prediction_cache(now_utc)
             cached_result = _get_cached_prediction_result(cache_key, now_utc)
             if cached_result is not None:
-                return cached_result
+                return _with_cache_metadata(cached_result, "fresh")
 
             wait_event = _PREDICTION_INFLIGHT.get(cache_key)
             if wait_event is None:
@@ -2115,6 +2194,7 @@ def predict_tomorrow_sales(
         df = _fetch_sales_df(db, days_back=180)
         driver_range = _ensure_driver_history(db, df)
         final_cache_key = _build_prediction_cache_key(db, algorithm, weather, event)
+        final_data_signature = _serialize_prediction_signature(final_cache_key)
         cache_keys.add(final_cache_key)
         if final_cache_key != cache_key:
             with _PREDICTION_CACHE_LOCK:
@@ -2156,7 +2236,8 @@ def predict_tomorrow_sales(
                 "data_source": "heuristic",
             }
             _store_prediction_result(cache_keys, result)
-            return result
+            _store_persistent_prediction_cache(db, request_key, final_data_signature, result)
+            return _with_cache_metadata(result, "fresh")
 
         tomorrow_weekday = tomorrow.weekday()
         series_end_date = df["date"].max() if not df.empty else None
@@ -2165,10 +2246,7 @@ def predict_tomorrow_sales(
         category_daily_lookup = context_lookup["by_category"]
         tomorrow_driver = _build_tomorrow_driver_row(driver_daily, tomorrow, weather, event)
 
-        predictions = []
-        validation_records = []
-        model_backed_predictions = 0
-
+        product_contexts = []
         for product in products:
             product_df = df[df["product_id"] == product.id].copy()
             daily = _build_daily_sales(product_df, series_end_date=series_end_date)
@@ -2194,17 +2272,42 @@ def predict_tomorrow_sales(
                     event,
                 )
 
-            ml_result = _ml_prediction(
-                daily,
-                category_key,
-                tomorrow_weekday,
-                weather,
-                event,
-                algorithm,
-                category_daily=category_daily,
-                global_daily=global_daily,
-                driver_daily=driver_daily,
-                tomorrow_driver=tomorrow_driver,
+            product_contexts.append(
+                {
+                    "product": product,
+                    "daily": daily,
+                    "category_key": category_key,
+                    "category_daily": category_daily,
+                    "heuristic": heuristic,
+                }
+            )
+
+        ml_results = _shared_ml_predictions(
+            product_contexts,
+            algorithm,
+            tomorrow_weekday,
+            driver_daily,
+            tomorrow_driver,
+            global_daily,
+        )
+
+        predictions = []
+        validation_records = []
+        model_backed_predictions = 0
+
+        for context in product_contexts:
+            product = context["product"]
+            daily = context["daily"]
+            heuristic = context["heuristic"]
+            ml_result = ml_results.get(
+                int(product.id),
+                {
+                    "prediction": None,
+                    "y_test": [],
+                    "y_pred": [],
+                    "validation_context": [],
+                    "reason": "Model-ready history is not available for this product.",
+                },
             )
 
             if ml_result["prediction"] is not None:
@@ -2319,7 +2422,8 @@ def predict_tomorrow_sales(
             "data_source": data_source,
         }
         _store_prediction_result(cache_keys, result)
-        return result
+        _store_persistent_prediction_cache(db, request_key, final_data_signature, result)
+        return _with_cache_metadata(result, "fresh")
     finally:
         with _PREDICTION_CACHE_LOCK:
             signaled_events = []
@@ -2330,7 +2434,29 @@ def predict_tomorrow_sales(
                     inflight_event.set()
 
 
-CLI_ALGORITHMS = ("XGBoost", "Random Forest", "LSTM")
+def refresh_prediction_cache(algorithm: str = BEST_ALGORITHM, weather: str = "clear", event: str = "none") -> None:
+    try:
+        try:
+            from backend.database import SessionLocal
+        except ImportError:
+            from .database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            predict_tomorrow_sales(
+                db,
+                algorithm=algorithm,
+                weather=weather,
+                event=event,
+                allow_stale=False,
+            )
+        finally:
+            db.close()
+    finally:
+        _finish_prediction_cache_refresh(algorithm, weather, event)
+
+
+CLI_ALGORITHMS = SUPPORTED_ALGORITHMS
 ZERO_CLI_METRICS = {
     "accuracy": "0.00%",
     "error_rate": "0.00%",

@@ -107,3 +107,14 @@ class SchoolEventHistory(Base):
     source        = Column(String, nullable=False, default="bootstrap")
     created_at    = Column(DateTime, default=utc_now_naive)
     updated_at    = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class PredictionCache(Base):
+    __tablename__ = "prediction_cache"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    request_key    = Column(String, unique=True, index=True, nullable=False)
+    data_signature = Column(Text, nullable=False)
+    payload        = Column(Text, nullable=False)
+    created_at     = Column(DateTime, default=utc_now_naive)
+    updated_at     = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
