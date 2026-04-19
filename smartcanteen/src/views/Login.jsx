@@ -189,8 +189,6 @@ export default function Login({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lockoutNow, setLockoutNow] = useState(() => Date.now());
-  const [passkeySetupPrompt, setPasskeySetupPrompt] = useState(null);
-  const [passkeySetupLoading, setPasskeySetupLoading] = useState(false);
 
   const loginIdentifier = normalizeLoginIdentifier(username);
   const lockoutState = getLoginLockoutState(loginIdentifier, lockoutNow);
@@ -235,13 +233,6 @@ export default function Login({ onLogin }) {
       if (res.offline) {
         window.showToast?.('Signed in with offline access saved on this device.', 'warning');
       }
-      if (res.passkey_enrollment_available && !res.offline && API.isPasskeySupported()) {
-        setPasskeySetupPrompt({
-          name: res.user?.full_name || res.user?.username || submittedUsername.trim(),
-        });
-        setPassword('');
-        return;
-      }
       onLogin();
     } catch (err) {
       setUsername(submittedUsername);
@@ -272,28 +263,7 @@ export default function Login({ onLogin }) {
   const handleUsernameChange = (event) => {
     setUsername(event.target.value);
     setError('');
-    setPasskeySetupPrompt(null);
     setLockoutNow(Date.now());
-  };
-
-  const handlePasskeySetup = async () => {
-    setPasskeySetupLoading(true);
-    setError('');
-
-    try {
-      await API.registerCurrentDevicePasskey('SmartCanteen passkey');
-      window.showToast?.('Passkey MFA is enabled for this account.', 'success');
-      onLogin();
-    } catch (err) {
-      setError(err.message || 'Passkey setup failed. You can continue and try again later.');
-    } finally {
-      setPasskeySetupLoading(false);
-    }
-  };
-
-  const handleContinueWithoutPasskey = () => {
-    setPasskeySetupPrompt(null);
-    onLogin();
   };
 
   return (
@@ -490,44 +460,6 @@ export default function Login({ onLogin }) {
                 )}
               </div>
 
-              {passkeySetupPrompt ? (
-                <div className="mt-4 space-y-3 rounded-[18px] border border-emerald-400/25 bg-emerald-400/10 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-2xl bg-emerald-400/15 p-2 text-emerald-200">
-                      <FingerPrintIcon className="h-6 w-6" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-black text-emerald-100">Add passkey MFA</div>
-                      <div className="mt-1 text-xs leading-5 text-emerald-50/80">
-                        Secure {passkeySetupPrompt.name} with a Chrome passkey or Apple Passwords passkey.
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handlePasskeySetup}
-                    disabled={passkeySetupLoading}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-4 py-3.5 text-sm font-black text-emerald-950 shadow-[0_14px_34px_rgba(52,211,153,0.28)] transition hover:-translate-y-0.5 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
-                  >
-                    {passkeySetupLoading ? (
-                      <span className="flex items-center gap-2">
-                        <span className="h-4 w-4 rounded-full border-2 border-emerald-950/30 border-t-emerald-950 animate-spin" />
-                        Opening passkey...
-                      </span>
-                    ) : (
-                      'Set Up Passkey'
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleContinueWithoutPasskey}
-                    disabled={passkeySetupLoading}
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-black text-slate-300 transition hover:border-slate-500 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Continue Without Passkey
-                  </button>
-                </div>
-              ) : (
               <form onSubmit={handleSubmit} className="mt-4 space-y-4 sm:space-y-3.5">
                 <label className="block">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
@@ -586,7 +518,7 @@ export default function Login({ onLogin }) {
                 <div className="hidden items-start gap-2 rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2.5 sm:flex [@media(max-height:650px)]:hidden">
                   <FingerPrintIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
                   <div className="text-xs leading-5 text-slate-400">
-                    <span className="font-black text-slate-100">Passkey MFA:</span> Chrome passkeys and Apple Passwords work after setup.
+                    <span className="font-black text-slate-100">Passkey MFA required:</span> Chrome passkeys and Apple Passwords are supported.
                   </div>
                 </div>
 
@@ -607,7 +539,6 @@ export default function Login({ onLogin }) {
                   )}
                 </button>
               </form>
-              )}
 
               <div className="mt-4 hidden gap-2 md:grid md:grid-cols-3 [@media(max-height:780px)]:hidden">
                 {accessDetails.map((item) => (

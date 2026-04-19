@@ -514,6 +514,40 @@ def _enum_value(value):
     return getattr(value, "value", value)
 
 
+def _is_ip_hostname(hostname: str) -> bool:
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_passkey_origin(origin: str):
+    parsed = urlparse(origin)
+    hostname = (parsed.hostname or "").rstrip(".").lower()
+
+    if not parsed.scheme or not hostname:
+        raise HTTPException(status_code=400, detail="Unable to determine passkey origin")
+
+    if hostname == "localhost":
+        return
+
+    if _is_ip_hostname(hostname):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Passkeys require a real HTTPS domain or localhost. "
+                "Open SmartCanteen from https://smartcanteen.duckdns.org instead of an IP address."
+            ),
+        )
+
+    if parsed.scheme != "https":
+        raise HTTPException(
+            status_code=400,
+            detail="Passkeys require HTTPS in production or http://localhost for local development.",
+        )
+
+
 def _request_origin(req: Request) -> str:
     configured_origin = os.environ.get("SMARTCANTEEN_PASSKEY_ORIGIN")
     if configured_origin:
@@ -540,18 +574,27 @@ def _request_origin(req: Request) -> str:
 
 def _rp_id_from_origin(origin: str) -> str:
     configured_rp_id = os.environ.get("SMARTCANTEEN_PASSKEY_RP_ID")
-    if configured_rp_id:
-        return configured_rp_id.strip().lower()
-
     hostname = urlparse(origin).hostname
     if not hostname:
         raise HTTPException(status_code=400, detail="Unable to determine passkey RP ID")
 
-    return hostname.rstrip(".").lower()
+    hostname = hostname.rstrip(".").lower()
+
+    if configured_rp_id:
+        rp_id = configured_rp_id.strip().rstrip(".").lower()
+        if hostname != rp_id and not hostname.endswith(f".{rp_id}"):
+            raise HTTPException(
+                status_code=400,
+                detail="Passkey RP ID does not match the page domain.",
+            )
+        return rp_id
+
+    return hostname
 
 
 def _webauthn_context(req: Request) -> tuple[str, str]:
     origin = _request_origin(req)
+    _validate_passkey_origin(origin)
     return origin, _rp_id_from_origin(origin)
 
 
@@ -655,6 +698,50 @@ def _build_login_success(db: Session, user: models.User):
     }
 
 
+def _registration_options_for_user(db: Session, req: Request, user: models.User):
+    origin, rp_id = _webauthn_context(req)
+    options = generate_registration_options(
+        rp_id=rp_id,
+        rp_name=PASSKEY_RP_NAME,
+        user_id=str(user.id).encode("utf-8"),
+        user_name=user.username,
+        user_display_name=user.full_name or user.username,
+        exclude_credentials=_credential_descriptors(_active_passkeys(db, user.id)),
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    return origin, rp_id, options
+
+
+def _begin_passkey_login_registration(db: Session, req: Request, user: models.User):
+    origin, rp_id, options = _registration_options_for_user(db, req, user)
+    mfa_token, token_id = auth.create_mfa_token(user.username, purpose="passkey_registration")
+    challenge = _store_webauthn_challenge(
+        db,
+        user_id=user.id,
+        purpose="login_registration",
+        challenge=options.challenge,
+        rp_id=rp_id,
+        origin=origin,
+        token_id=token_id,
+    )
+
+    return {
+        "passkey_registration_required": True,
+        "mfa_type": "passkey_registration",
+        "mfa_token": mfa_token,
+        "passkey_options": options_to_json_dict(options),
+        "passkey_challenge_id": challenge.id,
+        "user": {
+            "username": user.username,
+            "full_name": user.full_name,
+            "passkey_mfa_enabled": False,
+        },
+    }
+
+
 def _begin_passkey_authentication(
     db: Session,
     req: Request,
@@ -720,17 +807,15 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         db.commit()
         return response
 
+    response = _begin_passkey_login_registration(db, req, user)
     _add_audit_log(
         db,
         user_id=user.id,
-        action="LOGIN",
-        details="Successful login",
+        action="LOGIN_PASSKEY_REGISTRATION_REQUIRED",
+        details="Password accepted; passkey setup required before login",
         request=req,
     )
     db.commit()
-
-    response = _build_login_success(db, user)
-    response["passkey_enrollment_available"] = True
     return response
 
 
@@ -741,19 +826,7 @@ def passkey_registration_options(
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.get_current_user),
 ):
-    origin, rp_id = _webauthn_context(req)
-    options = generate_registration_options(
-        rp_id=rp_id,
-        rp_name=PASSKEY_RP_NAME,
-        user_id=str(current.id).encode("utf-8"),
-        user_name=current.username,
-        user_display_name=current.full_name or current.username,
-        exclude_credentials=_credential_descriptors(_active_passkeys(db, current.id)),
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.REQUIRED,
-        ),
-    )
+    origin, rp_id, options = _registration_options_for_user(db, req, current)
     challenge = _store_webauthn_challenge(
         db,
         user_id=current.id,
@@ -841,6 +914,88 @@ def passkey_registration_verify(
         "message": "Passkey MFA enabled",
         "user": _user_payload(db, current),
     }
+
+
+@app.post("/auth/passkey/login-register/verify", include_in_schema=False)
+@app.post("/api/auth/passkey/login-register/verify", tags=["Auth"])
+def passkey_login_registration_verify(
+    data: schemas.PasskeyLoginRegistrationFinishRequest,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    token_payload = auth.decode_mfa_token(data.mfa_token, purpose="passkey_registration")
+    user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+    challenge = _get_webauthn_challenge(
+        db,
+        challenge_id=data.challenge_id,
+        user_id=user.id,
+        purpose="login_registration",
+        token_id=token_payload["jti"],
+    )
+
+    try:
+        verified = verify_registration_response(
+            credential=data.credential,
+            expected_challenge=base64url_to_bytes(challenge.challenge),
+            expected_rp_id=challenge.rp_id,
+            expected_origin=challenge.origin,
+            require_user_verification=True,
+        )
+    except WebAuthnException as exc:
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="PASSKEY_REGISTER_FAILED",
+            details=str(exc),
+            request=req,
+        )
+        challenge.consumed_at = datetime.utcnow()
+        db.commit()
+        raise HTTPException(status_code=400, detail="Passkey setup failed. Login was not completed.") from exc
+
+    credential_id = bytes_to_base64url(verified.credential_id)
+    existing = (
+        db.query(models.UserPasskey)
+        .filter(models.UserPasskey.credential_id == credential_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="This passkey is already registered")
+
+    transports = data.credential.get("response", {}).get("transports")
+    passkey = models.UserPasskey(
+        user_id=user.id,
+        credential_id=credential_id,
+        public_key=bytes_to_base64url(verified.credential_public_key),
+        sign_count=verified.sign_count,
+        name=(data.name or "SmartCanteen passkey").strip()[:80],
+        aaguid=verified.aaguid,
+        transports=json.dumps(transports) if isinstance(transports, list) else None,
+        device_type=_enum_value(verified.credential_device_type),
+        backed_up=bool(verified.credential_backed_up),
+    )
+    db.add(passkey)
+    challenge.consumed_at = datetime.utcnow()
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="PASSKEY_REGISTERED",
+        details=f"Passkey added during login: {passkey.name}",
+        request=req,
+    )
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="LOGIN",
+        details="Successful login after passkey setup",
+        request=req,
+    )
+    db.commit()
+
+    return _build_login_success(db, user)
 
 
 @app.post("/auth/passkey/authenticate/verify", include_in_schema=False)
@@ -964,6 +1119,96 @@ def me(
 # ═══════════════════════════════════════════════════════════════════════════════
 # PRODUCTS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+ALERT_STATE_TYPES = {"low_stock", "high_demand"}
+ALERT_STATES = {"read", "dismissed"}
+
+
+def _normalize_alert_signature(value) -> str:
+    return str(value or "").strip()[:240]
+
+
+def _empty_alert_state_payload():
+    return {
+        "read": {"low_stock": [], "high_demand": []},
+        "dismissed": {"low_stock": [], "high_demand": []},
+    }
+
+
+@app.get("/api/alert-state", tags=["Alerts"])
+def get_alert_state(
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    payload = _empty_alert_state_payload()
+    rows = (
+        db.query(models.UserAlertState)
+        .filter(models.UserAlertState.user_id == current.id)
+        .all()
+    )
+
+    for row in rows:
+        if row.alert_type in ALERT_STATE_TYPES and row.state in ALERT_STATES:
+            payload[row.state][row.alert_type].append(row.signature)
+
+    return payload
+
+
+@app.post("/api/alert-state", tags=["Alerts"])
+def update_alert_state(
+    data: schemas.AlertStateUpdateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    alert_type = str(data.alert_type or "").strip()
+    state = str(data.state or "").strip()
+
+    if alert_type not in ALERT_STATE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid alert_type")
+    if state not in ALERT_STATES:
+        raise HTTPException(status_code=400, detail="Invalid alert state")
+
+    signatures = [
+        signature
+        for signature in (_normalize_alert_signature(value) for value in data.signatures)
+        if signature
+    ]
+    if not signatures:
+        return get_alert_state(db, current)
+
+    for signature in sorted(set(signatures)):
+        row = (
+            db.query(models.UserAlertState)
+            .filter(
+                models.UserAlertState.user_id == current.id,
+                models.UserAlertState.alert_type == alert_type,
+                models.UserAlertState.signature == signature,
+                models.UserAlertState.state == state,
+            )
+            .first()
+        )
+        if row:
+            row.updated_at = datetime.utcnow()
+            continue
+
+        db.add(models.UserAlertState(
+            user_id=current.id,
+            alert_type=alert_type,
+            signature=signature,
+            state=state,
+        ))
+
+    db.commit()
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "alert-state-updated",
+        alert_type=alert_type,
+        state=state,
+        user_id=current.id,
+    )
+    return get_alert_state(db, current)
+
 
 @app.get("/api/products", response_model=List[schemas.ProductResponse], tags=["Products"])
 def list_products(

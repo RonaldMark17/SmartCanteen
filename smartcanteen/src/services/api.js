@@ -29,14 +29,64 @@ function isAbsoluteUrl(value) {
   return /^https?:\/\//i.test(String(value || ''));
 }
 
-function isPasskeySupported() {
+function isIpHostname(hostname) {
+  const value = String(hostname || '').trim().toLowerCase();
   return (
-    typeof window !== 'undefined' &&
-    window.isSecureContext &&
-    typeof window.PublicKeyCredential !== 'undefined' &&
-    typeof navigator !== 'undefined' &&
-    Boolean(navigator.credentials)
+    /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) ||
+    value.includes(':')
   );
+}
+
+function getPasskeySupportStatus() {
+  if (typeof window === 'undefined') {
+    return { supported: false, reason: 'Passkeys require a browser window.' };
+  }
+
+  const hostname = String(window.location?.hostname || '').toLowerCase();
+  const protocol = window.location?.protocol;
+  const isLocalhost = hostname === 'localhost';
+
+  if (Capacitor.isNativePlatform() || protocol === 'capacitor:') {
+    return {
+      supported: false,
+      reason: 'Passkey MFA must be set up from Chrome, Edge, or Safari on the web app.',
+    };
+  }
+
+  if (isIpHostname(hostname)) {
+    return {
+      supported: false,
+      reason:
+        'Passkeys do not work from IP addresses. Open SmartCanteen from https://smartcanteen.duckdns.org or http://localhost:5173.',
+    };
+  }
+
+  if (!isLocalhost && protocol !== 'https:') {
+    return {
+      supported: false,
+      reason: 'Passkeys require HTTPS in production or http://localhost:5173 for local development.',
+    };
+  }
+
+  if (!window.isSecureContext) {
+    return {
+      supported: false,
+      reason: 'Passkeys require a secure browser context: HTTPS or localhost.',
+    };
+  }
+
+  if (typeof window.PublicKeyCredential === 'undefined' || typeof navigator === 'undefined' || !navigator.credentials) {
+    return {
+      supported: false,
+      reason: 'This browser does not support passkeys.',
+    };
+  }
+
+  return { supported: true, reason: '' };
+}
+
+function isPasskeySupported() {
+  return getPasskeySupportStatus().supported;
 }
 
 function normalizeBase64Url(value) {
@@ -82,7 +132,10 @@ function passkeyOperationError(error) {
   }
 
   if (name === 'SecurityError') {
-    return new Error('Passkeys require HTTPS or localhost, and the page domain must match the server.');
+    return new Error(
+      getPasskeySupportStatus().reason ||
+        'Passkeys require HTTPS or localhost, and the page domain must match the server.'
+    );
   }
 
   return new Error(error?.message || 'Passkey verification failed.');
@@ -155,8 +208,9 @@ function serializePublicKeyCredential(credential) {
 }
 
 async function createPasskeyCredential(options) {
-  if (!isPasskeySupported()) {
-    throw new Error('Passkeys require Chrome, Edge, or Safari on HTTPS or localhost.');
+  const support = getPasskeySupportStatus();
+  if (!support.supported) {
+    throw new Error(support.reason);
   }
 
   try {
@@ -175,8 +229,9 @@ async function createPasskeyCredential(options) {
 }
 
 async function getPasskeyCredential(options) {
-  if (!isPasskeySupported()) {
-    throw new Error('Passkeys require Chrome, Edge, or Safari on HTTPS or localhost.');
+  const support = getPasskeySupportStatus();
+  if (!support.supported) {
+    throw new Error(support.reason);
   }
 
   try {
@@ -376,6 +431,7 @@ function isCacheableRequest(method, path) {
   return (
     String(method || '').toUpperCase() === 'GET' &&
     !String(path || '').startsWith('/auth/') &&
+    !String(path || '').startsWith('/alert-state') &&
     String(path || '') !== '/health'
   );
 }
@@ -384,7 +440,8 @@ function isLoginFlowPath(path) {
   const normalizedPath = String(path || '');
   return (
     normalizedPath.startsWith('/auth/login') ||
-    normalizedPath.startsWith('/auth/passkey/authenticate/')
+    normalizedPath.startsWith('/auth/passkey/authenticate/') ||
+    normalizedPath.startsWith('/auth/passkey/login-register/')
   );
 }
 
@@ -723,7 +780,16 @@ async function login(username, password) {
   try {
     let response = await request('POST', '/auth/login', { username, password });
 
-    if (response?.mfa_required && response?.mfa_type === 'passkey') {
+    if (response?.passkey_registration_required && response?.mfa_type === 'passkey_registration') {
+      mfaStarted = true;
+      const credential = await createPasskeyCredential(response.passkey_options);
+      response = await request('POST', '/auth/passkey/login-register/verify', {
+        mfa_token: response.mfa_token,
+        challenge_id: response.passkey_challenge_id,
+        credential,
+        name: 'SmartCanteen passkey',
+      });
+    } else if (response?.mfa_required && response?.mfa_type === 'passkey') {
       mfaStarted = true;
       const credential = await getPasskeyCredential(response.passkey_options);
       response = await request('POST', '/auth/passkey/authenticate/verify', {
@@ -744,7 +810,7 @@ async function login(username, password) {
     const offlineUser = await getOfflineLoginProfile(username, password);
     if (!offlineUser) {
       throw new Error(
-        'Offline login works only after one successful online login on this device.'
+        'Passkey MFA requires an online connection. Connect to set up or verify your passkey.'
       );
     }
 
@@ -752,13 +818,7 @@ async function login(username, password) {
       throw new Error('Passkey MFA requires an online connection for this account.');
     }
 
-    localStorage.setItem(OFFLINE_SESSION_STORAGE_KEY, '1');
-    return {
-      access_token: `offline-session:${offlineUser.username}`,
-      token_type: 'offline',
-      user: offlineUser,
-      offline: true,
-    };
+    throw new Error('Passkey MFA is required. Connect online to set up your passkey before logging in.');
   }
 }
 
@@ -783,6 +843,7 @@ export const API = {
   login,
   registerCurrentDevicePasskey,
   isPasskeySupported,
+  getPasskeySupportStatus,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
 
@@ -822,6 +883,9 @@ export const API = {
       })}`
     ),
   getRestockAlerts: () => request('GET', '/predictions/restock-alerts'),
+  getAlertState: () => request('GET', '/alert-state'),
+  updateAlertState: ({ alert_type, state, signatures }) =>
+    request('POST', '/alert-state', { alert_type, state, signatures }),
 
   getAuditLogs: () => request('GET', '/audit-logs'),
   seed: () => request('POST', '/seed'),

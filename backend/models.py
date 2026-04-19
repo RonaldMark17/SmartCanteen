@@ -22,6 +22,8 @@ class User(Base):
     audit_logs   = relationship("AuditLog",   back_populates="user")
     passkeys     = relationship("UserPasskey", back_populates="user",
                                 cascade="all, delete-orphan")
+    alert_states = relationship("UserAlertState", back_populates="user",
+                                cascade="all, delete-orphan")
 
 
 class UserPasskey(Base):
@@ -58,6 +60,20 @@ class WebAuthnChallenge(Base):
     expires_at  = Column(DateTime, nullable=False)
     consumed_at = Column(DateTime, nullable=True)
     created_at  = Column(DateTime, default=utc_now_naive)
+
+
+class UserAlertState(Base):
+    __tablename__ = "user_alert_states"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    alert_type = Column(String, nullable=False, index=True)
+    signature  = Column(String, nullable=False, index=True)
+    state      = Column(String, nullable=False, index=True)  # read | dismissed
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    user = relationship("User", back_populates="alert_states")
 
 
 class Product(Base):

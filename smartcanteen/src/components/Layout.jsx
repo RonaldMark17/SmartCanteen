@@ -47,6 +47,8 @@ const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
 const DARK_MODE_STORAGE_KEY = 'sc_dark_mode';
 const LOW_STOCK_POLL_MS = 60000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
+const LOW_STOCK_ALERT_TYPE = 'low_stock';
+const HIGH_DEMAND_ALERT_TYPE = 'high_demand';
 
 function getStoredUser() {
   try {
@@ -144,6 +146,48 @@ function readDismissedAlertSignatures(storageKey) {
 
 function saveDismissedAlertSignatures(storageKey, signatures) {
   localStorage.setItem(storageKey, JSON.stringify([...signatures]));
+}
+
+function mergeStoredAlertSignatures(storageKey, signatures) {
+  const storedSignatures = readDismissedAlertSignatures(storageKey);
+  let changed = false;
+
+  (signatures || []).forEach((signature) => {
+    const normalizedSignature = `${signature || ''}`.trim();
+    if (normalizedSignature && !storedSignatures.has(normalizedSignature)) {
+      storedSignatures.add(normalizedSignature);
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    saveDismissedAlertSignatures(storageKey, storedSignatures);
+  }
+
+  return storedSignatures;
+}
+
+function getServerAlertStateSignatures(alertState, state, alertType) {
+  const signatures = alertState?.[state]?.[alertType];
+  return Array.isArray(signatures) ? signatures.map((signature) => `${signature || ''}`.trim()).filter(Boolean) : [];
+}
+
+function persistAlertStateToServer(alertType, state, signatures) {
+  const normalizedSignatures = (signatures || [])
+    .map((signature) => `${signature || ''}`.trim())
+    .filter(Boolean);
+
+  if (!navigator.onLine || normalizedSignatures.length === 0) {
+    return;
+  }
+
+  API.updateAlertState({
+    alert_type: alertType,
+    state,
+    signatures: normalizedSignatures,
+  }).catch(() => {
+    // Local storage remains the offline fallback; the next online refresh will retry.
+  });
 }
 
 function pruneStoredAlertSignatures(storageKey, activeSignatures) {
@@ -548,6 +592,61 @@ export default function Layout({ children, onLogout }) {
     }
   }, []);
 
+  const syncAlertStateWithServer = useCallback(async () => {
+    if (!navigator.onLine) {
+      return;
+    }
+
+    try {
+      const serverState = await API.getAlertState();
+      const syncTargets = [
+        {
+          alertType: LOW_STOCK_ALERT_TYPE,
+          state: 'read',
+          storageKey: READ_LOW_STOCK_ALERTS_KEY,
+        },
+        {
+          alertType: HIGH_DEMAND_ALERT_TYPE,
+          state: 'read',
+          storageKey: READ_HIGH_DEMAND_ALERTS_KEY,
+        },
+        {
+          alertType: LOW_STOCK_ALERT_TYPE,
+          state: 'dismissed',
+          storageKey: DISMISSED_LOW_STOCK_ALERTS_KEY,
+        },
+        {
+          alertType: HIGH_DEMAND_ALERT_TYPE,
+          state: 'dismissed',
+          storageKey: DISMISSED_HIGH_DEMAND_ALERTS_KEY,
+        },
+      ];
+
+      await Promise.allSettled(
+        syncTargets.map(async ({ alertType, state, storageKey }) => {
+          const localSignatures = readDismissedAlertSignatures(storageKey);
+          const serverSignatures = getServerAlertStateSignatures(serverState, state, alertType);
+          const serverSignatureSet = new Set(serverSignatures);
+          const missingServerSignatures = [...localSignatures].filter(
+            (signature) => !serverSignatureSet.has(signature)
+          );
+
+          mergeStoredAlertSignatures(storageKey, serverSignatures);
+
+          if (missingServerSignatures.length > 0) {
+            await API.updateAlertState({
+              alert_type: alertType,
+              state,
+              signatures: missingServerSignatures,
+            });
+          }
+        })
+      );
+    } catch {
+      // Alert state still works from the local cache while offline or during transient API failures.
+    }
+  }, []);
+
   const loadAlertData = useCallback(async function runAlertDataLoad({ notifyOnChange = true } = {}) {
     if (alertsRequestInFlightRef.current) {
       queuedAlertRefreshRef.current = {
@@ -560,6 +659,7 @@ export default function Layout({ children, onLogout }) {
     setAlertsLoading(true);
 
     try {
+      await syncAlertStateWithServer();
       const [lowStockResult, highDemandResult] = await Promise.all([
         loadLowStockAlerts({ notifyOnChange }),
         loadHighDemandAlerts({ notifyOnChange }),
@@ -589,7 +689,7 @@ export default function Layout({ children, onLogout }) {
         window.setTimeout(() => runAlertDataLoad(queuedRefresh), 0);
       }
     }
-  }, [loadHighDemandAlerts, loadLowStockAlerts]);
+  }, [loadHighDemandAlerts, loadLowStockAlerts, syncAlertStateWithServer]);
 
   const refreshOfflineData = useCallback(async ({ showSyncToast = false } = {}) => {
     setPendingSyncCount(countOfflineTransactions());
@@ -714,13 +814,17 @@ export default function Layout({ children, onLogout }) {
   }
 
   function markLowStockNotificationsRead() {
+    const signatures = lowStockItems.map((item) => buildLowStockAlertKey(item));
     markAlertItemsRead(READ_LOW_STOCK_ALERTS_KEY, lowStockItems, buildLowStockAlertKey);
+    persistAlertStateToServer(LOW_STOCK_ALERT_TYPE, 'read', signatures);
     persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, '');
     updateUnreadAlertStatus(lowStockItems, highDemandItems);
   }
 
   function markHighDemandRemindersRead() {
+    const signatures = highDemandItems.map((item) => buildHighDemandAlertKey(item));
     markAlertItemsRead(READ_HIGH_DEMAND_ALERTS_KEY, highDemandItems, buildHighDemandAlertKey);
+    persistAlertStateToServer(HIGH_DEMAND_ALERT_TYPE, 'read', signatures);
     persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, '');
     updateUnreadAlertStatus(lowStockItems, highDemandItems);
   }
@@ -731,6 +835,8 @@ export default function Layout({ children, onLogout }) {
     dismissed.add(signature);
     saveDismissedAlertSignatures(DISMISSED_LOW_STOCK_ALERTS_KEY, dismissed);
     markAlertItemsRead(READ_LOW_STOCK_ALERTS_KEY, [item], buildLowStockAlertKey);
+    persistAlertStateToServer(LOW_STOCK_ALERT_TYPE, 'dismissed', [signature]);
+    persistAlertStateToServer(LOW_STOCK_ALERT_TYPE, 'read', [signature]);
 
     const remainingLowStockItems = lowStockItems.filter(
       (entry) => buildLowStockAlertKey(entry) !== signature
@@ -752,6 +858,8 @@ export default function Layout({ children, onLogout }) {
     dismissed.add(signature);
     saveDismissedAlertSignatures(DISMISSED_HIGH_DEMAND_ALERTS_KEY, dismissed);
     markAlertItemsRead(READ_HIGH_DEMAND_ALERTS_KEY, [item], buildHighDemandAlertKey);
+    persistAlertStateToServer(HIGH_DEMAND_ALERT_TYPE, 'dismissed', [signature]);
+    persistAlertStateToServer(HIGH_DEMAND_ALERT_TYPE, 'read', [signature]);
 
     const remainingHighDemandItems = highDemandItems.filter(
       (entry) => buildHighDemandAlertKey(entry) !== signature

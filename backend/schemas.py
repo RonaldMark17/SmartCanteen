@@ -16,6 +16,13 @@ class PasskeyRegistrationFinishRequest(BaseModel):
     name: Optional[str] = None
 
 
+class PasskeyLoginRegistrationFinishRequest(BaseModel):
+    mfa_token: str
+    challenge_id: int
+    credential: dict[str, Any]
+    name: Optional[str] = None
+
+
 class PasskeyAuthenticationFinishRequest(BaseModel):
     mfa_token: str
     challenge_id: int
@@ -108,3 +115,11 @@ class TransactionResponse(BaseModel):
 
 class OfflineSyncRequest(BaseModel):
     transactions: List[dict]
+
+
+# Alert notification state
+
+class AlertStateUpdateRequest(BaseModel):
+    alert_type: str
+    state: str
+    signatures: List[str]
