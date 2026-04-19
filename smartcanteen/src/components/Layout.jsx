@@ -46,6 +46,7 @@ const READ_HIGH_DEMAND_ALERTS_KEY = 'sc_read_high_demand_alerts';
 const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
 const DARK_MODE_STORAGE_KEY = 'sc_dark_mode';
 const LOW_STOCK_POLL_MS = 60000;
+const ALERT_STATE_POLL_MS = 5000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
 const LOW_STOCK_ALERT_TYPE = 'low_stock';
 const HIGH_DEMAND_ALERT_TYPE = 'high_demand';
@@ -164,7 +165,7 @@ function mergeStoredAlertSignatures(storageKey, signatures) {
     saveDismissedAlertSignatures(storageKey, storedSignatures);
   }
 
-  return storedSignatures;
+  return changed;
 }
 
 function getServerAlertStateSignatures(alertState, state, alertType) {
@@ -594,11 +595,12 @@ export default function Layout({ children, onLogout }) {
 
   const syncAlertStateWithServer = useCallback(async () => {
     if (!navigator.onLine) {
-      return;
+      return false;
     }
 
     try {
       const serverState = await API.getAlertState();
+      let localStateChanged = false;
       const syncTargets = [
         {
           alertType: LOW_STOCK_ALERT_TYPE,
@@ -631,7 +633,8 @@ export default function Layout({ children, onLogout }) {
             (signature) => !serverSignatureSet.has(signature)
           );
 
-          mergeStoredAlertSignatures(storageKey, serverSignatures);
+          localStateChanged =
+            mergeStoredAlertSignatures(storageKey, serverSignatures) || localStateChanged;
 
           if (missingServerSignatures.length > 0) {
             await API.updateAlertState({
@@ -642,8 +645,41 @@ export default function Layout({ children, onLogout }) {
           }
         })
       );
+
+      if (localStateChanged) {
+        const nextLowStockItems = filterDismissedAlerts(
+          lowStockItemsRef.current,
+          DISMISSED_LOW_STOCK_ALERTS_KEY,
+          buildLowStockAlertKey
+        );
+        const nextHighDemandItems = filterDismissedAlerts(
+          highDemandItemsRef.current,
+          DISMISSED_HIGH_DEMAND_ALERTS_KEY,
+          buildHighDemandAlertKey
+        );
+        const unreadLowStockItems = filterUnreadAlerts(
+          nextLowStockItems,
+          READ_LOW_STOCK_ALERTS_KEY,
+          buildLowStockAlertKey
+        );
+        const unreadHighDemandItems = filterUnreadAlerts(
+          nextHighDemandItems,
+          READ_HIGH_DEMAND_ALERTS_KEY,
+          buildHighDemandAlertKey
+        );
+
+        setLowStockItems(nextLowStockItems);
+        lowStockItemsRef.current = nextLowStockItems;
+        setHighDemandItems(nextHighDemandItems);
+        highDemandItemsRef.current = nextHighDemandItems;
+        setHasUnreadAlerts(unreadLowStockItems.length + unreadHighDemandItems.length > 0);
+        setAlertReadVersion((currentVersion) => currentVersion + 1);
+      }
+
+      return localStateChanged;
     } catch {
       // Alert state still works from the local cache while offline or during transient API failures.
+      return false;
     }
   }, []);
 
@@ -948,17 +984,23 @@ export default function Layout({ children, onLogout }) {
         loadAlertData();
       }
     }, LOW_STOCK_POLL_MS);
+    const alertStateIntervalId = window.setInterval(() => {
+      if (navigator.onLine) {
+        syncAlertStateWithServer();
+      }
+    }, ALERT_STATE_POLL_MS);
 
     return () => {
       active = false;
       window.clearInterval(intervalId);
+      window.clearInterval(alertStateIntervalId);
       window.removeEventListener('online', handleStatus);
       window.removeEventListener('offline', handleStatus);
       window.removeEventListener(OFFLINE_QUEUE_EVENT, handleOfflineQueueChange);
       window.removeEventListener(ALERT_REFRESH_EVENT, handleAlertRefreshRequest);
       disconnectRealtimeAlerts();
     };
-  }, [loadAlertData, refreshOfflineData]);
+  }, [loadAlertData, refreshOfflineData, syncAlertStateWithServer]);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');
