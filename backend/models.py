@@ -20,6 +20,44 @@ class User(Base):
 
     transactions = relationship("Transaction", back_populates="user")
     audit_logs   = relationship("AuditLog",   back_populates="user")
+    passkeys     = relationship("UserPasskey", back_populates="user",
+                                cascade="all, delete-orphan")
+
+
+class UserPasskey(Base):
+    __tablename__ = "user_passkeys"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    user_id         = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    credential_id   = Column(String, unique=True, index=True, nullable=False)
+    public_key      = Column(Text, nullable=False)
+    sign_count      = Column(Integer, default=0)
+    name            = Column(String, nullable=True)
+    aaguid          = Column(String, nullable=True)
+    transports      = Column(Text, nullable=True)
+    device_type     = Column(String, nullable=True)
+    backed_up       = Column(Boolean, default=False)
+    is_active       = Column(Boolean, default=True)
+    created_at      = Column(DateTime, default=utc_now_naive)
+    updated_at      = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    last_used_at    = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="passkeys")
+
+
+class WebAuthnChallenge(Base):
+    __tablename__ = "webauthn_challenges"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    purpose     = Column(String, nullable=False, index=True)
+    challenge   = Column(String, nullable=False, index=True)
+    token_id    = Column(String, nullable=True, index=True)
+    rp_id       = Column(String, nullable=False)
+    origin      = Column(String, nullable=False)
+    expires_at  = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+    created_at  = Column(DateTime, default=utc_now_naive)
 
 
 class Product(Base):

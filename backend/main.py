@@ -14,8 +14,26 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List, Optional
 import ipaddress
+import json
 import os
 import subprocess
+from urllib.parse import urlparse
+
+from webauthn import (
+    generate_authentication_options,
+    generate_registration_options,
+    verify_authentication_response,
+    verify_registration_response,
+)
+from webauthn.helpers import base64url_to_bytes, bytes_to_base64url, options_to_json_dict
+from webauthn.helpers.exceptions import WebAuthnException
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
+    PublicKeyCredentialType,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
+)
 
 import backend.models as models
 import backend.schemas as schemas
@@ -488,6 +506,192 @@ async def realtime_alerts(websocket: WebSocket):
 # AUTH
 # ═══════════════════════════════════════════════════════════════════════════════
 
+PASSKEY_RP_NAME = os.environ.get("SMARTCANTEEN_PASSKEY_RP_NAME", "SmartCanteen")
+PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60
+
+
+def _enum_value(value):
+    return getattr(value, "value", value)
+
+
+def _request_origin(req: Request) -> str:
+    configured_origin = os.environ.get("SMARTCANTEEN_PASSKEY_ORIGIN")
+    if configured_origin:
+        return configured_origin.rstrip("/")
+
+    for header_name in ("origin", "referer"):
+        header_value = req.headers.get(header_name)
+        if not header_value:
+            continue
+        parsed = urlparse(header_value)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+    forwarded_proto = (req.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip()
+    forwarded_host = (req.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
+    scheme = forwarded_proto or req.url.scheme
+    host = forwarded_host or req.headers.get("host") or req.url.netloc
+
+    if not scheme or not host:
+        raise HTTPException(status_code=400, detail="Unable to determine passkey origin")
+
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _rp_id_from_origin(origin: str) -> str:
+    configured_rp_id = os.environ.get("SMARTCANTEEN_PASSKEY_RP_ID")
+    if configured_rp_id:
+        return configured_rp_id.strip().lower()
+
+    hostname = urlparse(origin).hostname
+    if not hostname:
+        raise HTTPException(status_code=400, detail="Unable to determine passkey RP ID")
+
+    return hostname.rstrip(".").lower()
+
+
+def _webauthn_context(req: Request) -> tuple[str, str]:
+    origin = _request_origin(req)
+    return origin, _rp_id_from_origin(origin)
+
+
+def _active_passkeys(db: Session, user_id: int) -> List[models.UserPasskey]:
+    return (
+        db.query(models.UserPasskey)
+        .filter(
+            models.UserPasskey.user_id == user_id,
+            models.UserPasskey.is_active == True,
+        )
+        .order_by(models.UserPasskey.created_at.asc())
+        .all()
+    )
+
+
+def _user_payload(db: Session, user: models.User) -> dict:
+    passkey_count = (
+        db.query(models.UserPasskey)
+        .filter(
+            models.UserPasskey.user_id == user.id,
+            models.UserPasskey.is_active == True,
+        )
+        .count()
+    )
+
+    return {
+        "id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "role": user.role,
+        "passkey_mfa_enabled": passkey_count > 0,
+        "passkey_count": passkey_count,
+    }
+
+
+def _credential_descriptors(passkeys: List[models.UserPasskey]) -> List[PublicKeyCredentialDescriptor]:
+    return [
+        PublicKeyCredentialDescriptor(id=base64url_to_bytes(passkey.credential_id))
+        for passkey in passkeys
+    ]
+
+
+def _store_webauthn_challenge(
+    db: Session,
+    *,
+    user_id: int,
+    purpose: str,
+    challenge: bytes,
+    rp_id: str,
+    origin: str,
+    token_id: Optional[str] = None,
+) -> models.WebAuthnChallenge:
+    record = models.WebAuthnChallenge(
+        user_id=user_id,
+        purpose=purpose,
+        challenge=bytes_to_base64url(challenge),
+        token_id=token_id,
+        rp_id=rp_id,
+        origin=origin,
+        expires_at=datetime.utcnow() + timedelta(seconds=PASSKEY_CHALLENGE_TTL_SECONDS),
+    )
+    db.add(record)
+    db.flush()
+    return record
+
+
+def _get_webauthn_challenge(
+    db: Session,
+    *,
+    challenge_id: int,
+    user_id: int,
+    purpose: str,
+    token_id: Optional[str] = None,
+) -> models.WebAuthnChallenge:
+    challenge = (
+        db.query(models.WebAuthnChallenge)
+        .filter(
+            models.WebAuthnChallenge.id == challenge_id,
+            models.WebAuthnChallenge.user_id == user_id,
+            models.WebAuthnChallenge.purpose == purpose,
+            models.WebAuthnChallenge.consumed_at.is_(None),
+        )
+        .first()
+    )
+
+    if not challenge or challenge.expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Passkey challenge expired. Try again.")
+
+    if token_id and challenge.token_id != token_id:
+        raise HTTPException(status_code=401, detail="Invalid passkey challenge")
+
+    return challenge
+
+
+def _build_login_success(db: Session, user: models.User):
+    token = auth.create_access_token({"sub": user.username})
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": _user_payload(db, user),
+    }
+
+
+def _begin_passkey_authentication(
+    db: Session,
+    req: Request,
+    user: models.User,
+    passkeys: List[models.UserPasskey],
+):
+    origin, rp_id = _webauthn_context(req)
+    mfa_token, token_id = auth.create_mfa_token(user.username)
+    options = generate_authentication_options(
+        rp_id=rp_id,
+        allow_credentials=_credential_descriptors(passkeys),
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    challenge = _store_webauthn_challenge(
+        db,
+        user_id=user.id,
+        purpose="authentication",
+        challenge=options.challenge,
+        rp_id=rp_id,
+        origin=origin,
+        token_id=token_id,
+    )
+
+    return {
+        "mfa_required": True,
+        "mfa_type": "passkey",
+        "mfa_token": mfa_token,
+        "passkey_options": options_to_json_dict(options),
+        "passkey_challenge_id": challenge.id,
+        "user": {
+            "username": user.username,
+            "full_name": user.full_name,
+            "passkey_mfa_enabled": True,
+        },
+    }
+
+
 @app.post("/auth/login", include_in_schema=False)
 @app.post("/api/auth/login", tags=["Auth"])
 def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get_db)):
@@ -503,7 +707,18 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    token = auth.create_access_token({"sub": user.username})
+    passkeys = _active_passkeys(db, user.id)
+    if passkeys:
+        response = _begin_passkey_authentication(db, req, user, passkeys)
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN_MFA_REQUIRED",
+            details="Password accepted; passkey MFA required",
+            request=req,
+        )
+        db.commit()
+        return response
 
     _add_audit_log(
         db,
@@ -514,14 +729,196 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
     )
     db.commit()
 
+    response = _build_login_success(db, user)
+    response["passkey_enrollment_available"] = True
+    return response
+
+
+@app.post("/auth/passkey/register/options", include_in_schema=False)
+@app.post("/api/auth/passkey/register/options", tags=["Auth"])
+def passkey_registration_options(
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    origin, rp_id = _webauthn_context(req)
+    options = generate_registration_options(
+        rp_id=rp_id,
+        rp_name=PASSKEY_RP_NAME,
+        user_id=str(current.id).encode("utf-8"),
+        user_name=current.username,
+        user_display_name=current.full_name or current.username,
+        exclude_credentials=_credential_descriptors(_active_passkeys(db, current.id)),
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    challenge = _store_webauthn_challenge(
+        db,
+        user_id=current.id,
+        purpose="registration",
+        challenge=options.challenge,
+        rp_id=rp_id,
+        origin=origin,
+    )
+    db.commit()
+
     return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": {
-            "id": user.id, "username": user.username,
-            "full_name": user.full_name, "role": user.role,
-        },
+        "challenge_id": challenge.id,
+        "passkey_options": options_to_json_dict(options),
     }
+
+
+@app.post("/auth/passkey/register/verify", include_in_schema=False)
+@app.post("/api/auth/passkey/register/verify", tags=["Auth"])
+def passkey_registration_verify(
+    data: schemas.PasskeyRegistrationFinishRequest,
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    challenge = _get_webauthn_challenge(
+        db,
+        challenge_id=data.challenge_id,
+        user_id=current.id,
+        purpose="registration",
+    )
+
+    try:
+        verified = verify_registration_response(
+            credential=data.credential,
+            expected_challenge=base64url_to_bytes(challenge.challenge),
+            expected_rp_id=challenge.rp_id,
+            expected_origin=challenge.origin,
+            require_user_verification=True,
+        )
+    except WebAuthnException as exc:
+        _add_audit_log(
+            db,
+            user_id=current.id,
+            action="PASSKEY_REGISTER_FAILED",
+            details=str(exc),
+            request=req,
+        )
+        challenge.consumed_at = datetime.utcnow()
+        db.commit()
+        raise HTTPException(status_code=400, detail="Passkey setup failed. Try again.") from exc
+
+    credential_id = bytes_to_base64url(verified.credential_id)
+    existing = (
+        db.query(models.UserPasskey)
+        .filter(models.UserPasskey.credential_id == credential_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="This passkey is already registered")
+
+    transports = data.credential.get("response", {}).get("transports")
+    passkey = models.UserPasskey(
+        user_id=current.id,
+        credential_id=credential_id,
+        public_key=bytes_to_base64url(verified.credential_public_key),
+        sign_count=verified.sign_count,
+        name=(data.name or "Passkey").strip()[:80],
+        aaguid=verified.aaguid,
+        transports=json.dumps(transports) if isinstance(transports, list) else None,
+        device_type=_enum_value(verified.credential_device_type),
+        backed_up=bool(verified.credential_backed_up),
+    )
+    db.add(passkey)
+    challenge.consumed_at = datetime.utcnow()
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PASSKEY_REGISTERED",
+        details=f"Passkey added: {passkey.name}",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "message": "Passkey MFA enabled",
+        "user": _user_payload(db, current),
+    }
+
+
+@app.post("/auth/passkey/authenticate/verify", include_in_schema=False)
+@app.post("/api/auth/passkey/authenticate/verify", tags=["Auth"])
+def passkey_authentication_verify(
+    data: schemas.PasskeyAuthenticationFinishRequest,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    token_payload = auth.decode_mfa_token(data.mfa_token)
+    user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+    credential_id = data.credential.get("rawId") or data.credential.get("id")
+    if not credential_id:
+        raise HTTPException(status_code=400, detail="Passkey credential is missing")
+
+    passkey = (
+        db.query(models.UserPasskey)
+        .filter(
+            models.UserPasskey.user_id == user.id,
+            models.UserPasskey.credential_id == credential_id,
+            models.UserPasskey.is_active == True,
+        )
+        .first()
+    )
+    if not passkey:
+        raise HTTPException(status_code=401, detail="Passkey is not registered for this account")
+
+    challenge = _get_webauthn_challenge(
+        db,
+        challenge_id=data.challenge_id,
+        user_id=user.id,
+        purpose="authentication",
+        token_id=token_payload["jti"],
+    )
+
+    try:
+        verified = verify_authentication_response(
+            credential=data.credential,
+            expected_challenge=base64url_to_bytes(challenge.challenge),
+            expected_rp_id=challenge.rp_id,
+            expected_origin=challenge.origin,
+            credential_public_key=base64url_to_bytes(passkey.public_key),
+            credential_current_sign_count=passkey.sign_count or 0,
+            require_user_verification=True,
+        )
+    except WebAuthnException as exc:
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN_MFA_FAILED",
+            details=str(exc),
+            request=req,
+        )
+        challenge.consumed_at = datetime.utcnow()
+        db.commit()
+        raise HTTPException(status_code=401, detail="Passkey verification failed") from exc
+
+    if bytes_to_base64url(verified.credential_id) != passkey.credential_id:
+        raise HTTPException(status_code=401, detail="Passkey verification failed")
+
+    passkey.sign_count = verified.new_sign_count
+    passkey.device_type = _enum_value(verified.credential_device_type)
+    passkey.backed_up = bool(verified.credential_backed_up)
+    passkey.last_used_at = datetime.utcnow()
+    challenge.consumed_at = datetime.utcnow()
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="LOGIN",
+        details="Successful login with passkey MFA",
+        request=req,
+    )
+    db.commit()
+
+    return _build_login_success(db, user)
 
 
 @app.post("/auth/register", include_in_schema=False)
@@ -557,9 +954,11 @@ def register(
 
 @app.get("/auth/me", include_in_schema=False)
 @app.get("/api/auth/me", tags=["Auth"])
-def me(current: models.User = Depends(auth.get_current_user)):
-    return {"id": current.id, "username": current.username,
-            "full_name": current.full_name, "role": current.role}
+def me(
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    return _user_payload(db, current)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

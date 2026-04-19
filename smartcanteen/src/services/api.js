@@ -5,6 +5,7 @@ import {
   getOfflineLoginProfile,
   getLatestApiCacheEntry,
   getOfflineTransactions,
+  markOfflineLoginProfileMfa,
   removeOfflineTransactions,
   saveApiCacheEntry,
   saveOfflineLoginProfile,
@@ -26,6 +27,171 @@ const envApiHost = import.meta.env.VITE_API_HOST?.trim();
 
 function isAbsoluteUrl(value) {
   return /^https?:\/\//i.test(String(value || ''));
+}
+
+function isPasskeySupported() {
+  return (
+    typeof window !== 'undefined' &&
+    window.isSecureContext &&
+    typeof window.PublicKeyCredential !== 'undefined' &&
+    typeof navigator !== 'undefined' &&
+    Boolean(navigator.credentials)
+  );
+}
+
+function normalizeBase64Url(value) {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  return `${normalized}${'='.repeat((4 - (normalized.length % 4)) % 4)}`;
+}
+
+function base64UrlToArrayBuffer(value) {
+  const binary = window.atob(normalizeBase64Url(value));
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes.buffer;
+}
+
+function arrayBufferToBase64Url(buffer) {
+  if (!buffer) {
+    return null;
+  }
+
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+
+  return window
+    .btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function passkeyOperationError(error) {
+  const name = String(error?.name || '');
+
+  if (name === 'NotAllowedError') {
+    return new Error('Passkey verification was cancelled or timed out.');
+  }
+
+  if (name === 'SecurityError') {
+    return new Error('Passkeys require HTTPS or localhost, and the page domain must match the server.');
+  }
+
+  return new Error(error?.message || 'Passkey verification failed.');
+}
+
+function prepareCredentialDescriptor(descriptor) {
+  return {
+    ...descriptor,
+    id: base64UrlToArrayBuffer(descriptor.id),
+  };
+}
+
+function preparePasskeyCreationOptions(options) {
+  return {
+    ...options,
+    challenge: base64UrlToArrayBuffer(options.challenge),
+    user: {
+      ...options.user,
+      id: base64UrlToArrayBuffer(options.user.id),
+    },
+    excludeCredentials: (options.excludeCredentials || []).map(prepareCredentialDescriptor),
+  };
+}
+
+function preparePasskeyRequestOptions(options) {
+  return {
+    ...options,
+    challenge: base64UrlToArrayBuffer(options.challenge),
+    allowCredentials: (options.allowCredentials || []).map(prepareCredentialDescriptor),
+  };
+}
+
+function serializePublicKeyCredential(credential) {
+  const response = credential.response;
+  const serializedResponse = {
+    clientDataJSON: arrayBufferToBase64Url(response.clientDataJSON),
+  };
+
+  if ('attestationObject' in response) {
+    serializedResponse.attestationObject = arrayBufferToBase64Url(response.attestationObject);
+  }
+
+  if ('authenticatorData' in response) {
+    serializedResponse.authenticatorData = arrayBufferToBase64Url(response.authenticatorData);
+  }
+
+  if ('signature' in response) {
+    serializedResponse.signature = arrayBufferToBase64Url(response.signature);
+  }
+
+  if ('userHandle' in response && response.userHandle) {
+    serializedResponse.userHandle = arrayBufferToBase64Url(response.userHandle);
+  }
+
+  if (typeof response.getTransports === 'function') {
+    serializedResponse.transports = response.getTransports();
+  }
+
+  return {
+    id: credential.id,
+    rawId: arrayBufferToBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    response: serializedResponse,
+    clientExtensionResults:
+      typeof credential.getClientExtensionResults === 'function'
+        ? credential.getClientExtensionResults()
+        : {},
+  };
+}
+
+async function createPasskeyCredential(options) {
+  if (!isPasskeySupported()) {
+    throw new Error('Passkeys require Chrome, Edge, or Safari on HTTPS or localhost.');
+  }
+
+  try {
+    const credential = await navigator.credentials.create({
+      publicKey: preparePasskeyCreationOptions(options),
+    });
+
+    if (!credential) {
+      throw new Error('Passkey setup was cancelled.');
+    }
+
+    return serializePublicKeyCredential(credential);
+  } catch (error) {
+    throw passkeyOperationError(error);
+  }
+}
+
+async function getPasskeyCredential(options) {
+  if (!isPasskeySupported()) {
+    throw new Error('Passkeys require Chrome, Edge, or Safari on HTTPS or localhost.');
+  }
+
+  try {
+    const credential = await navigator.credentials.get({
+      publicKey: preparePasskeyRequestOptions(options),
+    });
+
+    if (!credential) {
+      throw new Error('Passkey verification was cancelled.');
+    }
+
+    return serializePublicKeyCredential(credential);
+  } catch (error) {
+    throw passkeyOperationError(error);
+  }
 }
 
 function isNgrokUrl(value) {
@@ -214,6 +380,14 @@ function isCacheableRequest(method, path) {
   );
 }
 
+function isLoginFlowPath(path) {
+  const normalizedPath = String(path || '');
+  return (
+    normalizedPath.startsWith('/auth/login') ||
+    normalizedPath.startsWith('/auth/passkey/authenticate/')
+  );
+}
+
 function clearSession() {
   localStorage.removeItem('sc_token');
   localStorage.removeItem('sc_user');
@@ -358,7 +532,7 @@ async function performRequest(method, path, body = null) {
       continue;
     }
 
-    if (res.status === 401 && !String(path || '').startsWith('/auth/login')) {
+    if (res.status === 401 && !isLoginFlowPath(path)) {
       clearSession();
       window.location.href = '/';
       return null;
@@ -544,13 +718,26 @@ async function syncPendingOfflineTransactions() {
 }
 
 async function login(username, password) {
+  let mfaStarted = false;
+
   try {
-    const response = await request('POST', '/auth/login', { username, password });
+    let response = await request('POST', '/auth/login', { username, password });
+
+    if (response?.mfa_required && response?.mfa_type === 'passkey') {
+      mfaStarted = true;
+      const credential = await getPasskeyCredential(response.passkey_options);
+      response = await request('POST', '/auth/passkey/authenticate/verify', {
+        mfa_token: response.mfa_token,
+        challenge_id: response.passkey_challenge_id,
+        credential,
+      });
+    }
+
     await saveOfflineLoginProfile({ user: response?.user, password });
     localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
     return response;
   } catch (error) {
-    if (!isConnectivityError(error)) {
+    if (mfaStarted || !isConnectivityError(error)) {
       throw error;
     }
 
@@ -559,6 +746,10 @@ async function login(username, password) {
       throw new Error(
         'Offline login works only after one successful online login on this device.'
       );
+    }
+
+    if (offlineUser.passkey_mfa_enabled) {
+      throw new Error('Passkey MFA requires an online connection for this account.');
     }
 
     localStorage.setItem(OFFLINE_SESSION_STORAGE_KEY, '1');
@@ -571,8 +762,27 @@ async function login(username, password) {
   }
 }
 
+async function registerCurrentDevicePasskey(name = 'This device') {
+  const optionsResponse = await request('POST', '/auth/passkey/register/options', {});
+  const credential = await createPasskeyCredential(optionsResponse.passkey_options);
+  const response = await request('POST', '/auth/passkey/register/verify', {
+    challenge_id: optionsResponse.challenge_id,
+    credential,
+    name,
+  });
+
+  if (response?.user) {
+    localStorage.setItem('sc_user', JSON.stringify(response.user));
+    markOfflineLoginProfileMfa(response.user.username);
+  }
+
+  return response;
+}
+
 export const API = {
   login,
+  registerCurrentDevicePasskey,
+  isPasskeySupported,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
 

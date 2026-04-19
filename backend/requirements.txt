@@ -11,3 +11,4 @@ fastapi==0.115.12
 pydantic==2.10.6
 psycopg[binary]==3.2.6
 xgboost==1.7.6
+webauthn==2.7.1

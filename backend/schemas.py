@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Any, Optional, List
 from datetime import datetime
 
 
@@ -8,6 +8,18 @@ from datetime import datetime
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class PasskeyRegistrationFinishRequest(BaseModel):
+    challenge_id: int
+    credential: dict[str, Any]
+    name: Optional[str] = None
+
+
+class PasskeyAuthenticationFinishRequest(BaseModel):
+    mfa_token: str
+    challenge_id: int
+    credential: dict[str, Any]
 
 
 # ── User ───────────────────────────────────────────────────────────────────────

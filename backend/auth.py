@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
+import uuid
 
 import bcrypt
 from jose import JWTError, jwt
@@ -15,6 +16,7 @@ from . import models
 SECRET_KEY  = "smartcanteen-secret-key-CHANGE-THIS-in-prod-2024!"
 ALGORITHM   = "HS256"
 EXPIRE_MINS = 480   # 8-hour sessions (canteen shift length)
+MFA_EXPIRE_MINS = 5
 
 security    = HTTPBearer()
 
@@ -36,6 +38,35 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     expire  = datetime.utcnow() + (expires_delta or timedelta(minutes=EXPIRE_MINS))
     payload.update({"exp": expire})
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_mfa_token(username: str, purpose: str = "passkey") -> tuple[str, str]:
+    token_id = uuid.uuid4().hex
+    expire = datetime.utcnow() + timedelta(minutes=MFA_EXPIRE_MINS)
+    payload = {
+        "sub": username,
+        "jti": token_id,
+        "mfa": True,
+        "purpose": purpose,
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM), token_id
+
+
+def decode_mfa_token(token: str, purpose: str = "passkey") -> dict:
+    exc = HTTPException(status_code=401, detail="Invalid or expired MFA token")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise exc
+
+    if not payload.get("mfa") or payload.get("purpose") != purpose:
+        raise exc
+
+    if not payload.get("sub") or not payload.get("jti"):
+        raise exc
+
+    return payload
 
 
 # ── Dependencies ───────────────────────────────────────────────────────────────
