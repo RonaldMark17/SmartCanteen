@@ -436,6 +436,15 @@ function isCacheableRequest(method, path) {
   );
 }
 
+function canUseLatestCacheFallback(path) {
+  const normalizedPath = String(path || '');
+  const isDateFilteredAnalytics =
+    normalizedPath.startsWith('/analytics/') &&
+    (normalizedPath.includes('start_date=') || normalizedPath.includes('end_date='));
+
+  return !isDateFilteredAnalytics;
+}
+
 function isLoginFlowPath(path) {
   const normalizedPath = String(path || '');
   return (
@@ -499,6 +508,10 @@ async function getCachedResponse(method, path) {
   const exactMatch = getApiCacheEntry({ method, path });
   if (exactMatch) {
     return exactMatch.data;
+  }
+
+  if (!canUseLatestCacheFallback(path)) {
+    return null;
   }
 
   const latestMatch = getLatestApiCacheEntry({ method, path });

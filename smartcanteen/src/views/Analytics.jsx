@@ -213,6 +213,18 @@ function getRevenueTrendTitle(period, referenceDate) {
   })} Revenue Trend`;
 }
 
+function getTopProductsTitle(period, referenceDate) {
+  if (period === 'day') {
+    return `Top-Selling Products on ${formatPhilippineDate(referenceDate, {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    })}`;
+  }
+
+  return `Top-Selling Products in ${getPeriodDescription(period, referenceDate)}`;
+}
+
 function buildAnalyticsRange(period, selectedDate, selectedMonth, selectedYear) {
   if (period === 'year') {
     const year = getSafeYearInputValue(selectedYear);
@@ -722,6 +734,7 @@ export default function Analytics() {
   const periodTitle = getPeriodTitle(period);
   const periodDescription = getPeriodDescription(period, referenceDate);
   const revenueTrendTitle = getRevenueTrendTitle(period, referenceDate);
+  const topProductsTitle = getTopProductsTitle(period, referenceDate);
   const yearOptions = buildYearOptions(selectedYear);
   const trendPoints = useMemo(
     () => buildTrendPoints(data.daily, data.heatmap, period, selectedRange),
@@ -1183,11 +1196,11 @@ export default function Analytics() {
 
         <Panel
           icon={TrophyIcon}
-          title="Top-Selling Products"
+          title={topProductsTitle}
           meta={
             summary.topProduct
               ? `Leader: ${summary.topProduct.product_name}`
-              : 'No product leader yet'
+              : `No product leader for ${periodDescription}`
           }
           className="xl:col-span-2"
         >
@@ -1198,7 +1211,7 @@ export default function Analytics() {
               <EmptyPanel
                 icon={TrophyIcon}
                 title="No product sales"
-                message="Product rankings will appear after itemized sales are recorded."
+                message={`Product rankings for ${periodDescription} will appear after itemized sales are recorded.`}
               />
             )}
           </div>
