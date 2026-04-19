@@ -205,8 +205,7 @@ function pruneStoredAlertSignatures(storageKey, activeSignatures) {
 }
 
 function filterDismissedAlerts(items, storageKey, buildSignature) {
-  const activeSignatures = new Set(items.map((item) => buildSignature(item)));
-  const currentDismissed = pruneStoredAlertSignatures(storageKey, activeSignatures);
+  const currentDismissed = readDismissedAlertSignatures(storageKey);
 
   return items.filter((item) => !currentDismissed.has(buildSignature(item)));
 }
@@ -865,6 +864,34 @@ export default function Layout({ children, onLogout }) {
     updateUnreadAlertStatus(lowStockItems, highDemandItems);
   }
 
+  function markLowStockAlertRead(item) {
+    const signature = buildLowStockAlertKey(item);
+    markAlertItemsRead(READ_LOW_STOCK_ALERTS_KEY, [item], buildLowStockAlertKey);
+    persistAlertStateToServer(LOW_STOCK_ALERT_TYPE, 'read', [signature]);
+
+    const remainingUnreadLowStockItems = filterUnreadAlerts(
+      lowStockItems,
+      READ_LOW_STOCK_ALERTS_KEY,
+      buildLowStockAlertKey
+    );
+    persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, buildLowStockSignature(remainingUnreadLowStockItems));
+    updateUnreadAlertStatus(lowStockItems, highDemandItems);
+  }
+
+  function markHighDemandAlertRead(item) {
+    const signature = buildHighDemandAlertKey(item);
+    markAlertItemsRead(READ_HIGH_DEMAND_ALERTS_KEY, [item], buildHighDemandAlertKey);
+    persistAlertStateToServer(HIGH_DEMAND_ALERT_TYPE, 'read', [signature]);
+
+    const remainingUnreadHighDemandItems = filterUnreadAlerts(
+      highDemandItems,
+      READ_HIGH_DEMAND_ALERTS_KEY,
+      buildHighDemandAlertKey
+    );
+    persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, buildHighDemandSignature(remainingUnreadHighDemandItems));
+    updateUnreadAlertStatus(lowStockItems, highDemandItems);
+  }
+
   function dismissLowStockAlert(item) {
     const signature = buildLowStockAlertKey(item);
     const dismissed = readDismissedAlertSignatures(DISMISSED_LOW_STOCK_ALERTS_KEY);
@@ -912,7 +939,7 @@ export default function Layout({ children, onLogout }) {
   }
 
   function openLowStockAlert(item) {
-    dismissLowStockAlert(item);
+    markLowStockAlertRead(item);
     setNotificationsOpen(false);
     setRemindersOpen(false);
     navigate('/inventory', {
@@ -926,7 +953,7 @@ export default function Layout({ children, onLogout }) {
   }
 
   function openHighDemandAlert(item) {
-    dismissHighDemandAlert(item);
+    markHighDemandAlertRead(item);
     setNotificationsOpen(false);
     setRemindersOpen(false);
     navigate('/predictions', {
