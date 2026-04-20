@@ -39,7 +39,7 @@ const workspaceDetails = [
 const accessDetails = [
   { label: 'Roles', value: 'Cashier, Staff, Admin' },
   { label: 'Lockout', value: '3 failed attempts' },
-  { label: 'Passkey', value: 'Web MFA' },
+  { label: 'MFA', value: 'Passkey or biometrics' },
 ];
 
 function normalizeLoginIdentifier(value) {
@@ -518,7 +518,7 @@ export default function Login({ onLogin }) {
                 <div className="hidden items-start gap-2 rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2.5 sm:flex [@media(max-height:650px)]:hidden">
                   <FingerPrintIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
                   <div className="text-xs leading-5 text-slate-400">
-                    <span className="font-black text-slate-100">Passkey MFA:</span> Sign-in must finish passkey verification before the dashboard opens.
+                    <span className="font-black text-slate-100">MFA required:</span> Web uses passkeys. The mobile app uses device biometrics.
                   </div>
                 </div>
 

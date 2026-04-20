@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import {
   countOfflineTransactions,
   getApiCacheEntry,
@@ -27,6 +27,7 @@ const envApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const envApiFallbackBase = import.meta.env.VITE_API_FALLBACK_BASE_URL?.trim();
 const envNativeApiBase = import.meta.env.VITE_NATIVE_API_BASE_URL?.trim();
 const envApiHost = import.meta.env.VITE_API_HOST?.trim();
+const SmartCanteenBiometrics = registerPlugin('SmartCanteenBiometrics');
 
 function isAbsoluteUrl(value) {
   return /^https?:\/\//i.test(String(value || ''));
@@ -231,6 +232,53 @@ function passkeyOperationError(error) {
   }
 
   return new Error(error?.message || 'Passkey verification failed.');
+}
+
+function biometricOperationError(error) {
+  const message = String(error?.message || '').trim();
+  if (message) {
+    return new Error(message);
+  }
+
+  return new Error('Biometric verification was cancelled or failed.');
+}
+
+async function getBiometricSupportStatus() {
+  if (!isNativeRuntime()) {
+    return {
+      supported: false,
+      reason: 'Biometric MFA is only available in the mobile app.',
+    };
+  }
+
+  try {
+    const result = await SmartCanteenBiometrics.isAvailable();
+    return {
+      supported: Boolean(result?.available),
+      reason: result?.available ? '' : result?.message || 'Biometric verification is not available.',
+    };
+  } catch (error) {
+    return {
+      supported: false,
+      reason: error?.message || 'Biometric verification is not available.',
+    };
+  }
+}
+
+async function authenticateWithDeviceBiometrics() {
+  const support = await getBiometricSupportStatus();
+  if (!support.supported) {
+    throw new Error(support.reason);
+  }
+
+  try {
+    await SmartCanteenBiometrics.authenticate({
+      title: 'SmartCanteen verification',
+      subtitle: 'Use biometrics or device lock to finish sign-in.',
+    });
+  } catch (error) {
+    throw biometricOperationError(error);
+  }
 }
 
 function prepareCredentialDescriptor(descriptor) {
@@ -588,17 +636,22 @@ function buildOfflineSessionResponse(user) {
 
 function assertMfaWasCompleted(response) {
   if (!response?.access_token) {
-    throw new Error('Passkey verification did not complete. Try signing in again.');
+    throw new Error('MFA verification did not complete. Try signing in again.');
   }
+
+  const biometricVerified = isNativeRuntime() && Boolean(response?.biometric_mfa_verified);
+  const passkeyVerified = !isNativeRuntime() && Boolean(response?.user?.passkey_mfa_enabled);
 
   if (
     response?.mobile_password_fallback ||
     response?.passkey_mfa_deferred ||
     response?.passkey_registration_deferred ||
-    !response?.user?.passkey_mfa_enabled
+    (!passkeyVerified && !biometricVerified)
   ) {
     throw new Error(
-      'Passkey MFA is required before opening the dashboard. Complete passkey verification in a supported browser, then sign in again.'
+      isNativeRuntime()
+        ? 'Biometric MFA is required before opening the dashboard.'
+        : 'Passkey MFA is required before opening the dashboard. Complete passkey verification, then sign in again.'
     );
   }
 }
@@ -982,7 +1035,13 @@ async function login(username, password) {
   try {
     let response = await request('POST', '/auth/login', { username, password });
 
-    if (response?.passkey_registration_required && response?.mfa_type === 'passkey_registration') {
+    if (response?.biometric_required && response?.mfa_type === 'biometric') {
+      mfaStarted = true;
+      await authenticateWithDeviceBiometrics();
+      response = await request('POST', '/auth/biometric/verify', {
+        mfa_token: response.mfa_token,
+      });
+    } else if (response?.passkey_registration_required && response?.mfa_type === 'passkey_registration') {
       const support = getPasskeySupportStatus();
       if (!support.supported) {
         throw new Error(support.reason);
@@ -1067,6 +1126,7 @@ export const API = {
   registerCurrentDevicePasskey,
   isPasskeySupported,
   getPasskeySupportStatus,
+  getBiometricSupportStatus,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
 

@@ -585,6 +585,16 @@ def _request_origin(req: Request) -> str:
     return f"{scheme}://{host}".rstrip("/")
 
 
+def _request_header(req: Request, name: str) -> str:
+    return (req.headers.get(name) or "").strip().lower()
+
+
+def _request_is_native_client(req: Request) -> bool:
+    client = _request_header(req, "x-smartcanteen-client")
+    platform = _request_header(req, "x-smartcanteen-platform")
+    return client in {"native", "android", "ios", "mobile-app"} or platform in {"android", "ios"}
+
+
 def _rp_id_from_origin(origin: str) -> str:
     configured_rp_id = os.environ.get("SMARTCANTEEN_PASSKEY_RP_ID")
     hostname = urlparse(origin).hostname
@@ -734,6 +744,20 @@ def _build_login_success(db: Session, user: models.User):
     }
 
 
+def _begin_biometric_authentication(user: models.User):
+    mfa_token, _token_id = auth.create_mfa_token(user.username, purpose="biometric")
+    return {
+        "biometric_required": True,
+        "mfa_type": "biometric",
+        "mfa_token": mfa_token,
+        "user": {
+            "username": user.username,
+            "full_name": user.full_name,
+            "biometric_mfa_enabled": True,
+        },
+    }
+
+
 def _registration_options_for_user(db: Session, req: Request, user: models.User):
     origin, rp_id = _webauthn_context(req)
     options = generate_registration_options(
@@ -831,6 +855,18 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         )
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    if _request_is_native_client(req):
+        response = _begin_biometric_authentication(user)
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN_BIOMETRIC_REQUIRED",
+            details="Password accepted; native biometric MFA required",
+            request=req,
+        )
+        db.commit()
+        return response
 
     passkeys = _active_passkeys(db, user.id)
     if passkeys:
@@ -1112,6 +1148,36 @@ def passkey_authentication_verify(
     db.commit()
 
     return _build_login_success(db, user)
+
+
+@app.post("/auth/biometric/verify", include_in_schema=False)
+@app.post("/api/auth/biometric/verify", tags=["Auth"])
+def biometric_authentication_verify(
+    data: schemas.BiometricAuthenticationFinishRequest,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    if not _request_is_native_client(req):
+        raise HTTPException(status_code=400, detail="Biometric MFA is only available in the mobile app")
+
+    token_payload = auth.decode_mfa_token(data.mfa_token, purpose="biometric")
+    user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="LOGIN",
+        details="Successful login with native biometric MFA",
+        request=req,
+    )
+    db.commit()
+
+    response = _build_login_success(db, user)
+    response["biometric_mfa_verified"] = True
+    response["user"]["biometric_mfa_enabled"] = True
+    return response
 
 
 @app.post("/auth/register", include_in_schema=False)

@@ -29,6 +29,10 @@ class PasskeyAuthenticationFinishRequest(BaseModel):
     credential: dict[str, Any]
 
 
+class BiometricAuthenticationFinishRequest(BaseModel):
+    mfa_token: str
+
+
 # ── User ───────────────────────────────────────────────────────────────────────
 
 class UserCreate(BaseModel):
