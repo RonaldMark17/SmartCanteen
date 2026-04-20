@@ -17,6 +17,10 @@ class AuthenticatorAuthenticationFinishRequest(BaseModel):
     remember_device: bool = False
 
 
+class AuthenticatorResetRequest(BaseModel):
+    revoke_remembered_devices: bool = True
+
+
 # ── User ───────────────────────────────────────────────────────────────────────
 
 class UserCreate(BaseModel):
@@ -31,6 +35,9 @@ class UserResponse(BaseModel):
     full_name:  Optional[str]
     role:       str
     is_active:  bool
+    authenticator_mfa_enabled: bool = False
+    recovery_codes_remaining: int = 0
+    remembered_devices_active: int = 0
     created_at: datetime
     class Config:
         from_attributes = True

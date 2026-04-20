@@ -16,6 +16,7 @@ const LOGIN_LOCKOUT_STORAGE_KEY = 'sc_login_lockouts';
 const REMEMBERED_USERNAME_STORAGE_KEY = 'sc_remembered_username';
 const MAX_LOGIN_ATTEMPTS = 3;
 const LOGIN_LOCKOUT_MS = 60 * 1000;
+const RECOVERY_CODE_LENGTH = 12;
 
 const workspaceDetails = [
   {
@@ -155,8 +156,31 @@ function isCredentialFailure(message) {
   return String(message || '').toLowerCase().includes('invalid username or password');
 }
 
-function normalizeAuthenticatorCode(value) {
-  return String(value || '').replace(/\D/g, '').slice(0, 6);
+function normalizeRecoveryCode(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, RECOVERY_CODE_LENGTH);
+}
+
+function formatRecoveryCode(value) {
+  const normalized = normalizeRecoveryCode(value);
+  return normalized.match(/.{1,4}/g)?.join('-') || '';
+}
+
+function normalizeAuthenticatorCode(value, { setup = false } = {}) {
+  const normalized = normalizeRecoveryCode(value);
+  if (setup || /^\d*$/.test(normalized)) {
+    return normalized.replace(/\D/g, '').slice(0, 6);
+  }
+
+  return formatRecoveryCode(normalized);
+}
+
+function isAuthenticatorCodeReady(value, { setup = false } = {}) {
+  const normalized = normalizeRecoveryCode(value);
+  if (setup) {
+    return /^\d{6}$/.test(normalized);
+  }
+
+  return /^\d{6}$/.test(normalized) || normalized.length === RECOVERY_CODE_LENGTH;
 }
 
 function getRememberedUsername() {
@@ -197,6 +221,9 @@ export default function Login({ onLogin }) {
   const [authenticatorQrCode, setAuthenticatorQrCode] = useState('');
   const [secretCopied, setSecretCopied] = useState(false);
   const [lockoutNow, setLockoutNow] = useState(() => Date.now());
+  const [pendingRecoveryCodes, setPendingRecoveryCodes] = useState([]);
+  const [pendingLoginResult, setPendingLoginResult] = useState(null);
+  const [recoveryCodesCopied, setRecoveryCodesCopied] = useState(false);
   const authenticatorCodeRef = useRef(null);
 
   const loginIdentifier = normalizeLoginIdentifier(username);
@@ -205,6 +232,9 @@ export default function Login({ onLogin }) {
   const portalLabel = getPortalLabel(username);
   const isAuthenticatorStep = Boolean(authenticatorChallenge);
   const isAuthenticatorSetup = authenticatorChallenge?.mfa_type === 'authenticator_setup';
+  const canSubmitAuthenticatorCode = isAuthenticatorCodeReady(authenticatorCode, {
+    setup: isAuthenticatorSetup,
+  });
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -261,6 +291,27 @@ export default function Login({ onLogin }) {
     return () => window.clearTimeout(focusTimer);
   }, [isAuthenticatorStep]);
 
+  const finishSuccessfulLogin = (res, submittedUsername, identifier) => {
+    clearLoginLockout(identifier);
+    setLockoutNow(Date.now());
+    if (rememberUsername) {
+      localStorage.setItem(REMEMBERED_USERNAME_STORAGE_KEY, submittedUsername.trim());
+    } else {
+      localStorage.removeItem(REMEMBERED_USERNAME_STORAGE_KEY);
+    }
+    localStorage.setItem('sc_token', res.access_token);
+    localStorage.setItem('sc_user', JSON.stringify(res.user));
+    setAuthenticatorChallenge(null);
+    setAuthenticatorCode('');
+    setPendingRecoveryCodes([]);
+    setPendingLoginResult(null);
+    setRecoveryCodesCopied(false);
+    if (res.offline) {
+      window.showToast?.('Signed in with offline access saved on this device.', 'warning');
+    }
+    onLogin();
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const submittedUsername = username;
@@ -300,21 +351,21 @@ export default function Login({ onLogin }) {
         return;
       }
 
-      clearLoginLockout(identifier);
-      setLockoutNow(Date.now());
-      if (rememberUsername) {
-        localStorage.setItem(REMEMBERED_USERNAME_STORAGE_KEY, submittedUsername.trim());
-      } else {
-        localStorage.removeItem(REMEMBERED_USERNAME_STORAGE_KEY);
+      const recoveryCodes = Array.isArray(res?.recovery_codes) ? res.recovery_codes : [];
+      if (recoveryCodes.length > 0) {
+        setAuthenticatorChallenge(null);
+        setAuthenticatorCode('');
+        setPendingRecoveryCodes(recoveryCodes);
+        setPendingLoginResult({
+          res,
+          submittedUsername: submittedUsername.trim(),
+          identifier,
+        });
+        setRecoveryCodesCopied(false);
+        return;
       }
-      localStorage.setItem('sc_token', res.access_token);
-      localStorage.setItem('sc_user', JSON.stringify(res.user));
-      setAuthenticatorChallenge(null);
-      setAuthenticatorCode('');
-      if (res.offline) {
-        window.showToast?.('Signed in with offline access saved on this device.', 'warning');
-      }
-      onLogin();
+
+      finishSuccessfulLogin(res, submittedUsername, identifier);
     } catch (err) {
       setUsername(submittedUsername);
       setPassword(submittedPassword);
@@ -346,6 +397,9 @@ export default function Login({ onLogin }) {
     setError('');
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
+    setPendingRecoveryCodes([]);
+    setPendingLoginResult(null);
+    setRecoveryCodesCopied(false);
     setLockoutNow(Date.now());
   };
 
@@ -354,6 +408,9 @@ export default function Login({ onLogin }) {
     setAuthenticatorCode('');
     setAuthenticatorQrCode('');
     setSecretCopied(false);
+    setPendingRecoveryCodes([]);
+    setPendingLoginResult(null);
+    setRecoveryCodesCopied(false);
     setError('');
   };
 
@@ -370,6 +427,32 @@ export default function Login({ onLogin }) {
     } catch {
       setSecretCopied(false);
     }
+  };
+
+  const copyRecoveryCodes = async () => {
+    if (pendingRecoveryCodes.length === 0 || !navigator.clipboard) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(pendingRecoveryCodes.join('\n'));
+      setRecoveryCodesCopied(true);
+      window.setTimeout(() => setRecoveryCodesCopied(false), 1800);
+    } catch {
+      setRecoveryCodesCopied(false);
+    }
+  };
+
+  const confirmRecoveryCodesSaved = () => {
+    if (!pendingLoginResult) {
+      return;
+    }
+
+    finishSuccessfulLogin(
+      pendingLoginResult.res,
+      pendingLoginResult.submittedUsername,
+      pendingLoginResult.identifier
+    );
   };
 
   return (
@@ -635,7 +718,7 @@ export default function Login({ onLogin }) {
                     lockoutState.isLocked ||
                     !username ||
                     !password ||
-                    (isAuthenticatorStep && authenticatorCode.length !== 6)
+                    (isAuthenticatorStep && !canSubmitAuthenticatorCode)
                   }
                   className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#f35cff,#a855f7,#6d28d9)] px-4 py-[1.125rem] text-base font-black text-white shadow-[0_18px_42px_rgba(168,85,247,0.48)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_24px_58px_rgba(168,85,247,0.58)] active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-[0_18px_42px_rgba(168,85,247,0.48)] sm:py-4 sm:text-sm"
                 >
@@ -742,21 +825,29 @@ export default function Login({ onLogin }) {
 
               <label className="block">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-                  6-digit code
+                  6-digit code or recovery code
                 </span>
                 <input
                   ref={authenticatorCodeRef}
                   type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
+                  inputMode={isAuthenticatorSetup ? 'numeric' : 'text'}
                   required
-                  placeholder="000000"
+                  placeholder={isAuthenticatorSetup ? '000000' : '000000 or code'}
                   className="mt-2 w-full rounded-2xl border border-emerald-300/25 bg-slate-900 px-4 py-4 text-center font-mono text-2xl font-black tracking-[0.32em] text-white outline-none transition duration-200 placeholder:text-slate-700 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20 disabled:cursor-not-allowed disabled:opacity-60 sm:text-3xl"
                   value={authenticatorCode}
-                  onChange={(event) => setAuthenticatorCode(normalizeAuthenticatorCode(event.target.value))}
+                  onChange={(event) =>
+                    setAuthenticatorCode(normalizeAuthenticatorCode(event.target.value, {
+                      setup: isAuthenticatorSetup,
+                    }))
+                  }
                   disabled={loading}
                   autoComplete="one-time-code"
                 />
+                {!isAuthenticatorSetup && (
+                  <span className="mt-2 block text-xs leading-5 text-slate-500">
+                    Lost your authenticator app? Enter one saved recovery code here.
+                  </span>
+                )}
               </label>
 
               <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -770,7 +861,7 @@ export default function Login({ onLogin }) {
                 </button>
                 <button
                   type="submit"
-                  disabled={loading || authenticatorCode.length !== 6}
+                  disabled={loading || !canSubmitAuthenticatorCode}
                   className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 shadow-[0_16px_34px_rgba(16,185,129,0.28)] transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? (
@@ -786,6 +877,64 @@ export default function Login({ onLogin }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {pendingRecoveryCodes.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-5 backdrop-blur-md">
+          <div
+            className="w-full max-w-[32rem] overflow-hidden rounded-[24px] border border-fuchsia-300/20 bg-slate-950 text-slate-100 shadow-[0_28px_90px_rgba(0,0,0,0.62)]"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recovery-codes-title"
+          >
+            <div className="border-b border-slate-800 bg-slate-900/80 px-5 py-4">
+              <div className="inline-flex items-center gap-2 rounded-full border border-fuchsia-300/20 bg-fuchsia-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-fuchsia-100">
+                <ShieldCheckIcon className="h-4 w-4" />
+                Backup access
+              </div>
+              <h3 id="recovery-codes-title" className="mt-3 text-xl font-black leading-7 text-white">
+                Save your recovery codes
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-slate-400">
+                Each code works once if the authenticator app is deleted or unavailable.
+              </p>
+            </div>
+
+            <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 py-5">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {pendingRecoveryCodes.map((code) => (
+                  <div
+                    key={code}
+                    className="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-2.5 text-center font-mono text-sm font-black tracking-widest text-white"
+                  >
+                    {code}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-100">
+                Store these in a password manager or another secure place. They will not be shown again.
+              </div>
+
+              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <button
+                  type="button"
+                  onClick={copyRecoveryCodes}
+                  className="rounded-2xl border border-slate-700 px-4 py-3 text-sm font-black text-slate-300 transition hover:border-slate-500 hover:bg-slate-900 hover:text-white"
+                >
+                  {recoveryCodesCopied ? 'Copied' : 'Copy codes'}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmRecoveryCodesSaved}
+                  className="rounded-2xl bg-fuchsia-500 px-5 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(217,70,239,0.28)] transition hover:bg-fuchsia-400 active:scale-[0.99]"
+                >
+                  I saved these codes
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

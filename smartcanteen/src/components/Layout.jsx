@@ -405,6 +405,11 @@ export default function Layout({ children, onLogout }) {
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [recoveryCodesOpen, setRecoveryCodesOpen] = useState(false);
+  const [recoveryCodes, setRecoveryCodes] = useState([]);
+  const [recoveryCodesLoading, setRecoveryCodesLoading] = useState(false);
+  const [recoveryCodesError, setRecoveryCodesError] = useState('');
+  const [recoveryCodesCopied, setRecoveryCodesCopied] = useState(false);
   const [darkMode, setDarkMode] = useState(getStoredDarkMode);
   const [lowStockItems, setLowStockItems] = useState([]);
   const [highDemandItems, setHighDemandItems] = useState([]);
@@ -807,6 +812,46 @@ export default function Layout({ children, onLogout }) {
   function confirmLogout() {
     setLogoutConfirmOpen(false);
     onLogout();
+  }
+
+  function openRecoveryCodes() {
+    setProfileOpen(false);
+    setRecoveryCodesOpen(true);
+    setRecoveryCodes([]);
+    setRecoveryCodesError('');
+    setRecoveryCodesCopied(false);
+    setRecoveryCodesLoading(false);
+  }
+
+  async function regenerateRecoveryCodes() {
+    setRecoveryCodes([]);
+    setRecoveryCodesError('');
+    setRecoveryCodesCopied(false);
+    setRecoveryCodesLoading(true);
+
+    try {
+      const response = await API.regenerateRecoveryCodes();
+      setRecoveryCodes(Array.isArray(response?.recovery_codes) ? response.recovery_codes : []);
+      window.showToast?.('New recovery codes generated. Save them now.', 'success');
+    } catch (error) {
+      setRecoveryCodesError(error.message || 'Recovery codes could not be regenerated.');
+    } finally {
+      setRecoveryCodesLoading(false);
+    }
+  }
+
+  async function copyRecoveryCodes() {
+    if (recoveryCodes.length === 0 || !navigator.clipboard) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(recoveryCodes.join('\n'));
+      setRecoveryCodesCopied(true);
+      window.setTimeout(() => setRecoveryCodesCopied(false), 1800);
+    } catch {
+      setRecoveryCodesCopied(false);
+    }
   }
 
   async function handleWorkspaceRefresh() {
@@ -1664,6 +1709,16 @@ export default function Layout({ children, onLogout }) {
                 </button>
                 <button
                   type="button"
+                  onClick={openRecoveryCodes}
+                  className={`profile-action flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
+                    darkMode ? 'text-slate-100 hover:bg-slate-800/80' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <ShieldCheckIcon className={`h-5 w-5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                  Recovery codes
+                </button>
+                <button
+                  type="button"
                   onClick={() => setDarkMode((value) => !value)}
                   className={`profile-action flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
                     darkMode ? 'text-slate-100 hover:bg-slate-800/80' : 'text-slate-700 hover:bg-slate-50'
@@ -1698,6 +1753,132 @@ export default function Layout({ children, onLogout }) {
               </div>
             </div>
           </>
+        )}
+
+        {recoveryCodesOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+            <div
+              className={`w-full max-w-lg overflow-hidden rounded-2xl border shadow-2xl ${
+                darkMode
+                  ? 'border-slate-800 bg-slate-950 text-slate-100 shadow-black/50'
+                  : 'border-slate-200 bg-white text-slate-900'
+              }`}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="recovery-codes-title"
+            >
+              <div className={`border-b px-5 py-4 ${darkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${
+                      darkMode ? 'bg-emerald-950/40 text-emerald-300' : 'bg-emerald-50 text-emerald-600'
+                    }`}
+                  >
+                    <ShieldCheckIcon className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div id="recovery-codes-title" className="text-base font-black">
+                      Recovery codes
+                    </div>
+                    <div className={`mt-1 text-sm leading-6 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Generate a fresh set of one-time backup codes for this account. Old unused codes stop working.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 p-5">
+                {recoveryCodesError && (
+                  <div
+                    className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
+                      darkMode
+                        ? 'border-red-500/30 bg-red-950/30 text-red-200'
+                        : 'border-red-100 bg-red-50 text-red-700'
+                    }`}
+                  >
+                    {recoveryCodesError}
+                  </div>
+                )}
+
+                {recoveryCodes.length > 0 ? (
+                  <>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {recoveryCodes.map((code) => (
+                        <div
+                          key={code}
+                          className={`rounded-xl border px-3 py-2 text-center font-mono text-sm font-black tracking-widest ${
+                            darkMode
+                              ? 'border-slate-800 bg-slate-900 text-white'
+                              : 'border-slate-200 bg-slate-50 text-slate-900'
+                          }`}
+                        >
+                          {code}
+                        </div>
+                      ))}
+                    </div>
+                    <div
+                      className={`rounded-xl border px-4 py-3 text-sm leading-6 ${
+                        darkMode
+                          ? 'border-amber-500/30 bg-amber-950/30 text-amber-100'
+                          : 'border-amber-100 bg-amber-50 text-amber-800'
+                      }`}
+                    >
+                      Save these now. They are shown only once and each code can be used one time.
+                    </div>
+                  </>
+                ) : (
+                  <div
+                    className={`rounded-xl border px-4 py-4 text-sm leading-6 ${
+                      darkMode
+                        ? 'border-slate-800 bg-slate-900 text-slate-300'
+                        : 'border-slate-200 bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    Use this when you need a new backup set. This does not remove your authenticator app; it only replaces old recovery codes.
+                  </div>
+                )}
+              </div>
+
+              <div className={`flex flex-col-reverse gap-2 border-t p-4 sm:flex-row sm:justify-end ${
+                darkMode ? 'border-slate-800' : 'border-slate-100'
+              }`}>
+                <button
+                  type="button"
+                  onClick={() => setRecoveryCodesOpen(false)}
+                  className={`rounded-xl border px-4 py-2.5 text-sm font-black transition ${
+                    darkMode
+                      ? 'border-slate-700 text-slate-100 hover:bg-slate-800'
+                      : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  Close
+                </button>
+                {recoveryCodes.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={copyRecoveryCodes}
+                    className={`rounded-xl border px-4 py-2.5 text-sm font-black transition ${
+                      darkMode
+                        ? 'border-emerald-500/30 text-emerald-100 hover:bg-emerald-950/30'
+                        : 'border-emerald-100 text-emerald-700 hover:bg-emerald-50'
+                    }`}
+                  >
+                    {recoveryCodesCopied ? 'Copied' : 'Copy codes'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={regenerateRecoveryCodes}
+                  disabled={recoveryCodesLoading}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-black text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    darkMode ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
+                >
+                  {recoveryCodesLoading ? 'Generating...' : 'Generate new codes'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {logoutConfirmOpen && (

@@ -25,6 +25,8 @@ class User(Base):
     audit_logs   = relationship("AuditLog",   back_populates="user")
     trusted_devices = relationship("UserTrustedDevice", back_populates="user",
                                    cascade="all, delete-orphan")
+    recovery_codes = relationship("UserRecoveryCode", back_populates="user",
+                                  cascade="all, delete-orphan")
     alert_states = relationship("UserAlertState", back_populates="user",
                                 cascade="all, delete-orphan")
 
@@ -42,6 +44,18 @@ class UserTrustedDevice(Base):
     revoked_at   = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="trusted_devices")
+
+
+class UserRecoveryCode(Base):
+    __tablename__ = "user_recovery_codes"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    code_hash  = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive)
+    used_at    = Column(DateTime, nullable=True, index=True)
+
+    user = relationship("User", back_populates="recovery_codes")
 
 
 class UserAlertState(Base):

@@ -871,6 +871,12 @@ export const API = {
   verifyAuthenticatorLogin,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
+  regenerateRecoveryCodes: () => request('POST', '/auth/recovery-codes/regenerate'),
+  getAdminUsers: () => request('GET', '/admin/users'),
+  resetUserAuthenticator: (userId, data = {}) =>
+    request('POST', `/admin/users/${userId}/authenticator/reset`, {
+      revoke_remembered_devices: data.revoke_remembered_devices !== false,
+    }),
 
   getProducts: (active_only = true) => request('GET', `/products${toQuery({ active_only })}`),
   getLowStock: () => request('GET', '/products/low-stock'),

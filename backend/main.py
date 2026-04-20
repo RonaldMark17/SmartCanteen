@@ -538,6 +538,10 @@ AUTHENTICATOR_PERIOD_SECONDS = 30
 AUTHENTICATOR_DIGITS = 6
 AUTHENTICATOR_WINDOW_STEPS = 1
 TRUSTED_DEVICE_DAYS = 30
+RECOVERY_CODE_COUNT = 10
+RECOVERY_CODE_GROUPS = 3
+RECOVERY_CODE_GROUP_LENGTH = 4
+RECOVERY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 def _generate_authenticator_secret() -> str:
@@ -657,6 +661,128 @@ def _attach_trusted_device_response(response: dict, token: str, expires_at: date
     return response
 
 
+def _normalize_recovery_code(code: str) -> str:
+    return "".join(
+        character
+        for character in str(code or "").upper()
+        if character.isalnum()
+    )
+
+
+def _recovery_code_hash(code: str) -> str:
+    normalized = _normalize_recovery_code(code)
+    if not normalized:
+        return ""
+
+    return hmac.new(
+        auth.SECRET_KEY.encode("utf-8"),
+        f"recovery-code:{normalized}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _format_recovery_code(raw_code: str) -> str:
+    normalized = _normalize_recovery_code(raw_code)
+    return "-".join(
+        normalized[index:index + RECOVERY_CODE_GROUP_LENGTH]
+        for index in range(0, len(normalized), RECOVERY_CODE_GROUP_LENGTH)
+    )
+
+
+def _generate_recovery_code() -> str:
+    character_count = RECOVERY_CODE_GROUPS * RECOVERY_CODE_GROUP_LENGTH
+    raw_code = "".join(secrets.choice(RECOVERY_CODE_ALPHABET) for _ in range(character_count))
+    return _format_recovery_code(raw_code)
+
+
+def _replace_user_recovery_codes(db: Session, user: models.User) -> list[str]:
+    db.query(models.UserRecoveryCode).filter(
+        models.UserRecoveryCode.user_id == user.id
+    ).delete(synchronize_session=False)
+
+    codes: list[str] = []
+    code_hashes: set[str] = set()
+    while len(codes) < RECOVERY_CODE_COUNT:
+        code = _generate_recovery_code()
+        code_hash = _recovery_code_hash(code)
+        if not code_hash or code_hash in code_hashes:
+            continue
+
+        code_hashes.add(code_hash)
+        codes.append(code)
+        db.add(models.UserRecoveryCode(
+            user_id=user.id,
+            code_hash=code_hash,
+        ))
+
+    return codes
+
+
+def _count_recovery_codes(db: Session, user: models.User) -> int:
+    return (
+        db.query(models.UserRecoveryCode)
+        .filter(
+            models.UserRecoveryCode.user_id == user.id,
+            models.UserRecoveryCode.used_at.is_(None),
+        )
+        .count()
+    )
+
+
+def _count_active_trusted_devices(db: Session, user: models.User) -> int:
+    return (
+        db.query(models.UserTrustedDevice)
+        .filter(
+            models.UserTrustedDevice.user_id == user.id,
+            models.UserTrustedDevice.revoked_at.is_(None),
+            models.UserTrustedDevice.expires_at > datetime.utcnow(),
+        )
+        .count()
+    )
+
+
+def _verify_recovery_code(db: Session, user: models.User, code: str) -> bool:
+    code_hash = _recovery_code_hash(code)
+    if not code_hash:
+        return False
+
+    recovery_code = (
+        db.query(models.UserRecoveryCode)
+        .filter(
+            models.UserRecoveryCode.user_id == user.id,
+            models.UserRecoveryCode.code_hash == code_hash,
+            models.UserRecoveryCode.used_at.is_(None),
+        )
+        .first()
+    )
+
+    if not recovery_code:
+        return False
+
+    recovery_code.used_at = datetime.utcnow()
+    return True
+
+
+def _reset_user_authenticator(db: Session, user: models.User, *, revoke_remembered_devices: bool = True):
+    user.authenticator_secret = None
+    user.authenticator_enabled = False
+    user.authenticator_last_counter = None
+
+    db.query(models.UserRecoveryCode).filter(
+        models.UserRecoveryCode.user_id == user.id
+    ).delete(synchronize_session=False)
+
+    if revoke_remembered_devices:
+        now = datetime.utcnow()
+        db.query(models.UserTrustedDevice).filter(
+            models.UserTrustedDevice.user_id == user.id,
+            models.UserTrustedDevice.revoked_at.is_(None),
+        ).update(
+            {models.UserTrustedDevice.revoked_at: now},
+            synchronize_session=False,
+        )
+
+
 def _user_payload(db: Session, user: models.User) -> dict:
     return {
         "id": user.id,
@@ -664,6 +790,8 @@ def _user_payload(db: Session, user: models.User) -> dict:
         "full_name": user.full_name,
         "role": user.role,
         "authenticator_mfa_enabled": bool(getattr(user, "authenticator_enabled", False)),
+        "recovery_codes_remaining": _count_recovery_codes(db, user),
+        "remembered_devices_active": _count_active_trusted_devices(db, user),
     }
 
 
@@ -789,6 +917,9 @@ def authenticator_authentication_verify(
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
 
+    recovery_codes: list[str] = []
+    recovery_code_used = False
+
     if purpose == "authenticator_setup":
         secret = token_payload.get("totp_secret")
         if not secret:
@@ -798,18 +929,30 @@ def authenticator_authentication_verify(
         user.authenticator_secret = secret
         user.authenticator_enabled = True
         user.authenticator_last_counter = counter
+        recovery_codes = _replace_user_recovery_codes(db, user)
         audit_details = "Successful login after authenticator app setup"
     else:
         if not user.authenticator_enabled or not user.authenticator_secret:
             raise HTTPException(status_code=400, detail="Authenticator app is not set up for this account")
 
-        counter = _verify_authenticator_code(
-            user.authenticator_secret,
-            data.code,
-            user.authenticator_last_counter,
-        )
-        user.authenticator_last_counter = counter
-        audit_details = "Successful login with authenticator app MFA"
+        try:
+            counter = _verify_authenticator_code(
+                user.authenticator_secret,
+                data.code,
+                user.authenticator_last_counter,
+            )
+            user.authenticator_last_counter = counter
+            audit_details = "Successful login with authenticator app MFA"
+        except HTTPException as exc:
+            if _verify_recovery_code(db, user, data.code):
+                recovery_code_used = True
+                audit_details = "Successful login with authenticator recovery code"
+            elif len(_normalize_recovery_code(data.code)) == (
+                RECOVERY_CODE_GROUPS * RECOVERY_CODE_GROUP_LENGTH
+            ):
+                raise HTTPException(status_code=401, detail="Invalid recovery code")
+            else:
+                raise exc
 
     remember_device_token = None
     remember_device_expires_at = None
@@ -828,6 +971,11 @@ def authenticator_authentication_verify(
     response = _build_login_success(db, user)
     response["authenticator_mfa_verified"] = True
     response["user"]["authenticator_mfa_enabled"] = True
+    response["recovery_codes_remaining"] = _count_recovery_codes(db, user)
+    if recovery_codes:
+        response["recovery_codes"] = recovery_codes
+    if recovery_code_used:
+        response["recovery_code_used"] = True
     if remember_device_token and remember_device_expires_at:
         _attach_trusted_device_response(response, remember_device_token, remember_device_expires_at)
     return response
@@ -871,6 +1019,91 @@ def me(
     current: models.User = Depends(auth.get_current_user),
 ):
     return _user_payload(db, current)
+
+
+@app.post("/auth/recovery-codes/regenerate", include_in_schema=False)
+@app.post("/api/auth/recovery-codes/regenerate", tags=["Auth"])
+def regenerate_my_recovery_codes(
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    if not current.authenticator_enabled or not current.authenticator_secret:
+        raise HTTPException(status_code=400, detail="Authenticator app is not set up for this account")
+
+    recovery_codes = _replace_user_recovery_codes(db, current)
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="RECOVERY_CODES_REGENERATED",
+        details="User regenerated authenticator recovery codes",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "message": "Recovery codes regenerated",
+        "recovery_codes": recovery_codes,
+        "recovery_codes_remaining": len(recovery_codes),
+    }
+
+
+@app.get("/api/admin/users", response_model=List[schemas.UserResponse], tags=["Admin"])
+def list_admin_users(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_admin),
+):
+    users = db.query(models.User).order_by(models.User.username).all()
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_active": user.is_active,
+            "authenticator_mfa_enabled": bool(user.authenticator_enabled and user.authenticator_secret),
+            "recovery_codes_remaining": _count_recovery_codes(db, user),
+            "remembered_devices_active": _count_active_trusted_devices(db, user),
+            "created_at": user.created_at,
+        }
+        for user in users
+    ]
+
+
+@app.post("/api/admin/users/{user_id}/authenticator/reset", tags=["Admin"])
+def admin_reset_user_authenticator(
+    user_id: int,
+    data: schemas.AuthenticatorResetRequest,
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    _reset_user_authenticator(
+        db,
+        user,
+        revoke_remembered_devices=data.revoke_remembered_devices,
+    )
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="AUTHENTICATOR_RESET",
+        details=f"Reset authenticator for {user.username}",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "message": "Authenticator reset. The user must set up a new authenticator at next login.",
+        "user_id": user.id,
+        "username": user.username,
+        "authenticator_mfa_enabled": False,
+        "recovery_codes_remaining": 0,
+        "remembered_devices_revoked": data.revoke_remembered_devices,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

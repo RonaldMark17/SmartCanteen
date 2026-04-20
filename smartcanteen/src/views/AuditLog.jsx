@@ -68,8 +68,12 @@ function formatPhilippineDateTime(value) {
 
 export default function AuditLog() {
   const [logs, setLogs] = useState([]);
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(true);
   const [error, setError] = useState('');
+  const [usersError, setUsersError] = useState('');
+  const [resettingUserId, setResettingUserId] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [philippineNow, setPhilippineNow] = useState(() => formatPhilippineDateTime(new Date()));
@@ -94,17 +98,61 @@ export default function AuditLog() {
     }
   }, []);
 
+  const loadUsers = useCallback(async ({ showLoading = false } = {}) => {
+    if (showLoading) {
+      setUsersLoading(true);
+    }
+
+    setUsersError('');
+    try {
+      const data = await API.getAdminUsers();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("User recovery error:", err);
+      setUsersError(err.message || 'User recovery status could not be loaded.');
+    } finally {
+      if (showLoading) {
+        setUsersLoading(false);
+      }
+    }
+  }, []);
+
+  const resetAuthenticator = async (user) => {
+    const username = user?.username || 'this user';
+    const confirmed = window.confirm(
+      `Reset authenticator for ${username}? They will need to set up a new authenticator app at next login.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setResettingUserId(user.id);
+    setUsersError('');
+    try {
+      await API.resetUserAuthenticator(user.id, { revoke_remembered_devices: true });
+      window.showToast?.(`Authenticator reset for ${username}.`, 'success');
+      await Promise.all([loadUsers(), loadLogs()]);
+    } catch (err) {
+      setUsersError(err.message || 'Authenticator reset failed.');
+    } finally {
+      setResettingUserId(null);
+    }
+  };
+
   useEffect(() => {
     loadLogs({ showLoading: true });
+    loadUsers({ showLoading: true });
 
     const refreshId = window.setInterval(() => {
       loadLogs();
+      loadUsers();
     }, AUDIT_REFRESH_INTERVAL_MS);
 
     return () => {
       window.clearInterval(refreshId);
     };
-  }, [loadLogs]);
+  }, [loadLogs, loadUsers]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -170,6 +218,101 @@ export default function AuditLog() {
           {error}
         </div>
       )}
+
+      <section className="data-card shrink-0">
+        <div className="flex flex-col gap-3 border-b border-slate-100 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-[22px] font-extrabold tracking-tight text-slate-900">Authenticator Recovery</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Reset a lost authenticator app and check backup-code coverage per user.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => loadUsers({ showLoading: true })}
+            className="action-button self-start sm:self-center"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${usersLoading ? 'animate-spin' : ''}`} />
+            Refresh Users
+          </button>
+        </div>
+
+        {usersError && (
+          <div className="mx-5 mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {usersError}
+          </div>
+        )}
+
+        <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
+          {usersLoading ? (
+            Array.from({ length: 3 }, (_, index) => (
+              <div key={`user-recovery-skeleton-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="mt-3 h-6 w-24 rounded-lg" />
+                <SkeletonText lines={['h-4 w-full', 'h-4 w-4/5']} className="mt-3" />
+              </div>
+            ))
+          ) : users.length === 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-3">
+              No users found.
+            </div>
+          ) : (
+            users.map((user) => {
+              const hasAuthenticator = Boolean(user.authenticator_mfa_enabled);
+              return (
+                <div key={user.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-black text-slate-900">
+                        {user.full_name || user.username}
+                      </div>
+                      <div className="mt-1 truncate font-mono text-xs font-bold text-slate-400">
+                        @{user.username}
+                      </div>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${
+                      hasAuthenticator
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : 'bg-amber-50 text-amber-700'
+                    }`}>
+                      {hasAuthenticator ? 'MFA on' : 'Setup needed'}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Recovery
+                      </div>
+                      <div className="mt-1 font-black text-slate-900">
+                        {formatCount(user.recovery_codes_remaining)} codes
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Remembered
+                      </div>
+                      <div className="mt-1 font-black text-slate-900">
+                        {formatCount(user.remembered_devices_active)} devices
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => resetAuthenticator(user)}
+                    disabled={!hasAuthenticator || resettingUserId === user.id}
+                    className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-black text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ShieldCheckIcon className="h-4 w-4" />
+                    {resettingUserId === user.id ? 'Resetting...' : 'Reset Authenticator'}
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
 
       <div className="data-card flex shrink-0 flex-col md:min-h-0 md:flex-1 md:shrink">
         <div className="flex shrink-0 flex-col gap-2 border-b border-slate-100 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
