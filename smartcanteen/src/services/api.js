@@ -19,6 +19,9 @@ const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
 const NATIVE_API_BASE = DEFAULT_REMOTE_API_BASE;
 const DEFAULT_LOCAL_API_PORT = String(import.meta.env.VITE_API_PORT || '8000').trim();
+const envApiTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || '');
+const API_REQUEST_TIMEOUT_MS =
+  Number.isFinite(envApiTimeoutMs) && envApiTimeoutMs > 0 ? envApiTimeoutMs : 20000;
 
 const envApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const envApiFallbackBase = import.meta.env.VITE_API_FALLBACK_BASE_URL?.trim();
@@ -29,12 +32,99 @@ function isAbsoluteUrl(value) {
   return /^https?:\/\//i.test(String(value || ''));
 }
 
+function getRuntimePlatform() {
+  try {
+    const platform = Capacitor.getPlatform?.();
+    if (platform) {
+      return String(platform).toLowerCase();
+    }
+  } catch {
+    // Fall through to the browser bridge check.
+  }
+
+  try {
+    const platform = typeof window !== 'undefined' ? window.Capacitor?.getPlatform?.() : '';
+    if (platform) {
+      return String(platform).toLowerCase();
+    }
+  } catch {
+    // Fall through to web.
+  }
+
+  return 'web';
+}
+
+function isNativeRuntime() {
+  const platform = getRuntimePlatform();
+  if (platform === 'android' || platform === 'ios') {
+    return true;
+  }
+
+  try {
+    if (Capacitor.isNativePlatform?.()) {
+      return true;
+    }
+  } catch {
+    // Fall through to browser checks.
+  }
+
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  try {
+    if (window.Capacitor?.isNativePlatform?.()) {
+      return true;
+    }
+  } catch {
+    // Fall through to protocol checks.
+  }
+
+  const protocol = window.location?.protocol;
+  return protocol === 'capacitor:' || protocol === 'ionic:';
+}
+
+function isMobileDevice() {
+  const platform = getRuntimePlatform();
+  if (platform === 'android' || platform === 'ios') {
+    return true;
+  }
+
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent || '';
+  return /android|iphone|ipad|ipod|mobile/i.test(userAgent);
+}
+
+function getDeviceClass() {
+  return isMobileDevice() ? 'mobile' : 'desktop';
+}
+
 function isIpHostname(hostname) {
   const value = String(hostname || '').trim().toLowerCase();
   return (
     /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) ||
     value.includes(':')
   );
+}
+
+function isLoopbackHostname(hostname) {
+  const value = String(hostname || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return value === 'localhost' || value === '127.0.0.1' || value === '::1' || value === '0.0.0.0';
+}
+
+function isLoopbackApiBase(value) {
+  if (!isAbsoluteUrl(value)) {
+    return false;
+  }
+
+  try {
+    return isLoopbackHostname(new URL(value).hostname);
+  } catch {
+    return false;
+  }
 }
 
 function getPasskeySupportStatus() {
@@ -46,10 +136,12 @@ function getPasskeySupportStatus() {
   const protocol = window.location?.protocol;
   const isLocalhost = hostname === 'localhost';
 
-  if (Capacitor.isNativePlatform() || protocol === 'capacitor:') {
+  if (isNativeRuntime()) {
     return {
       supported: false,
       reason: 'Passkey MFA must be set up from Chrome, Edge, or Safari on the web app.',
+      platform: getRuntimePlatform(),
+      deviceClass: getDeviceClass(),
     };
   }
 
@@ -82,7 +174,7 @@ function getPasskeySupportStatus() {
     };
   }
 
-  return { supported: true, reason: '' };
+  return { supported: true, reason: '', platform: getRuntimePlatform(), deviceClass: getDeviceClass() };
 }
 
 function isPasskeySupported() {
@@ -128,7 +220,12 @@ function passkeyOperationError(error) {
   const name = String(error?.name || '');
 
   if (name === 'NotAllowedError') {
-    return new Error('Passkey verification was cancelled or timed out.');
+    const deviceHint = isMobileDevice()
+      ? ' On a different phone, the registered passkey may not be available on this device.'
+      : '';
+    return new Error(
+      `Passkey verification was cancelled, timed out, or no matching passkey was available.${deviceHint}`
+    );
   }
 
   if (name === 'SecurityError') {
@@ -328,7 +425,7 @@ export function formatLocalDateInputValue(value = new Date()) {
 }
 
 function resolveApiBase() {
-  if (Capacitor.isNativePlatform()) {
+  if (isNativeRuntime()) {
     if (envNativeApiBase) {
       return normalizeApiBase(envNativeApiBase);
     }
@@ -357,7 +454,21 @@ function resolveApiBase() {
 }
 
 function resolveFallbackApiBase(primaryBase) {
-  if (Capacitor.isNativePlatform() || typeof window === 'undefined') {
+  if (isNativeRuntime()) {
+    const nativeFallbackCandidates = [
+      envApiFallbackBase,
+      envApiBase && isAbsoluteUrl(envApiBase) ? envApiBase : null,
+      DEFAULT_REMOTE_API_BASE,
+    ]
+      .filter(Boolean)
+      .map(normalizeApiBase)
+      .filter((base, index, bases) => bases.indexOf(base) === index)
+      .filter((base) => base !== primaryBase && !isLoopbackApiBase(base));
+
+    return nativeFallbackCandidates[0] || null;
+  }
+
+  if (typeof window === 'undefined') {
     return null;
   }
 
@@ -380,7 +491,7 @@ export function getRealtimeAlertsUrl() {
     return null;
   }
 
-  const realtimeBase = API_FALLBACK_BASE || API_BASE || API_ROOT_PATH;
+  const realtimeBase = API_BASE || API_FALLBACK_BASE || API_ROOT_PATH;
   const apiBaseUrl = new URL(realtimeBase, window.location.origin);
   apiBaseUrl.protocol = apiBaseUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   apiBaseUrl.pathname = `${trimTrailingSlash(apiBaseUrl.pathname)}/realtime/alerts`;
@@ -460,6 +571,26 @@ function clearSession() {
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
 }
 
+function buildOfflineSessionResponse(user) {
+  const offlineUser = {
+    ...user,
+    offline: true,
+  };
+  const tokenSubject = offlineUser.username || offlineUser.id || 'user';
+  const token = `offline-session:${tokenSubject}:${Date.now()}`;
+
+  localStorage.setItem('sc_token', token);
+  localStorage.setItem('sc_user', JSON.stringify(offlineUser));
+  localStorage.setItem(OFFLINE_SESSION_STORAGE_KEY, '1');
+
+  return {
+    access_token: token,
+    token_type: 'offline',
+    user: offlineUser,
+    offline: true,
+  };
+}
+
 function isOfflineSessionToken(token) {
   return String(token || '').startsWith('offline-session:');
 }
@@ -469,9 +600,11 @@ function isOfflineSessionActive() {
 }
 
 function isConnectivityError(error) {
+  const message = String(error?.message || '');
   return (
     error instanceof OfflineError ||
-    String(error?.message || '').includes('Cannot connect to server at')
+    message.includes('Cannot connect to server at') ||
+    message.includes('Server did not respond at')
   );
 }
 
@@ -488,6 +621,49 @@ function buildUnexpectedResponseError(path, requestUrl, payload) {
   }
 
   return new Error(`The API request "${requestUrl}" returned an unexpected response.`);
+}
+
+function getClientRequestHeaders() {
+  const passkeySupport = getPasskeySupportStatus();
+  const platform = getRuntimePlatform();
+  const nativeRuntime = isNativeRuntime();
+
+  return {
+    'X-SmartCanteen-Client': nativeRuntime ? 'native' : 'web',
+    'X-SmartCanteen-Platform': platform,
+    'X-SmartCanteen-Device-Class': getDeviceClass(),
+    'X-SmartCanteen-Passkey-Supported': passkeySupport.supported ? '1' : '0',
+  };
+}
+
+async function fetchWithTimeout(requestUrl, options = {}) {
+  if (typeof AbortController === 'undefined' || API_REQUEST_TIMEOUT_MS <= 0) {
+    return fetch(requestUrl, options);
+  }
+
+  const controller = new AbortController();
+  const setTimer = typeof window !== 'undefined' ? window.setTimeout.bind(window) : setTimeout;
+  const clearTimer = typeof window !== 'undefined' ? window.clearTimeout.bind(window) : clearTimeout;
+  const timeoutId = setTimer(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(requestUrl, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimer(timeoutId);
+  }
+}
+
+function buildConnectionError(apiBase, error) {
+  if (error?.name === 'AbortError') {
+    return new Error(
+      `Server did not respond at ${apiBase} within ${Math.round(API_REQUEST_TIMEOUT_MS / 1000)}s. Check your backend and API config.`
+    );
+  }
+
+  return new Error(`Cannot connect to server at ${apiBase}. Check your backend and API config.`);
 }
 
 async function readJsonResponse(res, path, requestUrl = path) {
@@ -555,6 +731,7 @@ async function performRequest(method, path, body = null) {
 
   const baseHeaders = {
     'Content-Type': 'application/json',
+    ...getClientRequestHeaders(),
   };
 
   if (token && !isOfflineSessionToken(token)) {
@@ -576,12 +753,12 @@ async function performRequest(method, path, body = null) {
 
     let res;
     try {
-      res = await fetch(requestUrl, {
+      res = await fetchWithTimeout(requestUrl, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
       });
-    } catch {
+    } catch (error) {
       lastConnectionBase = apiBase;
       if (hasFallback) {
         continue;
@@ -594,7 +771,7 @@ async function performRequest(method, path, body = null) {
         }
       }
 
-      throw new Error(`Cannot connect to server at ${apiBase}. Check your backend and API config.`);
+      throw buildConnectionError(apiBase, error);
     }
 
     if (hasFallback && (res.status === 502 || res.status === 503 || res.status === 504)) {
@@ -794,6 +971,10 @@ async function login(username, password) {
     let response = await request('POST', '/auth/login', { username, password });
 
     if (response?.passkey_registration_required && response?.mfa_type === 'passkey_registration') {
+      const support = getPasskeySupportStatus();
+      if (!support.supported) {
+        throw new Error(support.reason);
+      }
       mfaStarted = true;
       const credential = await createPasskeyCredential(response.passkey_options);
       response = await request('POST', '/auth/passkey/login-register/verify', {
@@ -803,6 +984,10 @@ async function login(username, password) {
         name: 'SmartCanteen passkey',
       });
     } else if (response?.mfa_required && response?.mfa_type === 'passkey') {
+      const support = getPasskeySupportStatus();
+      if (!support.supported) {
+        throw new Error(support.reason);
+      }
       mfaStarted = true;
       const credential = await getPasskeyCredential(response.passkey_options);
       response = await request('POST', '/auth/passkey/authenticate/verify', {
@@ -812,7 +997,14 @@ async function login(username, password) {
       });
     }
 
-    await saveOfflineLoginProfile({ user: response?.user, password });
+    const offlineProfileUser = {
+      ...response?.user,
+      mobile_password_fallback: Boolean(response?.mobile_password_fallback),
+      passkey_mfa_deferred: Boolean(response?.passkey_mfa_deferred),
+      passkey_registration_deferred: Boolean(response?.passkey_registration_deferred),
+    };
+
+    await saveOfflineLoginProfile({ user: offlineProfileUser, password });
     localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
     return response;
   } catch (error) {
@@ -827,11 +1019,11 @@ async function login(username, password) {
       );
     }
 
-    if (offlineUser.passkey_mfa_enabled) {
+    if (offlineUser.passkey_mfa_enabled && !offlineUser.mobile_password_fallback) {
       throw new Error('Passkey MFA requires an online connection for this account.');
     }
 
-    throw new Error('Passkey MFA is required. Connect online to set up your passkey before logging in.');
+    return buildOfflineSessionResponse(offlineUser);
   }
 }
 

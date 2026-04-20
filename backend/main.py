@@ -29,6 +29,7 @@ from webauthn.helpers import base64url_to_bytes, bytes_to_base64url, options_to_
 from webauthn.helpers.exceptions import WebAuthnException
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
+    AuthenticatorTransport,
     PublicKeyCredentialDescriptor,
     PublicKeyCredentialType,
     ResidentKeyRequirement,
@@ -322,6 +323,8 @@ cors_options = {
         "http://127.0.0.1:5173",
         "http://localhost:4173",
         "http://127.0.0.1:4173",
+        "capacitor://localhost",
+        "ionic://localhost",
         "http://13.55.37.38",
         "https://13.55.37.38",
         "http://smartcanteen.ct.ws",
@@ -510,6 +513,27 @@ PASSKEY_RP_NAME = os.environ.get("SMARTCANTEEN_PASSKEY_RP_NAME", "SmartCanteen")
 PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+PASSKEY_OPERATION_TIMEOUT_MS = _env_int("SMARTCANTEEN_PASSKEY_TIMEOUT_MS", 120000)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+PASSKEY_MOBILE_FALLBACK_ENABLED = _env_flag("SMARTCANTEEN_PASSKEY_MOBILE_FALLBACK", True)
+
+
 def _enum_value(value):
     return getattr(value, "value", value)
 
@@ -572,6 +596,50 @@ def _request_origin(req: Request) -> str:
     return f"{scheme}://{host}".rstrip("/")
 
 
+def _request_header(req: Request, name: str) -> str:
+    return (req.headers.get(name) or "").strip().lower()
+
+
+def _request_is_native_client(req: Request) -> bool:
+    client = _request_header(req, "x-smartcanteen-client")
+    platform = _request_header(req, "x-smartcanteen-platform")
+
+    return client in {"native", "android", "ios", "mobile-app"} or platform in {"android", "ios"}
+
+
+def _request_is_mobile_client(req: Request) -> bool:
+    if _request_is_native_client(req):
+        return True
+
+    if _request_header(req, "x-smartcanteen-device-class") == "mobile":
+        return True
+
+    return "mobile" in _request_header(req, "user-agent")
+
+
+def _request_reports_passkey_unsupported(req: Request) -> bool:
+    value = _request_header(req, "x-smartcanteen-passkey-supported")
+    return value in {"0", "false", "no", "unsupported"}
+
+
+def _passkey_mobile_fallback_allowed(req: Request) -> bool:
+    if not PASSKEY_MOBILE_FALLBACK_ENABLED:
+        return False
+
+    if _request_is_native_client(req) or _request_is_mobile_client(req):
+        return True
+
+    if not _request_reports_passkey_unsupported(req):
+        return False
+
+    try:
+        hostname = (urlparse(_request_origin(req)).hostname or "").rstrip(".").lower()
+    except HTTPException:
+        return False
+
+    return hostname in {"localhost", "127.0.0.1"} or _is_ip_hostname(hostname)
+
+
 def _rp_id_from_origin(origin: str) -> str:
     configured_rp_id = os.environ.get("SMARTCANTEEN_PASSKEY_RP_ID")
     hostname = urlparse(origin).hostname
@@ -631,10 +699,33 @@ def _user_payload(db: Session, user: models.User) -> dict:
 
 
 def _credential_descriptors(passkeys: List[models.UserPasskey]) -> List[PublicKeyCredentialDescriptor]:
-    return [
-        PublicKeyCredentialDescriptor(id=base64url_to_bytes(passkey.credential_id))
-        for passkey in passkeys
-    ]
+    descriptors: List[PublicKeyCredentialDescriptor] = []
+
+    for passkey in passkeys:
+        transports = None
+        if passkey.transports:
+            try:
+                transport_values = json.loads(passkey.transports)
+            except (TypeError, ValueError):
+                transport_values = []
+
+            parsed_transports = []
+            for transport in transport_values if isinstance(transport_values, list) else []:
+                try:
+                    parsed_transports.append(AuthenticatorTransport(str(transport)))
+                except ValueError:
+                    continue
+
+            transports = parsed_transports or None
+
+        descriptors.append(
+            PublicKeyCredentialDescriptor(
+                id=base64url_to_bytes(passkey.credential_id),
+                transports=transports,
+            )
+        )
+
+    return descriptors
 
 
 def _store_webauthn_challenge(
@@ -706,6 +797,7 @@ def _registration_options_for_user(db: Session, req: Request, user: models.User)
         user_id=str(user.id).encode("utf-8"),
         user_name=user.username,
         user_display_name=user.full_name or user.username,
+        timeout=PASSKEY_OPERATION_TIMEOUT_MS,
         exclude_credentials=_credential_descriptors(_active_passkeys(db, user.id)),
         authenticator_selection=AuthenticatorSelectionCriteria(
             resident_key=ResidentKeyRequirement.PREFERRED,
@@ -752,6 +844,7 @@ def _begin_passkey_authentication(
     mfa_token, token_id = auth.create_mfa_token(user.username)
     options = generate_authentication_options(
         rp_id=rp_id,
+        timeout=PASSKEY_OPERATION_TIMEOUT_MS,
         allow_credentials=_credential_descriptors(passkeys),
         user_verification=UserVerificationRequirement.REQUIRED,
     )
@@ -795,13 +888,47 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     passkeys = _active_passkeys(db, user.id)
-    if passkeys:
+    mobile_passkey_fallback = _passkey_mobile_fallback_allowed(req)
+
+    if passkeys and not mobile_passkey_fallback:
         response = _begin_passkey_authentication(db, req, user, passkeys)
         _add_audit_log(
             db,
             user_id=user.id,
             action="LOGIN_MFA_REQUIRED",
             details="Password accepted; passkey MFA required",
+            request=req,
+        )
+        db.commit()
+        return response
+
+    if passkeys and mobile_passkey_fallback:
+        response = _build_login_success(db, user)
+        response.update({
+            "mobile_password_fallback": True,
+            "passkey_mfa_deferred": True,
+        })
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN_MFA_DEFERRED",
+            details="Password accepted; passkey MFA deferred for mobile/native client",
+            request=req,
+        )
+        db.commit()
+        return response
+
+    if mobile_passkey_fallback:
+        response = _build_login_success(db, user)
+        response.update({
+            "mobile_password_fallback": True,
+            "passkey_registration_deferred": True,
+        })
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN_PASSKEY_REGISTRATION_DEFERRED",
+            details="Password accepted; passkey setup deferred for mobile/native client",
             request=req,
         )
         db.commit()
