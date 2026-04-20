@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import {
@@ -7,7 +8,6 @@ import {
   CheckCircleIcon,
   EyeIcon,
   EyeSlashIcon,
-  FingerPrintIcon,
   LockClosedIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
@@ -39,7 +39,7 @@ const workspaceDetails = [
 const accessDetails = [
   { label: 'Roles', value: 'Cashier, Staff, Admin' },
   { label: 'Lockout', value: '3 failed attempts' },
-  { label: 'MFA', value: 'Passkey or biometrics' },
+  { label: 'MFA', value: 'Authenticator app' },
 ];
 
 function normalizeLoginIdentifier(value) {
@@ -155,6 +155,10 @@ function isCredentialFailure(message) {
   return String(message || '').toLowerCase().includes('invalid username or password');
 }
 
+function normalizeAuthenticatorCode(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 6);
+}
+
 function getRememberedUsername() {
   try {
     return localStorage.getItem(REMEMBERED_USERNAME_STORAGE_KEY) || '';
@@ -188,12 +192,18 @@ export default function Login({ onLogin }) {
   const [rememberUsername, setRememberUsername] = useState(() => Boolean(getRememberedUsername()));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [authenticatorChallenge, setAuthenticatorChallenge] = useState(null);
+  const [authenticatorCode, setAuthenticatorCode] = useState('');
+  const [authenticatorQrCode, setAuthenticatorQrCode] = useState('');
+  const [secretCopied, setSecretCopied] = useState(false);
   const [lockoutNow, setLockoutNow] = useState(() => Date.now());
 
   const loginIdentifier = normalizeLoginIdentifier(username);
   const lockoutState = getLoginLockoutState(loginIdentifier, lockoutNow);
   const lockoutRemainingLabel = formatLockoutDuration(lockoutState.remainingMs);
   const portalLabel = getPortalLabel(username);
+  const isAuthenticatorStep = Boolean(authenticatorChallenge);
+  const isAuthenticatorSetup = authenticatorChallenge?.mfa_type === 'authenticator_setup';
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -202,6 +212,41 @@ export default function Login({ onLogin }) {
 
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const otpUrl = authenticatorChallenge?.authenticator?.otpauth_url;
+
+    if (!otpUrl) {
+      setAuthenticatorQrCode('');
+      return () => {
+        active = false;
+      };
+    }
+
+    QRCode.toDataURL(otpUrl, {
+      margin: 1,
+      width: 176,
+      color: {
+        dark: '#0f172a',
+        light: '#ffffff',
+      },
+    })
+      .then((dataUrl) => {
+        if (active) {
+          setAuthenticatorQrCode(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthenticatorQrCode('');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [authenticatorChallenge]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -220,7 +265,28 @@ export default function Login({ onLogin }) {
     setError('');
 
     try {
-      const res = await API.login(submittedUsername.trim(), submittedPassword);
+      const res = authenticatorChallenge
+        ? await API.verifyAuthenticatorLogin(
+            authenticatorChallenge.mfa_token,
+            authenticatorCode,
+            submittedPassword,
+            {
+              rememberDevice: rememberUsername,
+              username: submittedUsername.trim(),
+            }
+          )
+        : await API.login(submittedUsername.trim(), submittedPassword, {
+            rememberDevice: rememberUsername,
+          });
+
+      if (res?.mfa_required && !res?.access_token) {
+        setAuthenticatorChallenge(res);
+        setAuthenticatorCode('');
+        setSecretCopied(false);
+        setLoading(false);
+        return;
+      }
+
       clearLoginLockout(identifier);
       setLockoutNow(Date.now());
       if (rememberUsername) {
@@ -230,6 +296,8 @@ export default function Login({ onLogin }) {
       }
       localStorage.setItem('sc_token', res.access_token);
       localStorage.setItem('sc_user', JSON.stringify(res.user));
+      setAuthenticatorChallenge(null);
+      setAuthenticatorCode('');
       if (res.offline) {
         window.showToast?.('Signed in with offline access saved on this device.', 'warning');
       }
@@ -263,7 +331,32 @@ export default function Login({ onLogin }) {
   const handleUsernameChange = (event) => {
     setUsername(event.target.value);
     setError('');
+    setAuthenticatorChallenge(null);
+    setAuthenticatorCode('');
     setLockoutNow(Date.now());
+  };
+
+  const resetAuthenticatorStep = () => {
+    setAuthenticatorChallenge(null);
+    setAuthenticatorCode('');
+    setAuthenticatorQrCode('');
+    setSecretCopied(false);
+    setError('');
+  };
+
+  const copySetupKey = async () => {
+    const secret = authenticatorChallenge?.authenticator?.secret;
+    if (!secret || !navigator.clipboard) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(secret);
+      setSecretCopied(true);
+      window.setTimeout(() => setSecretCopied(false), 1800);
+    } catch {
+      setSecretCopied(false);
+    }
   };
 
   return (
@@ -397,7 +490,7 @@ export default function Login({ onLogin }) {
           </aside>
 
           <section className="flex min-h-0 items-center justify-center bg-slate-900/95 px-4 py-4 max-sm:h-full max-sm:bg-transparent max-sm:px-2 max-sm:py-2 sm:px-8 sm:py-5 lg:px-10">
-            <div className="w-full max-w-md rounded-[24px] border border-slate-800 bg-slate-950/70 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.28)] max-sm:flex max-sm:h-full max-sm:flex-col max-sm:justify-center max-sm:border-slate-800/90 max-sm:bg-slate-950/80 max-sm:p-4 sm:p-5">
+            <div className="max-h-full w-full max-w-md overflow-y-auto rounded-[24px] border border-slate-800 bg-slate-950/70 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.28)] max-sm:flex max-sm:h-full max-sm:flex-col max-sm:justify-center max-sm:border-slate-800/90 max-sm:bg-slate-950/80 max-sm:p-4 sm:p-5">
               <div className="mb-4 flex items-center gap-3 lg:hidden">
                 <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary text-base font-black text-white shadow-lg shadow-primary/40 ring-4 ring-primary/10 sm:h-10 sm:w-10 sm:text-sm">
                   <span className="absolute inset-0 rounded-2xl bg-white/10 animate-pulse" />
@@ -472,7 +565,7 @@ export default function Login({ onLogin }) {
                     className="mt-1.5 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3.5 text-base font-medium text-slate-100 outline-none transition duration-200 placeholder:text-slate-600 focus:border-fuchsia-400 focus:bg-slate-950 focus:ring-2 focus:ring-fuchsia-400/25 focus:shadow-[0_0_0_4px_rgba(168,85,247,0.18),0_14px_30px_rgba(0,0,0,0.28)] disabled:cursor-not-allowed disabled:opacity-60 sm:py-3 sm:text-sm"
                     value={username}
                     onChange={handleUsernameChange}
-                    disabled={loading}
+                    disabled={loading || isAuthenticatorStep}
                     autoComplete="username"
                   />
                 </label>
@@ -489,7 +582,7 @@ export default function Login({ onLogin }) {
                       className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3.5 pr-14 text-base font-medium text-slate-100 outline-none transition duration-200 placeholder:text-slate-600 focus:border-fuchsia-400 focus:bg-slate-950 focus:ring-2 focus:ring-fuchsia-400/25 focus:shadow-[0_0_0_4px_rgba(168,85,247,0.18),0_14px_30px_rgba(0,0,0,0.28)] disabled:cursor-not-allowed disabled:opacity-60 sm:py-3 sm:text-sm"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      disabled={loading}
+                      disabled={loading || isAuthenticatorStep}
                       autoComplete="current-password"
                     />
                     <button
@@ -503,6 +596,78 @@ export default function Login({ onLogin }) {
                   </div>
                 </label>
 
+                {isAuthenticatorStep && (
+                  <div className="rounded-[16px] border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-200">
+                          Authenticator app
+                        </div>
+                        <div className="mt-1 text-sm font-black text-white">
+                          {isAuthenticatorSetup ? 'Set up verification' : 'Enter verification code'}
+                        </div>
+                      </div>
+                      <ShieldCheckIcon className="h-5 w-5 shrink-0 text-emerald-300" />
+                    </div>
+
+                    {isAuthenticatorSetup && (
+                      <div className="mt-3 grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)]">
+                        {authenticatorQrCode && (
+                          <div className="mx-auto rounded-xl bg-white p-2 sm:mx-0">
+                            <img
+                              src={authenticatorQrCode}
+                              alt="Authenticator setup QR code"
+                              className="h-32 w-32"
+                            />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-xs leading-5 text-emerald-100/90">
+                            Scan the QR code or enter this setup key in Google Authenticator,
+                            Microsoft Authenticator, Authy, or another TOTP app.
+                          </div>
+                          <div className="mt-2 break-all rounded-xl border border-emerald-300/20 bg-slate-950/80 px-3 py-2 font-mono text-sm font-black tracking-widest text-white">
+                            {authenticatorChallenge?.authenticator?.secret_formatted}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={copySetupKey}
+                            className="mt-2 rounded-xl border border-emerald-300/20 px-3 py-1.5 text-xs font-black text-emerald-100 transition hover:bg-emerald-300/10"
+                          >
+                            {secretCopied ? 'Copied' : 'Copy key'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <label className="mt-3 block">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+                        6-digit code
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        required={isAuthenticatorStep}
+                        placeholder="000000"
+                        className="mt-1.5 w-full rounded-2xl border border-emerald-300/25 bg-slate-950 px-4 py-3.5 text-center font-mono text-xl font-black tracking-[0.28em] text-white outline-none transition duration-200 placeholder:text-slate-700 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20 disabled:cursor-not-allowed disabled:opacity-60"
+                        value={authenticatorCode}
+                        onChange={(event) => setAuthenticatorCode(normalizeAuthenticatorCode(event.target.value))}
+                        disabled={loading}
+                        autoComplete="one-time-code"
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={resetAuthenticatorStep}
+                      className="mt-2 text-xs font-black text-emerald-100/80 transition hover:text-white"
+                    >
+                      Use a different account
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between gap-3 text-xs">
                   <label className="flex items-center gap-2 font-bold text-slate-400">
                     <input
@@ -511,20 +676,26 @@ export default function Login({ onLogin }) {
                       onChange={(event) => setRememberUsername(event.target.checked)}
                       className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-primary focus:ring-2 focus:ring-primary/30"
                     />
-                    Remember me
+                    Remember me for 30 days
                   </label>
                 </div>
 
                 <div className="hidden items-start gap-2 rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2.5 sm:flex [@media(max-height:650px)]:hidden">
-                  <FingerPrintIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                  <ShieldCheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
                   <div className="text-xs leading-5 text-slate-400">
-                    <span className="font-black text-slate-100">MFA required:</span> Web uses passkeys. The mobile app uses device biometrics.
+                    <span className="font-black text-slate-100">MFA required:</span> Use a 6-digit code from your authenticator app.
                   </div>
                 </div>
 
                 <button
                   type="submit"
-                  disabled={loading || lockoutState.isLocked || !username || !password}
+                  disabled={
+                    loading ||
+                    lockoutState.isLocked ||
+                    !username ||
+                    !password ||
+                    (isAuthenticatorStep && authenticatorCode.length !== 6)
+                  }
                   className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#f35cff,#a855f7,#6d28d9)] px-4 py-[1.125rem] text-base font-black text-white shadow-[0_18px_42px_rgba(168,85,247,0.48)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_24px_58px_rgba(168,85,247,0.58)] active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-[0_18px_42px_rgba(168,85,247,0.48)] sm:py-4 sm:text-sm"
                 >
                   {lockoutState.isLocked ? (
@@ -534,6 +705,10 @@ export default function Login({ onLogin }) {
                       <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
                       Authenticating...
                     </span>
+                  ) : isAuthenticatorSetup ? (
+                    'Set Up & Sign In'
+                  ) : isAuthenticatorStep ? (
+                    'Verify Code'
                   ) : (
                     'Sign In'
                   )}

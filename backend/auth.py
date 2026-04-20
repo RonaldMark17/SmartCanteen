@@ -40,7 +40,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def create_mfa_token(username: str, purpose: str = "passkey") -> tuple[str, str]:
+def create_mfa_token(username: str, purpose: str = "authenticator", extra: Optional[dict] = None) -> tuple[str, str]:
     token_id = uuid.uuid4().hex
     expire = datetime.utcnow() + timedelta(minutes=MFA_EXPIRE_MINS)
     payload = {
@@ -50,10 +50,12 @@ def create_mfa_token(username: str, purpose: str = "passkey") -> tuple[str, str]
         "purpose": purpose,
         "exp": expire,
     }
+    if extra:
+        payload.update(extra)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM), token_id
 
 
-def decode_mfa_token(token: str, purpose: str = "passkey") -> dict:
+def decode_mfa_token(token: str, purpose: str = "authenticator") -> dict:
     exc = HTTPException(status_code=401, detail="Invalid or expired MFA token")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

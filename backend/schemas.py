@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Any, Optional, List
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -8,29 +8,13 @@ from datetime import datetime
 class LoginRequest(BaseModel):
     username: str
     password: str
+    remember_device_token: Optional[str] = None
 
 
-class PasskeyRegistrationFinishRequest(BaseModel):
-    challenge_id: int
-    credential: dict[str, Any]
-    name: Optional[str] = None
-
-
-class PasskeyLoginRegistrationFinishRequest(BaseModel):
+class AuthenticatorAuthenticationFinishRequest(BaseModel):
     mfa_token: str
-    challenge_id: int
-    credential: dict[str, Any]
-    name: Optional[str] = None
-
-
-class PasskeyAuthenticationFinishRequest(BaseModel):
-    mfa_token: str
-    challenge_id: int
-    credential: dict[str, Any]
-
-
-class BiometricAuthenticationFinishRequest(BaseModel):
-    mfa_token: str
+    code: str
+    remember_device: bool = False
 
 
 # ── User ───────────────────────────────────────────────────────────────────────

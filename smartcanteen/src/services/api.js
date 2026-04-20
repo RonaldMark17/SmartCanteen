@@ -1,11 +1,9 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import {
   countOfflineTransactions,
   getApiCacheEntry,
-  getOfflineLoginProfile,
   getLatestApiCacheEntry,
   getOfflineTransactions,
-  markOfflineLoginProfileMfa,
   removeOfflineTransactions,
   saveApiCacheEntry,
   saveOfflineLoginProfile,
@@ -14,6 +12,7 @@ import {
 const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
 const OFFLINE_SESSION_STORAGE_KEY = 'sc_offline_session';
+const TRUSTED_DEVICE_STORAGE_KEY = 'sc_trusted_authenticator_devices';
 const DEFAULT_REMOTE_API_ORIGIN = 'https://smartcanteen.duckdns.org';
 const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
@@ -27,7 +26,6 @@ const envApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const envApiFallbackBase = import.meta.env.VITE_API_FALLBACK_BASE_URL?.trim();
 const envNativeApiBase = import.meta.env.VITE_NATIVE_API_BASE_URL?.trim();
 const envApiHost = import.meta.env.VITE_API_HOST?.trim();
-const SmartCanteenBiometrics = registerPlugin('SmartCanteenBiometrics');
 
 function isAbsoluteUrl(value) {
   return /^https?:\/\//i.test(String(value || ''));
@@ -103,12 +101,76 @@ function getDeviceClass() {
   return isMobileDevice() ? 'mobile' : 'desktop';
 }
 
-function isIpHostname(hostname) {
-  const value = String(hostname || '').trim().toLowerCase();
-  return (
-    /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) ||
-    value.includes(':')
-  );
+function normalizeTrustedDeviceUsername(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function readTrustedDeviceMap() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(TRUSTED_DEVICE_STORAGE_KEY) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function writeTrustedDeviceMap(devices) {
+  localStorage.setItem(TRUSTED_DEVICE_STORAGE_KEY, JSON.stringify(devices));
+}
+
+function clearTrustedDeviceToken(username) {
+  const normalizedUsername = normalizeTrustedDeviceUsername(username);
+  if (!normalizedUsername) {
+    return;
+  }
+
+  const devices = readTrustedDeviceMap();
+  if (devices[normalizedUsername]) {
+    delete devices[normalizedUsername];
+    writeTrustedDeviceMap(devices);
+  }
+}
+
+function getTrustedDeviceToken(username) {
+  const normalizedUsername = normalizeTrustedDeviceUsername(username);
+  if (!normalizedUsername) {
+    return '';
+  }
+
+  const devices = readTrustedDeviceMap();
+  const record = devices[normalizedUsername];
+  if (!record?.token) {
+    return '';
+  }
+
+  const expiresAt = Date.parse(record.expiresAt || '');
+  if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+    delete devices[normalizedUsername];
+    writeTrustedDeviceMap(devices);
+    return '';
+  }
+
+  return record.token;
+}
+
+function saveTrustedDeviceToken(username, response) {
+  const normalizedUsername = normalizeTrustedDeviceUsername(username || response?.user?.username);
+  const token = String(response?.remember_device_token || '').trim();
+  if (!normalizedUsername || !token) {
+    return;
+  }
+
+  const devices = readTrustedDeviceMap();
+  devices[normalizedUsername] = {
+    token,
+    expiresAt: response?.remember_device_expires_at || '',
+    savedAt: new Date().toISOString(),
+  };
+  writeTrustedDeviceMap(devices);
 }
 
 function isLoopbackHostname(hostname) {
@@ -125,267 +187,6 @@ function isLoopbackApiBase(value) {
     return isLoopbackHostname(new URL(value).hostname);
   } catch {
     return false;
-  }
-}
-
-function getPasskeySupportStatus() {
-  if (typeof window === 'undefined') {
-    return { supported: false, reason: 'Passkeys require a browser window.' };
-  }
-
-  const hostname = String(window.location?.hostname || '').toLowerCase();
-  const protocol = window.location?.protocol;
-  const isLocalhost = hostname === 'localhost';
-
-  if (isIpHostname(hostname)) {
-    return {
-      supported: false,
-      reason:
-        'Passkeys do not work from IP addresses. Open SmartCanteen from https://smartcanteen.duckdns.org or http://localhost:5173.',
-    };
-  }
-
-  if (!isLocalhost && protocol !== 'https:') {
-    return {
-      supported: false,
-      reason: 'Passkeys require HTTPS in production or http://localhost:5173 for local development.',
-    };
-  }
-
-  if (!window.isSecureContext) {
-    return {
-      supported: false,
-      reason: isNativeRuntime()
-        ? 'Passkey MFA is required, but this APK WebView is not a secure passkey context. Open the web app in Chrome, Edge, or Safari to finish verification.'
-        : 'Passkeys require a secure browser context: HTTPS or localhost.',
-    };
-  }
-
-  if (typeof window.PublicKeyCredential === 'undefined' || typeof navigator === 'undefined' || !navigator.credentials) {
-    return {
-      supported: false,
-      reason: isNativeRuntime()
-        ? 'Passkey MFA is required, but this APK WebView cannot open the passkey prompt. Open the web app in Chrome, Edge, or Safari to finish verification.'
-        : 'This browser does not support passkeys.',
-    };
-  }
-
-  return { supported: true, reason: '', platform: getRuntimePlatform(), deviceClass: getDeviceClass() };
-}
-
-function isPasskeySupported() {
-  return getPasskeySupportStatus().supported;
-}
-
-function normalizeBase64Url(value) {
-  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
-  return `${normalized}${'='.repeat((4 - (normalized.length % 4)) % 4)}`;
-}
-
-function base64UrlToArrayBuffer(value) {
-  const binary = window.atob(normalizeBase64Url(value));
-  const bytes = new Uint8Array(binary.length);
-
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return bytes.buffer;
-}
-
-function arrayBufferToBase64Url(buffer) {
-  if (!buffer) {
-    return null;
-  }
-
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-
-  return window
-    .btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-function passkeyOperationError(error) {
-  const name = String(error?.name || '');
-
-  if (name === 'NotAllowedError') {
-    const deviceHint = isMobileDevice()
-      ? ' On a different phone, the registered passkey may not be available on this device.'
-      : '';
-    return new Error(
-      `Passkey verification was cancelled, timed out, or no matching passkey was available.${deviceHint}`
-    );
-  }
-
-  if (name === 'SecurityError') {
-    return new Error(
-      getPasskeySupportStatus().reason ||
-        'Passkeys require HTTPS or localhost, and the page domain must match the server.'
-    );
-  }
-
-  return new Error(error?.message || 'Passkey verification failed.');
-}
-
-function biometricOperationError(error) {
-  const message = String(error?.message || '').trim();
-  if (message) {
-    return new Error(message);
-  }
-
-  return new Error('Biometric verification was cancelled or failed.');
-}
-
-async function getBiometricSupportStatus() {
-  if (!isNativeRuntime()) {
-    return {
-      supported: false,
-      reason: 'Biometric MFA is only available in the mobile app.',
-    };
-  }
-
-  try {
-    const result = await SmartCanteenBiometrics.isAvailable();
-    return {
-      supported: Boolean(result?.available),
-      reason: result?.available ? '' : result?.message || 'Biometric verification is not available.',
-    };
-  } catch (error) {
-    return {
-      supported: false,
-      reason: error?.message || 'Biometric verification is not available.',
-    };
-  }
-}
-
-async function authenticateWithDeviceBiometrics() {
-  const support = await getBiometricSupportStatus();
-  if (!support.supported) {
-    throw new Error(support.reason);
-  }
-
-  try {
-    await SmartCanteenBiometrics.authenticate({
-      title: 'SmartCanteen verification',
-      subtitle: 'Use biometrics or device lock to finish sign-in.',
-    });
-  } catch (error) {
-    throw biometricOperationError(error);
-  }
-}
-
-function prepareCredentialDescriptor(descriptor) {
-  return {
-    ...descriptor,
-    id: base64UrlToArrayBuffer(descriptor.id),
-  };
-}
-
-function preparePasskeyCreationOptions(options) {
-  return {
-    ...options,
-    challenge: base64UrlToArrayBuffer(options.challenge),
-    user: {
-      ...options.user,
-      id: base64UrlToArrayBuffer(options.user.id),
-    },
-    excludeCredentials: (options.excludeCredentials || []).map(prepareCredentialDescriptor),
-  };
-}
-
-function preparePasskeyRequestOptions(options) {
-  return {
-    ...options,
-    challenge: base64UrlToArrayBuffer(options.challenge),
-    allowCredentials: (options.allowCredentials || []).map(prepareCredentialDescriptor),
-  };
-}
-
-function serializePublicKeyCredential(credential) {
-  const response = credential.response;
-  const serializedResponse = {
-    clientDataJSON: arrayBufferToBase64Url(response.clientDataJSON),
-  };
-
-  if ('attestationObject' in response) {
-    serializedResponse.attestationObject = arrayBufferToBase64Url(response.attestationObject);
-  }
-
-  if ('authenticatorData' in response) {
-    serializedResponse.authenticatorData = arrayBufferToBase64Url(response.authenticatorData);
-  }
-
-  if ('signature' in response) {
-    serializedResponse.signature = arrayBufferToBase64Url(response.signature);
-  }
-
-  if ('userHandle' in response && response.userHandle) {
-    serializedResponse.userHandle = arrayBufferToBase64Url(response.userHandle);
-  }
-
-  if (typeof response.getTransports === 'function') {
-    serializedResponse.transports = response.getTransports();
-  }
-
-  return {
-    id: credential.id,
-    rawId: arrayBufferToBase64Url(credential.rawId),
-    type: credential.type,
-    authenticatorAttachment: credential.authenticatorAttachment || undefined,
-    response: serializedResponse,
-    clientExtensionResults:
-      typeof credential.getClientExtensionResults === 'function'
-        ? credential.getClientExtensionResults()
-        : {},
-  };
-}
-
-async function createPasskeyCredential(options) {
-  const support = getPasskeySupportStatus();
-  if (!support.supported) {
-    throw new Error(support.reason);
-  }
-
-  try {
-    const credential = await navigator.credentials.create({
-      publicKey: preparePasskeyCreationOptions(options),
-    });
-
-    if (!credential) {
-      throw new Error('Passkey setup was cancelled.');
-    }
-
-    return serializePublicKeyCredential(credential);
-  } catch (error) {
-    throw passkeyOperationError(error);
-  }
-}
-
-async function getPasskeyCredential(options) {
-  const support = getPasskeySupportStatus();
-  if (!support.supported) {
-    throw new Error(support.reason);
-  }
-
-  try {
-    const credential = await navigator.credentials.get({
-      publicKey: preparePasskeyRequestOptions(options),
-    });
-
-    if (!credential) {
-      throw new Error('Passkey verification was cancelled.');
-    }
-
-    return serializePublicKeyCredential(credential);
-  } catch (error) {
-    throw passkeyOperationError(error);
   }
 }
 
@@ -603,8 +404,7 @@ function isLoginFlowPath(path) {
   const normalizedPath = String(path || '');
   return (
     normalizedPath.startsWith('/auth/login') ||
-    normalizedPath.startsWith('/auth/passkey/authenticate/') ||
-    normalizedPath.startsWith('/auth/passkey/login-register/')
+    normalizedPath.startsWith('/auth/authenticator/verify')
   );
 }
 
@@ -614,45 +414,18 @@ function clearSession() {
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
 }
 
-function buildOfflineSessionResponse(user) {
-  const offlineUser = {
-    ...user,
-    offline: true,
-  };
-  const tokenSubject = offlineUser.username || offlineUser.id || 'user';
-  const token = `offline-session:${tokenSubject}:${Date.now()}`;
-
-  localStorage.setItem('sc_token', token);
-  localStorage.setItem('sc_user', JSON.stringify(offlineUser));
-  localStorage.setItem(OFFLINE_SESSION_STORAGE_KEY, '1');
-
-  return {
-    access_token: token,
-    token_type: 'offline',
-    user: offlineUser,
-    offline: true,
-  };
-}
-
 function assertMfaWasCompleted(response) {
   if (!response?.access_token) {
     throw new Error('MFA verification did not complete. Try signing in again.');
   }
 
-  const biometricVerified = isNativeRuntime() && Boolean(response?.biometric_mfa_verified);
-  const passkeyVerified = !isNativeRuntime() && Boolean(response?.user?.passkey_mfa_enabled);
+  const authenticatorVerified = Boolean(response?.authenticator_mfa_verified);
 
   if (
     response?.mobile_password_fallback ||
-    response?.passkey_mfa_deferred ||
-    response?.passkey_registration_deferred ||
-    (!passkeyVerified && !biometricVerified)
+    !authenticatorVerified
   ) {
-    throw new Error(
-      isNativeRuntime()
-        ? 'Biometric MFA is required before opening the dashboard.'
-        : 'Passkey MFA is required before opening the dashboard. Complete passkey verification, then sign in again.'
-    );
+    throw new Error('Authenticator app verification is required before opening the dashboard.');
   }
 }
 
@@ -689,7 +462,6 @@ function buildUnexpectedResponseError(path, requestUrl, payload) {
 }
 
 function getClientRequestHeaders() {
-  const passkeySupport = getPasskeySupportStatus();
   const platform = getRuntimePlatform();
   const nativeRuntime = isNativeRuntime();
 
@@ -697,7 +469,6 @@ function getClientRequestHeaders() {
     'X-SmartCanteen-Client': nativeRuntime ? 'native' : 'web',
     'X-SmartCanteen-Platform': platform,
     'X-SmartCanteen-Device-Class': getDeviceClass(),
-    'X-SmartCanteen-Passkey-Supported': passkeySupport.supported ? '1' : '0',
   };
 }
 
@@ -1029,104 +800,75 @@ async function syncPendingOfflineTransactions() {
   return { synced, queued: countOfflineTransactions(), errors };
 }
 
-async function login(username, password) {
-  let mfaStarted = false;
+async function completeAuthenticatedLoginResponse(response, password, { rememberDevice = false, username = '' } = {}) {
+  assertMfaWasCompleted(response);
 
+  if (rememberDevice) {
+    saveTrustedDeviceToken(username, response);
+  } else {
+    clearTrustedDeviceToken(username || response?.user?.username);
+  }
+
+  if (password && response?.user) {
+    await saveOfflineLoginProfile({ user: response.user, password });
+  }
+
+  localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
+  return response;
+}
+
+async function login(username, password, { rememberDevice = false } = {}) {
   try {
-    let response = await request('POST', '/auth/login', { username, password });
-
-    if (response?.biometric_required && response?.mfa_type === 'biometric') {
-      mfaStarted = true;
-      await authenticateWithDeviceBiometrics();
-      response = await request('POST', '/auth/biometric/verify', {
-        mfa_token: response.mfa_token,
-      });
-    } else if (response?.passkey_registration_required && response?.mfa_type === 'passkey_registration') {
-      const support = getPasskeySupportStatus();
-      if (!support.supported) {
-        throw new Error(support.reason);
+    const body = { username, password };
+    if (rememberDevice) {
+      const rememberDeviceToken = getTrustedDeviceToken(username);
+      if (rememberDeviceToken) {
+        body.remember_device_token = rememberDeviceToken;
       }
-      mfaStarted = true;
-      const credential = await createPasskeyCredential(response.passkey_options);
-      response = await request('POST', '/auth/passkey/login-register/verify', {
-        mfa_token: response.mfa_token,
-        challenge_id: response.passkey_challenge_id,
-        credential,
-        name: 'SmartCanteen passkey',
-      });
-    } else if (response?.mfa_required && response?.mfa_type === 'passkey') {
-      const support = getPasskeySupportStatus();
-      if (!support.supported) {
-        throw new Error(support.reason);
-      }
-      mfaStarted = true;
-      const credential = await getPasskeyCredential(response.passkey_options);
-      response = await request('POST', '/auth/passkey/authenticate/verify', {
-        mfa_token: response.mfa_token,
-        challenge_id: response.passkey_challenge_id,
-        credential,
-      });
+    } else {
+      clearTrustedDeviceToken(username);
     }
 
-    assertMfaWasCompleted(response);
+    const response = await request('POST', '/auth/login', body);
 
-    const offlineProfileUser = {
-      ...response?.user,
-      mobile_password_fallback: Boolean(response?.mobile_password_fallback),
-      passkey_mfa_deferred: Boolean(response?.passkey_mfa_deferred),
-      passkey_registration_deferred: Boolean(response?.passkey_registration_deferred),
-    };
+    if (
+      response?.mfa_required &&
+      (response?.mfa_type === 'authenticator' || response?.mfa_type === 'authenticator_setup')
+    ) {
+      return response;
+    }
 
-    await saveOfflineLoginProfile({ user: offlineProfileUser, password });
-    localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
-    return response;
+    if (response?.access_token) {
+      return completeAuthenticatedLoginResponse(response, password, { rememberDevice, username });
+    }
+
+    throw new Error('Authenticator app verification is required before opening the dashboard.');
   } catch (error) {
-    if (mfaStarted || !isConnectivityError(error)) {
+    if (!isConnectivityError(error)) {
       throw error;
     }
 
-    const offlineUser = await getOfflineLoginProfile(username, password);
-    if (!offlineUser) {
-      throw new Error(
-        'Passkey MFA requires an online connection. Connect to set up or verify your passkey.'
-      );
-    }
-
-    if (
-      offlineUser.passkey_mfa_enabled ||
-      offlineUser.passkey_mfa_deferred ||
-      offlineUser.passkey_registration_deferred
-    ) {
-      throw new Error('Passkey MFA requires an online connection for this account.');
-    }
-
-    return buildOfflineSessionResponse(offlineUser);
+    throw new Error('Authenticator app verification requires an online connection.');
   }
 }
 
-async function registerCurrentDevicePasskey(name = 'This device') {
-  const optionsResponse = await request('POST', '/auth/passkey/register/options', {});
-  const credential = await createPasskeyCredential(optionsResponse.passkey_options);
-  const response = await request('POST', '/auth/passkey/register/verify', {
-    challenge_id: optionsResponse.challenge_id,
-    credential,
-    name,
+async function verifyAuthenticatorLogin(
+  mfaToken,
+  code,
+  password,
+  { rememberDevice = false, username = '' } = {}
+) {
+  const response = await request('POST', '/auth/authenticator/verify', {
+    mfa_token: mfaToken,
+    code,
+    remember_device: rememberDevice,
   });
-
-  if (response?.user) {
-    localStorage.setItem('sc_user', JSON.stringify(response.user));
-    markOfflineLoginProfileMfa(response.user.username);
-  }
-
-  return response;
+  return completeAuthenticatedLoginResponse(response, password, { rememberDevice, username });
 }
 
 export const API = {
   login,
-  registerCurrentDevicePasskey,
-  isPasskeySupported,
-  getPasskeySupportStatus,
-  getBiometricSupportStatus,
+  verifyAuthenticatorLogin,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
 

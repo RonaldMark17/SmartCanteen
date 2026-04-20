@@ -13,28 +13,17 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List, Optional
+import base64
+import binascii
+import hashlib
+import hmac
 import ipaddress
-import json
 import os
+import secrets
+import struct
 import subprocess
-from urllib.parse import urlparse
-
-from webauthn import (
-    generate_authentication_options,
-    generate_registration_options,
-    verify_authentication_response,
-    verify_registration_response,
-)
-from webauthn.helpers import base64url_to_bytes, bytes_to_base64url, options_to_json_dict
-from webauthn.helpers.exceptions import WebAuthnException
-from webauthn.helpers.structs import (
-    AuthenticatorSelectionCriteria,
-    AuthenticatorTransport,
-    PublicKeyCredentialDescriptor,
-    PublicKeyCredentialType,
-    ResidentKeyRequirement,
-    UserVerificationRequirement,
-)
+import time
+from urllib.parse import quote
 
 import backend.models as models
 import backend.schemas as schemas
@@ -294,6 +283,40 @@ def _persist_transaction(
 Base.metadata.create_all(bind=engine)
 
 
+def _ensure_user_authenticator_columns():
+    column_statements = [
+        ("authenticator_secret", "ALTER TABLE users ADD COLUMN authenticator_secret VARCHAR"),
+        (
+            "authenticator_enabled",
+            "ALTER TABLE users ADD COLUMN authenticator_enabled BOOLEAN DEFAULT FALSE",
+        ),
+        (
+            "authenticator_last_counter",
+            "ALTER TABLE users ADD COLUMN authenticator_last_counter INTEGER",
+        ),
+    ]
+
+    try:
+        with engine.begin() as connection:
+            existing_columns = {
+                row["name"]
+                for row in connection.execute(text("PRAGMA table_info(users)")).mappings()
+            }
+            for column_name, statement in column_statements:
+                if column_name not in existing_columns:
+                    connection.execute(text(statement))
+    except Exception:
+        try:
+            with engine.begin() as connection:
+                for column_name, statement in column_statements:
+                    try:
+                        connection.execute(text(statement))
+                    except Exception:
+                        pass
+        except Exception as exc:
+            print(f"Authenticator column setup skipped: {exc}")
+
+
 def _ensure_analytics_indexes():
     index_statements = [
         "CREATE INDEX IF NOT EXISTS ix_transactions_created_at ON transactions(created_at)",
@@ -309,6 +332,7 @@ def _ensure_analytics_indexes():
         print(f"Analytics index setup skipped: {exc}")
 
 
+_ensure_user_authenticator_columns()
 _ensure_analytics_indexes()
 
 app = FastAPI(
@@ -509,230 +533,138 @@ async def realtime_alerts(websocket: WebSocket):
 # AUTH
 # ═══════════════════════════════════════════════════════════════════════════════
 
-PASSKEY_RP_NAME = os.environ.get("SMARTCANTEEN_PASSKEY_RP_NAME", "SmartCanteen")
-PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60
+AUTHENTICATOR_ISSUER = os.environ.get("SMARTCANTEEN_AUTHENTICATOR_ISSUER", "SmartCanteen")
+AUTHENTICATOR_PERIOD_SECONDS = 30
+AUTHENTICATOR_DIGITS = 6
+AUTHENTICATOR_WINDOW_STEPS = 1
+TRUSTED_DEVICE_DAYS = 30
 
 
-def _env_int(name: str, default: int) -> int:
+def _generate_authenticator_secret() -> str:
+    return base64.b32encode(os.urandom(20)).decode("ascii").rstrip("=")
+
+
+def _format_authenticator_secret(secret: str) -> str:
+    compact = "".join(str(secret or "").upper().split())
+    return " ".join(compact[index:index + 4] for index in range(0, len(compact), 4))
+
+
+def _normalize_authenticator_code(code: str) -> str:
+    return "".join(character for character in str(code or "") if character.isdigit())
+
+
+def _decode_authenticator_secret(secret: str) -> bytes:
+    normalized = "".join(str(secret or "").upper().split())
+    padding = "=" * ((8 - len(normalized) % 8) % 8)
     try:
-        return int(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
+        return base64.b32decode(f"{normalized}{padding}", casefold=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Authenticator setup is invalid. Sign in again.")
 
 
-PASSKEY_OPERATION_TIMEOUT_MS = _env_int("SMARTCANTEEN_PASSKEY_TIMEOUT_MS", 120000)
+def _authenticator_code_for_counter(secret: str, counter: int) -> str:
+    key = _decode_authenticator_secret(secret)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    truncated = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    code = truncated % (10 ** AUTHENTICATOR_DIGITS)
+    return str(code).zfill(AUTHENTICATOR_DIGITS)
 
 
-def _enum_value(value):
-    return getattr(value, "value", value)
+def _verify_authenticator_code(secret: str, code: str, last_counter: Optional[int] = None) -> int:
+    normalized_code = _normalize_authenticator_code(code)
+    if len(normalized_code) != AUTHENTICATOR_DIGITS:
+        raise HTTPException(status_code=400, detail="Enter the 6-digit authenticator code")
 
-
-def _is_ip_hostname(hostname: str) -> bool:
-    try:
-        ipaddress.ip_address(hostname)
-        return True
-    except ValueError:
-        return False
-
-
-def _validate_passkey_origin(origin: str):
-    parsed = urlparse(origin)
-    hostname = (parsed.hostname or "").rstrip(".").lower()
-
-    if not parsed.scheme or not hostname:
-        raise HTTPException(status_code=400, detail="Unable to determine passkey origin")
-
-    if hostname == "localhost":
-        return
-
-    if _is_ip_hostname(hostname):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Passkeys require a real HTTPS domain or localhost. "
-                "Open SmartCanteen from https://smartcanteen.duckdns.org instead of an IP address."
-            ),
-        )
-
-    if parsed.scheme != "https":
-        raise HTTPException(
-            status_code=400,
-            detail="Passkeys require HTTPS in production or http://localhost for local development.",
-        )
-
-
-def _request_origin(req: Request) -> str:
-    configured_origin = os.environ.get("SMARTCANTEEN_PASSKEY_ORIGIN")
-    if configured_origin:
-        return configured_origin.rstrip("/")
-
-    for header_name in ("origin", "referer"):
-        header_value = req.headers.get(header_name)
-        if not header_value:
+    current_counter = int(time.time() // AUTHENTICATOR_PERIOD_SECONDS)
+    for offset in range(-AUTHENTICATOR_WINDOW_STEPS, AUTHENTICATOR_WINDOW_STEPS + 1):
+        counter = current_counter + offset
+        if last_counter is not None and counter <= last_counter:
             continue
-        parsed = urlparse(header_value)
-        if parsed.scheme and parsed.netloc:
-            return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        expected = _authenticator_code_for_counter(secret, counter)
+        if hmac.compare_digest(normalized_code, expected):
+            return counter
 
-    forwarded_proto = (req.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip()
-    forwarded_host = (req.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
-    scheme = forwarded_proto or req.url.scheme
-    host = forwarded_host or req.headers.get("host") or req.url.netloc
-
-    if not scheme or not host:
-        raise HTTPException(status_code=400, detail="Unable to determine passkey origin")
-
-    return f"{scheme}://{host}".rstrip("/")
+    raise HTTPException(status_code=401, detail="Invalid authenticator code")
 
 
-def _request_header(req: Request, name: str) -> str:
-    return (req.headers.get(name) or "").strip().lower()
-
-
-def _request_is_native_client(req: Request) -> bool:
-    client = _request_header(req, "x-smartcanteen-client")
-    platform = _request_header(req, "x-smartcanteen-platform")
-    return client in {"native", "android", "ios", "mobile-app"} or platform in {"android", "ios"}
-
-
-def _rp_id_from_origin(origin: str) -> str:
-    configured_rp_id = os.environ.get("SMARTCANTEEN_PASSKEY_RP_ID")
-    hostname = urlparse(origin).hostname
-    if not hostname:
-        raise HTTPException(status_code=400, detail="Unable to determine passkey RP ID")
-
-    hostname = hostname.rstrip(".").lower()
-
-    if configured_rp_id:
-        rp_id = configured_rp_id.strip().rstrip(".").lower()
-        if hostname != rp_id and not hostname.endswith(f".{rp_id}"):
-            raise HTTPException(
-                status_code=400,
-                detail="Passkey RP ID does not match the page domain.",
-            )
-        return rp_id
-
-    return hostname
-
-
-def _webauthn_context(req: Request) -> tuple[str, str]:
-    origin = _request_origin(req)
-    _validate_passkey_origin(origin)
-    return origin, _rp_id_from_origin(origin)
-
-
-def _active_passkeys(db: Session, user_id: int) -> List[models.UserPasskey]:
+def _authenticator_otpauth_url(user: models.User, secret: str) -> str:
+    issuer = AUTHENTICATOR_ISSUER
+    account = user.username
+    label = f"{issuer}:{account}"
     return (
-        db.query(models.UserPasskey)
-        .filter(
-            models.UserPasskey.user_id == user_id,
-            models.UserPasskey.is_active == True,
-        )
-        .order_by(models.UserPasskey.created_at.asc())
-        .all()
+        f"otpauth://totp/{quote(label)}"
+        f"?secret={quote(secret)}"
+        f"&issuer={quote(issuer)}"
+        f"&algorithm=SHA1"
+        f"&digits={AUTHENTICATOR_DIGITS}"
+        f"&period={AUTHENTICATOR_PERIOD_SECONDS}"
     )
+
+
+def _trusted_device_token_hash(token: str) -> str:
+    normalized = str(token or "").strip()
+    if not normalized:
+        return ""
+
+    return hmac.new(
+        auth.SECRET_KEY.encode("utf-8"),
+        normalized.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _get_valid_trusted_device(db: Session, user: models.User, token: Optional[str]):
+    token_hash = _trusted_device_token_hash(token or "")
+    if not token_hash:
+        return None
+
+    trusted_device = (
+        db.query(models.UserTrustedDevice)
+        .filter(
+            models.UserTrustedDevice.user_id == user.id,
+            models.UserTrustedDevice.token_hash == token_hash,
+            models.UserTrustedDevice.revoked_at.is_(None),
+            models.UserTrustedDevice.expires_at > datetime.utcnow(),
+        )
+        .first()
+    )
+
+    if trusted_device:
+        trusted_device.last_used_at = datetime.utcnow()
+
+    return trusted_device
+
+
+def _create_trusted_device(db: Session, user: models.User):
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(days=TRUSTED_DEVICE_DAYS)
+    trusted_device = models.UserTrustedDevice(
+        user_id=user.id,
+        token_hash=_trusted_device_token_hash(raw_token),
+        label="Remembered device",
+        expires_at=expires_at,
+        last_used_at=datetime.utcnow(),
+    )
+    db.add(trusted_device)
+    return raw_token, expires_at
+
+
+def _attach_trusted_device_response(response: dict, token: str, expires_at: datetime) -> dict:
+    response["remember_device_token"] = token
+    response["remember_device_expires_at"] = expires_at.isoformat() + "Z"
+    response["remember_device_days"] = TRUSTED_DEVICE_DAYS
+    return response
 
 
 def _user_payload(db: Session, user: models.User) -> dict:
-    passkey_count = (
-        db.query(models.UserPasskey)
-        .filter(
-            models.UserPasskey.user_id == user.id,
-            models.UserPasskey.is_active == True,
-        )
-        .count()
-    )
-
     return {
         "id": user.id,
         "username": user.username,
         "full_name": user.full_name,
         "role": user.role,
-        "passkey_mfa_enabled": passkey_count > 0,
-        "passkey_count": passkey_count,
+        "authenticator_mfa_enabled": bool(getattr(user, "authenticator_enabled", False)),
     }
-
-
-def _credential_descriptors(passkeys: List[models.UserPasskey]) -> List[PublicKeyCredentialDescriptor]:
-    descriptors: List[PublicKeyCredentialDescriptor] = []
-
-    for passkey in passkeys:
-        transports = None
-        if passkey.transports:
-            try:
-                transport_values = json.loads(passkey.transports)
-            except (TypeError, ValueError):
-                transport_values = []
-
-            parsed_transports = []
-            for transport in transport_values if isinstance(transport_values, list) else []:
-                try:
-                    parsed_transports.append(AuthenticatorTransport(str(transport)))
-                except ValueError:
-                    continue
-
-            transports = parsed_transports or None
-
-        descriptors.append(
-            PublicKeyCredentialDescriptor(
-                id=base64url_to_bytes(passkey.credential_id),
-                transports=transports,
-            )
-        )
-
-    return descriptors
-
-
-def _store_webauthn_challenge(
-    db: Session,
-    *,
-    user_id: int,
-    purpose: str,
-    challenge: bytes,
-    rp_id: str,
-    origin: str,
-    token_id: Optional[str] = None,
-) -> models.WebAuthnChallenge:
-    record = models.WebAuthnChallenge(
-        user_id=user_id,
-        purpose=purpose,
-        challenge=bytes_to_base64url(challenge),
-        token_id=token_id,
-        rp_id=rp_id,
-        origin=origin,
-        expires_at=datetime.utcnow() + timedelta(seconds=PASSKEY_CHALLENGE_TTL_SECONDS),
-    )
-    db.add(record)
-    db.flush()
-    return record
-
-
-def _get_webauthn_challenge(
-    db: Session,
-    *,
-    challenge_id: int,
-    user_id: int,
-    purpose: str,
-    token_id: Optional[str] = None,
-) -> models.WebAuthnChallenge:
-    challenge = (
-        db.query(models.WebAuthnChallenge)
-        .filter(
-            models.WebAuthnChallenge.id == challenge_id,
-            models.WebAuthnChallenge.user_id == user_id,
-            models.WebAuthnChallenge.purpose == purpose,
-            models.WebAuthnChallenge.consumed_at.is_(None),
-        )
-        .first()
-    )
-
-    if not challenge or challenge.expires_at <= datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Passkey challenge expired. Try again.")
-
-    if token_id and challenge.token_id != token_id:
-        raise HTTPException(status_code=401, detail="Invalid passkey challenge")
-
-    return challenge
 
 
 def _build_login_success(db: Session, user: models.User):
@@ -744,100 +676,46 @@ def _build_login_success(db: Session, user: models.User):
     }
 
 
-def _begin_biometric_authentication(user: models.User):
-    mfa_token, _token_id = auth.create_mfa_token(user.username, purpose="biometric")
+def _build_authenticator_user_hint(user: models.User, enabled: bool) -> dict:
     return {
-        "biometric_required": True,
-        "mfa_type": "biometric",
-        "mfa_token": mfa_token,
-        "user": {
-            "username": user.username,
-            "full_name": user.full_name,
-            "biometric_mfa_enabled": True,
-        },
+        "username": user.username,
+        "full_name": user.full_name,
+        "authenticator_mfa_enabled": enabled,
     }
 
 
-def _registration_options_for_user(db: Session, req: Request, user: models.User):
-    origin, rp_id = _webauthn_context(req)
-    options = generate_registration_options(
-        rp_id=rp_id,
-        rp_name=PASSKEY_RP_NAME,
-        user_id=str(user.id).encode("utf-8"),
-        user_name=user.username,
-        user_display_name=user.full_name or user.username,
-        timeout=PASSKEY_OPERATION_TIMEOUT_MS,
-        exclude_credentials=_credential_descriptors(_active_passkeys(db, user.id)),
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.REQUIRED,
-        ),
+def _begin_authenticator_setup(user: models.User):
+    secret = _generate_authenticator_secret()
+    mfa_token, _token_id = auth.create_mfa_token(
+        user.username,
+        purpose="authenticator_setup",
+        extra={"totp_secret": secret},
     )
-    return origin, rp_id, options
-
-
-def _begin_passkey_login_registration(db: Session, req: Request, user: models.User):
-    origin, rp_id, options = _registration_options_for_user(db, req, user)
-    mfa_token, token_id = auth.create_mfa_token(user.username, purpose="passkey_registration")
-    challenge = _store_webauthn_challenge(
-        db,
-        user_id=user.id,
-        purpose="login_registration",
-        challenge=options.challenge,
-        rp_id=rp_id,
-        origin=origin,
-        token_id=token_id,
-    )
-
     return {
-        "passkey_registration_required": True,
-        "mfa_type": "passkey_registration",
+        "authenticator_setup_required": True,
+        "mfa_required": True,
+        "mfa_type": "authenticator_setup",
         "mfa_token": mfa_token,
-        "passkey_options": options_to_json_dict(options),
-        "passkey_challenge_id": challenge.id,
-        "user": {
-            "username": user.username,
-            "full_name": user.full_name,
-            "passkey_mfa_enabled": False,
+        "authenticator": {
+            "issuer": AUTHENTICATOR_ISSUER,
+            "account": user.username,
+            "secret": secret,
+            "secret_formatted": _format_authenticator_secret(secret),
+            "otpauth_url": _authenticator_otpauth_url(user, secret),
+            "digits": AUTHENTICATOR_DIGITS,
+            "period": AUTHENTICATOR_PERIOD_SECONDS,
         },
+        "user": _build_authenticator_user_hint(user, False),
     }
 
 
-def _begin_passkey_authentication(
-    db: Session,
-    req: Request,
-    user: models.User,
-    passkeys: List[models.UserPasskey],
-):
-    origin, rp_id = _webauthn_context(req)
-    mfa_token, token_id = auth.create_mfa_token(user.username)
-    options = generate_authentication_options(
-        rp_id=rp_id,
-        timeout=PASSKEY_OPERATION_TIMEOUT_MS,
-        allow_credentials=_credential_descriptors(passkeys),
-        user_verification=UserVerificationRequirement.REQUIRED,
-    )
-    challenge = _store_webauthn_challenge(
-        db,
-        user_id=user.id,
-        purpose="authentication",
-        challenge=options.challenge,
-        rp_id=rp_id,
-        origin=origin,
-        token_id=token_id,
-    )
-
+def _begin_authenticator_authentication(user: models.User):
+    mfa_token, _token_id = auth.create_mfa_token(user.username, purpose="authenticator")
     return {
         "mfa_required": True,
-        "mfa_type": "passkey",
+        "mfa_type": "authenticator",
         "mfa_token": mfa_token,
-        "passkey_options": options_to_json_dict(options),
-        "passkey_challenge_id": challenge.id,
-        "user": {
-            "username": user.username,
-            "full_name": user.full_name,
-            "passkey_mfa_enabled": True,
-        },
+        "user": _build_authenticator_user_hint(user, True),
     }
 
 
@@ -856,327 +734,102 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    if _request_is_native_client(req):
-        response = _begin_biometric_authentication(user)
-        _add_audit_log(
-            db,
-            user_id=user.id,
-            action="LOGIN_BIOMETRIC_REQUIRED",
-            details="Password accepted; native biometric MFA required",
-            request=req,
-        )
-        db.commit()
-        return response
+    if user.authenticator_enabled and user.authenticator_secret:
+        trusted_device = _get_valid_trusted_device(db, user, payload.remember_device_token)
+        if trusted_device:
+            response = _build_login_success(db, user)
+            response["authenticator_mfa_verified"] = True
+            response["remember_device_verified"] = True
+            response["remember_device_expires_at"] = trusted_device.expires_at.isoformat() + "Z"
+            _add_audit_log(
+                db,
+                user_id=user.id,
+                action="LOGIN",
+                details="Successful login with remembered authenticator device",
+                request=req,
+            )
+            db.commit()
+            return response
 
-    passkeys = _active_passkeys(db, user.id)
-    if passkeys:
-        response = _begin_passkey_authentication(db, req, user, passkeys)
-        _add_audit_log(
-            db,
-            user_id=user.id,
-            action="LOGIN_MFA_REQUIRED",
-            details="Password accepted; passkey MFA required",
-            request=req,
-        )
-        db.commit()
-        return response
+        response = _begin_authenticator_authentication(user)
+        audit_action = "LOGIN_AUTHENTICATOR_REQUIRED"
+        audit_details = "Password accepted; authenticator app MFA required"
+    else:
+        response = _begin_authenticator_setup(user)
+        audit_action = "LOGIN_AUTHENTICATOR_SETUP_REQUIRED"
+        audit_details = "Password accepted; authenticator app setup required before login"
 
-    response = _begin_passkey_login_registration(db, req, user)
     _add_audit_log(
         db,
         user_id=user.id,
-        action="LOGIN_PASSKEY_REGISTRATION_REQUIRED",
-        details="Password accepted; passkey setup required before login",
+        action=audit_action,
+        details=audit_details,
         request=req,
     )
     db.commit()
     return response
 
 
-@app.post("/auth/passkey/register/options", include_in_schema=False)
-@app.post("/api/auth/passkey/register/options", tags=["Auth"])
-def passkey_registration_options(
-    req: Request,
-    db: Session = Depends(get_db),
-    current: models.User = Depends(auth.get_current_user),
-):
-    origin, rp_id, options = _registration_options_for_user(db, req, current)
-    challenge = _store_webauthn_challenge(
-        db,
-        user_id=current.id,
-        purpose="registration",
-        challenge=options.challenge,
-        rp_id=rp_id,
-        origin=origin,
-    )
-    db.commit()
-
-    return {
-        "challenge_id": challenge.id,
-        "passkey_options": options_to_json_dict(options),
-    }
-
-
-@app.post("/auth/passkey/register/verify", include_in_schema=False)
-@app.post("/api/auth/passkey/register/verify", tags=["Auth"])
-def passkey_registration_verify(
-    data: schemas.PasskeyRegistrationFinishRequest,
-    req: Request,
-    db: Session = Depends(get_db),
-    current: models.User = Depends(auth.get_current_user),
-):
-    challenge = _get_webauthn_challenge(
-        db,
-        challenge_id=data.challenge_id,
-        user_id=current.id,
-        purpose="registration",
-    )
-
+def _decode_authenticator_mfa_token(token: str) -> tuple[dict, str]:
     try:
-        verified = verify_registration_response(
-            credential=data.credential,
-            expected_challenge=base64url_to_bytes(challenge.challenge),
-            expected_rp_id=challenge.rp_id,
-            expected_origin=challenge.origin,
-            require_user_verification=True,
-        )
-    except WebAuthnException as exc:
-        _add_audit_log(
-            db,
-            user_id=current.id,
-            action="PASSKEY_REGISTER_FAILED",
-            details=str(exc),
-            request=req,
-        )
-        challenge.consumed_at = datetime.utcnow()
-        db.commit()
-        raise HTTPException(status_code=400, detail="Passkey setup failed. Try again.") from exc
-
-    credential_id = bytes_to_base64url(verified.credential_id)
-    existing = (
-        db.query(models.UserPasskey)
-        .filter(models.UserPasskey.credential_id == credential_id)
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=400, detail="This passkey is already registered")
-
-    transports = data.credential.get("response", {}).get("transports")
-    passkey = models.UserPasskey(
-        user_id=current.id,
-        credential_id=credential_id,
-        public_key=bytes_to_base64url(verified.credential_public_key),
-        sign_count=verified.sign_count,
-        name=(data.name or "Passkey").strip()[:80],
-        aaguid=verified.aaguid,
-        transports=json.dumps(transports) if isinstance(transports, list) else None,
-        device_type=_enum_value(verified.credential_device_type),
-        backed_up=bool(verified.credential_backed_up),
-    )
-    db.add(passkey)
-    challenge.consumed_at = datetime.utcnow()
-    _add_audit_log(
-        db,
-        user_id=current.id,
-        action="PASSKEY_REGISTERED",
-        details=f"Passkey added: {passkey.name}",
-        request=req,
-    )
-    db.commit()
-
-    return {
-        "message": "Passkey MFA enabled",
-        "user": _user_payload(db, current),
-    }
+        return auth.decode_mfa_token(token, purpose="authenticator"), "authenticator"
+    except HTTPException:
+        return auth.decode_mfa_token(token, purpose="authenticator_setup"), "authenticator_setup"
 
 
-@app.post("/auth/passkey/login-register/verify", include_in_schema=False)
-@app.post("/api/auth/passkey/login-register/verify", tags=["Auth"])
-def passkey_login_registration_verify(
-    data: schemas.PasskeyLoginRegistrationFinishRequest,
+@app.post("/auth/authenticator/verify", include_in_schema=False)
+@app.post("/api/auth/authenticator/verify", tags=["Auth"])
+def authenticator_authentication_verify(
+    data: schemas.AuthenticatorAuthenticationFinishRequest,
     req: Request,
     db: Session = Depends(get_db),
 ):
-    token_payload = auth.decode_mfa_token(data.mfa_token, purpose="passkey_registration")
+    token_payload, purpose = _decode_authenticator_mfa_token(data.mfa_token)
     user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
 
-    challenge = _get_webauthn_challenge(
-        db,
-        challenge_id=data.challenge_id,
-        user_id=user.id,
-        purpose="login_registration",
-        token_id=token_payload["jti"],
-    )
+    if purpose == "authenticator_setup":
+        secret = token_payload.get("totp_secret")
+        if not secret:
+            raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
 
-    try:
-        verified = verify_registration_response(
-            credential=data.credential,
-            expected_challenge=base64url_to_bytes(challenge.challenge),
-            expected_rp_id=challenge.rp_id,
-            expected_origin=challenge.origin,
-            require_user_verification=True,
+        counter = _verify_authenticator_code(secret, data.code)
+        user.authenticator_secret = secret
+        user.authenticator_enabled = True
+        user.authenticator_last_counter = counter
+        audit_details = "Successful login after authenticator app setup"
+    else:
+        if not user.authenticator_enabled or not user.authenticator_secret:
+            raise HTTPException(status_code=400, detail="Authenticator app is not set up for this account")
+
+        counter = _verify_authenticator_code(
+            user.authenticator_secret,
+            data.code,
+            user.authenticator_last_counter,
         )
-    except WebAuthnException as exc:
-        _add_audit_log(
-            db,
-            user_id=user.id,
-            action="PASSKEY_REGISTER_FAILED",
-            details=str(exc),
-            request=req,
-        )
-        challenge.consumed_at = datetime.utcnow()
-        db.commit()
-        raise HTTPException(status_code=400, detail="Passkey setup failed. Login was not completed.") from exc
+        user.authenticator_last_counter = counter
+        audit_details = "Successful login with authenticator app MFA"
 
-    credential_id = bytes_to_base64url(verified.credential_id)
-    existing = (
-        db.query(models.UserPasskey)
-        .filter(models.UserPasskey.credential_id == credential_id)
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=400, detail="This passkey is already registered")
-
-    transports = data.credential.get("response", {}).get("transports")
-    passkey = models.UserPasskey(
-        user_id=user.id,
-        credential_id=credential_id,
-        public_key=bytes_to_base64url(verified.credential_public_key),
-        sign_count=verified.sign_count,
-        name=(data.name or "SmartCanteen passkey").strip()[:80],
-        aaguid=verified.aaguid,
-        transports=json.dumps(transports) if isinstance(transports, list) else None,
-        device_type=_enum_value(verified.credential_device_type),
-        backed_up=bool(verified.credential_backed_up),
-    )
-    db.add(passkey)
-    challenge.consumed_at = datetime.utcnow()
-    _add_audit_log(
-        db,
-        user_id=user.id,
-        action="PASSKEY_REGISTERED",
-        details=f"Passkey added during login: {passkey.name}",
-        request=req,
-    )
-    _add_audit_log(
-        db,
-        user_id=user.id,
-        action="LOGIN",
-        details="Successful login after passkey setup",
-        request=req,
-    )
-    db.commit()
-
-    return _build_login_success(db, user)
-
-
-@app.post("/auth/passkey/authenticate/verify", include_in_schema=False)
-@app.post("/api/auth/passkey/authenticate/verify", tags=["Auth"])
-def passkey_authentication_verify(
-    data: schemas.PasskeyAuthenticationFinishRequest,
-    req: Request,
-    db: Session = Depends(get_db),
-):
-    token_payload = auth.decode_mfa_token(data.mfa_token)
-    user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
-    if not user or not user.is_active:
-        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
-
-    credential_id = data.credential.get("rawId") or data.credential.get("id")
-    if not credential_id:
-        raise HTTPException(status_code=400, detail="Passkey credential is missing")
-
-    passkey = (
-        db.query(models.UserPasskey)
-        .filter(
-            models.UserPasskey.user_id == user.id,
-            models.UserPasskey.credential_id == credential_id,
-            models.UserPasskey.is_active == True,
-        )
-        .first()
-    )
-    if not passkey:
-        raise HTTPException(status_code=401, detail="Passkey is not registered for this account")
-
-    challenge = _get_webauthn_challenge(
-        db,
-        challenge_id=data.challenge_id,
-        user_id=user.id,
-        purpose="authentication",
-        token_id=token_payload["jti"],
-    )
-
-    try:
-        verified = verify_authentication_response(
-            credential=data.credential,
-            expected_challenge=base64url_to_bytes(challenge.challenge),
-            expected_rp_id=challenge.rp_id,
-            expected_origin=challenge.origin,
-            credential_public_key=base64url_to_bytes(passkey.public_key),
-            credential_current_sign_count=passkey.sign_count or 0,
-            require_user_verification=True,
-        )
-    except WebAuthnException as exc:
-        _add_audit_log(
-            db,
-            user_id=user.id,
-            action="LOGIN_MFA_FAILED",
-            details=str(exc),
-            request=req,
-        )
-        challenge.consumed_at = datetime.utcnow()
-        db.commit()
-        raise HTTPException(status_code=401, detail="Passkey verification failed") from exc
-
-    if bytes_to_base64url(verified.credential_id) != passkey.credential_id:
-        raise HTTPException(status_code=401, detail="Passkey verification failed")
-
-    passkey.sign_count = verified.new_sign_count
-    passkey.device_type = _enum_value(verified.credential_device_type)
-    passkey.backed_up = bool(verified.credential_backed_up)
-    passkey.last_used_at = datetime.utcnow()
-    challenge.consumed_at = datetime.utcnow()
-    _add_audit_log(
-        db,
-        user_id=user.id,
-        action="LOGIN",
-        details="Successful login with passkey MFA",
-        request=req,
-    )
-    db.commit()
-
-    return _build_login_success(db, user)
-
-
-@app.post("/auth/biometric/verify", include_in_schema=False)
-@app.post("/api/auth/biometric/verify", tags=["Auth"])
-def biometric_authentication_verify(
-    data: schemas.BiometricAuthenticationFinishRequest,
-    req: Request,
-    db: Session = Depends(get_db),
-):
-    if not _request_is_native_client(req):
-        raise HTTPException(status_code=400, detail="Biometric MFA is only available in the mobile app")
-
-    token_payload = auth.decode_mfa_token(data.mfa_token, purpose="biometric")
-    user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
-    if not user or not user.is_active:
-        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+    remember_device_token = None
+    remember_device_expires_at = None
+    if data.remember_device:
+        remember_device_token, remember_device_expires_at = _create_trusted_device(db, user)
 
     _add_audit_log(
         db,
         user_id=user.id,
         action="LOGIN",
-        details="Successful login with native biometric MFA",
+        details=audit_details,
         request=req,
     )
     db.commit()
 
     response = _build_login_success(db, user)
-    response["biometric_mfa_verified"] = True
-    response["user"]["biometric_mfa_enabled"] = True
+    response["authenticator_mfa_verified"] = True
+    response["user"]["authenticator_mfa_enabled"] = True
+    if remember_device_token and remember_device_expires_at:
+        _attach_trusted_device_response(response, remember_device_token, remember_device_expires_at)
     return response
 
 

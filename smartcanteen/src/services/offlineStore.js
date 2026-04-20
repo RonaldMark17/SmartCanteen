@@ -207,10 +207,8 @@ export async function saveOfflineLoginProfile({ user, password }) {
         username: user?.username || username,
         full_name: user?.full_name || user?.username || 'Offline User',
         role: user?.role || 'cashier',
-        passkey_mfa_enabled: Boolean(user?.passkey_mfa_enabled),
+        authenticator_mfa_enabled: Boolean(user?.authenticator_mfa_enabled),
         mobile_password_fallback: Boolean(user?.mobile_password_fallback),
-        passkey_mfa_deferred: Boolean(user?.passkey_mfa_deferred),
-        passkey_registration_deferred: Boolean(user?.passkey_registration_deferred),
       },
       savedAt: new Date().toISOString(),
     },
@@ -238,34 +236,4 @@ export async function getOfflineLoginProfile(username, password) {
   );
 
   return match?.user || null;
-}
-
-export function markOfflineLoginProfileMfa(username) {
-  const normalizedUsername = normalizeUsername(username);
-  if (!normalizedUsername) {
-    return false;
-  }
-
-  const profiles = readJson(OFFLINE_LOGIN_STORAGE_KEY, []);
-  let changed = false;
-  const nextProfiles = profiles.map((entry) => {
-    if (entry.username !== normalizedUsername) {
-      return entry;
-    }
-
-    changed = true;
-    return {
-      ...entry,
-      user: {
-        ...entry.user,
-        passkey_mfa_enabled: true,
-      },
-    };
-  });
-
-  if (changed) {
-    writeJson(OFFLINE_LOGIN_STORAGE_KEY, nextProfiles);
-  }
-
-  return changed;
 }
