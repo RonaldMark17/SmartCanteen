@@ -27,6 +27,7 @@ function getStoredUser() {
 function clearSession() {
   localStorage.removeItem('sc_token');
   localStorage.removeItem('sc_user');
+  localStorage.removeItem('sc_background_alert_token');
   localStorage.removeItem('sc_offline_session');
 }
 

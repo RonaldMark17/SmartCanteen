@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'smartcanteen-shell-v9';
+const SHELL_CACHE = 'smartcanteen-shell-v10';
 const SHELL_ASSETS = ['/', '/index.html', '/favicon.svg', '/icons.svg'];
 
 self.addEventListener('install', (event) => {
@@ -74,6 +74,47 @@ self.addEventListener('fetch', (event) => {
         .catch(() => cachedResponse);
 
       return cachedResponse || networkResponse;
+    })
+  );
+});
+
+self.addEventListener('message', (event) => {
+  const payload = event.data || {};
+  if (payload.type !== 'SMARTCANTEEN_SHOW_NOTIFICATION') {
+    return;
+  }
+
+  const title = payload.title || 'SmartCanteen alert';
+  const options = {
+    body: payload.body || '',
+    tag: payload.tag || 'smartcanteen-alert',
+    data: payload.data || {},
+    icon: '/favicon.svg',
+    badge: '/favicon.svg',
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const targetUrl = new URL(event.notification.data?.url || '/', self.location.origin).href;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) {
+          client.navigate(targetUrl);
+          return client.focus();
+        }
+      }
+
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+
+      return undefined;
     })
   );
 });

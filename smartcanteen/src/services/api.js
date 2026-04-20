@@ -13,6 +13,7 @@ const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
 const OFFLINE_SESSION_STORAGE_KEY = 'sc_offline_session';
 const TRUSTED_DEVICE_STORAGE_KEY = 'sc_trusted_authenticator_devices';
+const BACKGROUND_ALERT_STORAGE_KEY = 'sc_background_alert_token';
 const DEFAULT_REMOTE_API_ORIGIN = 'https://smartcanteen.duckdns.org';
 const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
@@ -330,6 +331,10 @@ const API_BASE = resolveApiBase();
 const API_FALLBACK_BASE = resolveFallbackApiBase(API_BASE);
 const pendingGetRequests = new Map();
 
+export function getCurrentApiBase() {
+  return API_BASE;
+}
+
 export function getRealtimeAlertsUrl() {
   if (typeof window === 'undefined') {
     return null;
@@ -411,6 +416,7 @@ function isLoginFlowPath(path) {
 function clearSession() {
   localStorage.removeItem('sc_token');
   localStorage.removeItem('sc_user');
+  localStorage.removeItem(BACKGROUND_ALERT_STORAGE_KEY);
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
 }
 
@@ -802,6 +808,10 @@ async function syncPendingOfflineTransactions() {
 
 async function completeAuthenticatedLoginResponse(response, password, { rememberDevice = false, username = '' } = {}) {
   assertMfaWasCompleted(response);
+
+  if (response?.background_alert_token) {
+    localStorage.setItem(BACKGROUND_ALERT_STORAGE_KEY, response.background_alert_token);
+  }
 
   if (rememberDevice) {
     saveTrustedDeviceToken(username, response);

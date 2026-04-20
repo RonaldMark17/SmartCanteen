@@ -17,6 +17,7 @@ SECRET_KEY  = "smartcanteen-secret-key-CHANGE-THIS-in-prod-2024!"
 ALGORITHM   = "HS256"
 EXPIRE_MINS = 480   # 8-hour sessions (canteen shift length)
 MFA_EXPIRE_MINS = 5
+BACKGROUND_ALERT_EXPIRE_DAYS = 30
 
 security    = HTTPBearer()
 
@@ -38,6 +39,29 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     expire  = datetime.utcnow() + (expires_delta or timedelta(minutes=EXPIRE_MINS))
     payload.update({"exp": expire})
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_background_alert_token(username: str) -> str:
+    expire = datetime.utcnow() + timedelta(days=BACKGROUND_ALERT_EXPIRE_DAYS)
+    payload = {
+        "sub": username,
+        "purpose": "background_alert",
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_background_alert_token(token: str) -> dict:
+    exc = HTTPException(status_code=401, detail="Invalid or expired background alert token")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise exc
+
+    if payload.get("purpose") != "background_alert" or not payload.get("sub"):
+        raise exc
+
+    return payload
 
 
 def create_mfa_token(username: str, purpose: str = "authenticator", extra: Optional[dict] = None) -> tuple[str, str]:
@@ -81,6 +105,8 @@ def get_current_user(
     exc = HTTPException(status_code=401, detail="Invalid or expired token")
     try:
         payload  = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") == "background_alert":
+            raise exc
         username = payload.get("sub")
         if not username:
             raise exc

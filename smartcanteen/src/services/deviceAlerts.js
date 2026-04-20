@@ -1,7 +1,9 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+import { getCurrentApiBase } from './api';
 
 const LOW_STOCK_CHANNEL_ID = 'low-stock-alerts';
 const HIGH_DEMAND_CHANNEL_ID = 'high-demand-alerts';
+const BackgroundAlerts = registerPlugin('SmartCanteenBackgroundAlerts');
 let nativeNotificationSeed = Date.now() % 2147483000;
 
 function nextNativeNotificationId() {
@@ -44,6 +46,25 @@ function buildHighDemandBody(items) {
   }
 
   return `${names} may sell faster than usual tomorrow.`;
+}
+
+async function showWebNotification(title, options = {}) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+    return false;
+  }
+
+  if ('serviceWorker' in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.showNotification(title, options);
+      return true;
+    } catch {
+      // Fall through to the direct Notification API.
+    }
+  }
+
+  new Notification(title, options);
+  return true;
 }
 
 function normalizePermission(value) {
@@ -115,6 +136,47 @@ export async function requestAlertPermission() {
   return normalizePermission(permission);
 }
 
+export async function configureBackgroundAlertChecks() {
+  if (!Capacitor.isNativePlatform()) {
+    return false;
+  }
+
+  try {
+    const { LocalNotifications } = await import('@capacitor/local-notifications');
+    const permission = await LocalNotifications.checkPermissions();
+    if (normalizePermission(permission.display) !== 'granted') {
+      return false;
+    }
+
+    const token = localStorage.getItem('sc_background_alert_token') || '';
+    if (!token) {
+      return false;
+    }
+
+    await BackgroundAlerts.configure({
+      token,
+      apiBase: getCurrentApiBase(),
+      enabled: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function stopBackgroundAlertChecks() {
+  if (!Capacitor.isNativePlatform()) {
+    return false;
+  }
+
+  try {
+    await BackgroundAlerts.stop();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function sendLowStockDeviceAlert(items) {
   if (!Array.isArray(items) || items.length === 0) {
     return false;
@@ -153,15 +215,11 @@ export async function sendLowStockDeviceAlert(items) {
     }
   }
 
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
-    return false;
-  }
-
-  new Notification(title, {
+  return showWebNotification(title, {
     body,
     tag: LOW_STOCK_CHANNEL_ID,
+    data: { url: '/inventory' },
   });
-  return true;
 }
 
 export async function sendHighDemandDeviceAlert(items) {
@@ -202,13 +260,9 @@ export async function sendHighDemandDeviceAlert(items) {
     }
   }
 
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
-    return false;
-  }
-
-  new Notification(title, {
+  return showWebNotification(title, {
     body,
     tag: HIGH_DEMAND_CHANNEL_ID,
+    data: { url: '/predictions' },
   });
-  return true;
 }

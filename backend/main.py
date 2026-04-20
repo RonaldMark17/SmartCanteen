@@ -5,7 +5,7 @@ Run:  uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ─────────────────────────────────────────────────
 """
 
-from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Request, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Depends, Header, HTTPException, Request, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -799,6 +799,8 @@ def _build_login_success(db: Session, user: models.User):
     token = auth.create_access_token({"sub": user.username})
     return {
         "access_token": token,
+        "background_alert_token": auth.create_background_alert_token(user.username),
+        "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
         "token_type": "bearer",
         "user": _user_payload(db, user),
     }
@@ -1110,7 +1112,9 @@ def admin_reset_user_authenticator(
 # PRODUCTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-ALERT_STATE_TYPES = {"low_stock", "high_demand"}
+LOW_STOCK_ALERT_TYPE = "low_stock"
+HIGH_DEMAND_ALERT_TYPE = "high_demand"
+ALERT_STATE_TYPES = {LOW_STOCK_ALERT_TYPE, HIGH_DEMAND_ALERT_TYPE}
 ALERT_STATES = {"read", "dismissed"}
 
 
@@ -1123,6 +1127,65 @@ def _empty_alert_state_payload():
         "read": {"low_stock": [], "high_demand": []},
         "dismissed": {"low_stock": [], "high_demand": []},
     }
+
+
+def _build_high_demand_alert_items(predictions_response: dict) -> list[dict]:
+    predictions = predictions_response.get("predictions", [])
+    items = []
+
+    for index, item in enumerate(predictions if isinstance(predictions, list) else []):
+        predicted_quantity = float(item.get("predicted_quantity") or 0)
+        historical_average = float(item.get("historical_average") or 0)
+        stock_gap = float(item.get("stock_gap") or 0)
+        current_stock = float(item.get("current_stock") or 0)
+        min_stock = float(item.get("min_stock") or 0)
+        demand_lift = predicted_quantity / historical_average if historical_average > 0 else 0
+        high_demand_floor = max(12, min_stock, int(historical_average * 1.2 + 0.9999))
+        is_high_demand = (
+            predicted_quantity > 0 and (
+                predicted_quantity >= high_demand_floor or
+                demand_lift >= 1.35 or
+                stock_gap >= 3 or
+                predicted_quantity >= current_stock
+            )
+        )
+
+        if not is_high_demand:
+            continue
+
+        items.append({
+            "product_id": item.get("product_id", f"forecast-{index}"),
+            "product_name": item.get("product_name") or f"Product {index + 1}",
+            "category": item.get("category") or "General",
+            "predicted_quantity": predicted_quantity,
+            "historical_average": historical_average,
+            "stock_gap": stock_gap,
+            "current_stock": current_stock,
+            "confidence": item.get("confidence") or "low",
+            "demand_lift": demand_lift,
+        })
+
+    return sorted(
+        items,
+        key=lambda row: (
+            -float(row.get("predicted_quantity") or 0),
+            -float(row.get("stock_gap") or 0),
+            -float(row.get("demand_lift") or 0),
+        ),
+    )[:5]
+
+
+def _get_user_alert_state_signatures(db: Session, user_id: int, alert_type: str) -> set[str]:
+    rows = (
+        db.query(models.UserAlertState.signature)
+        .filter(
+            models.UserAlertState.user_id == user_id,
+            models.UserAlertState.alert_type == alert_type,
+            models.UserAlertState.state.in_(["read", "dismissed"]),
+        )
+        .all()
+    )
+    return {str(row[0]) for row in rows if row and row[0]}
 
 
 @app.get("/api/alert-state", tags=["Alerts"])
@@ -1198,6 +1261,54 @@ def update_alert_state(
         user_id=current.id,
     )
     return get_alert_state(db, current)
+
+
+@app.get("/api/alerts/background-summary", tags=["Alerts"])
+def get_background_alert_summary(
+    x_smartcanteen_alert_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    token_payload = auth.decode_background_alert_token(x_smartcanteen_alert_token or "")
+    current = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
+    if not current or not current.is_active:
+        raise HTTPException(status_code=401, detail="Invalid or expired background alert token")
+
+    low_stock_excluded = _get_user_alert_state_signatures(db, current.id, LOW_STOCK_ALERT_TYPE)
+    high_demand_excluded = _get_user_alert_state_signatures(db, current.id, HIGH_DEMAND_ALERT_TYPE)
+
+    low_stock_products = (
+        db.query(models.Product)
+        .filter(
+            models.Product.is_active == True,
+            models.Product.stock < models.Product.min_stock,
+        )
+        .order_by(models.Product.stock.asc(), models.Product.name.asc())
+        .all()
+    )
+    low_stock_items = [
+        {
+            "id": product.id,
+            "name": product.name,
+            "category": product.category,
+            "stock": product.stock,
+            "min_stock": product.min_stock,
+        }
+        for product in low_stock_products
+        if str(product.id or product.name or "") not in low_stock_excluded
+    ]
+
+    predictions_data = ml_predictor.predict_tomorrow_sales(db)
+    high_demand_items = [
+        item
+        for item in _build_high_demand_alert_items(predictions_data)
+        if str(item.get("product_id") or item.get("product_name") or "") not in high_demand_excluded
+    ]
+
+    return {
+        "low_stock": low_stock_items,
+        "high_demand": high_demand_items,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 @app.get("/api/products", response_model=List[schemas.ProductResponse], tags=["Products"])

@@ -28,10 +28,12 @@ import {
   parseBackendDateTime,
 } from '../utils/dateTime';
 import {
+  configureBackgroundAlertChecks,
   getAlertPermissionStatus,
   requestAlertPermission,
   sendHighDemandDeviceAlert,
   sendLowStockDeviceAlert,
+  stopBackgroundAlertChecks,
 } from '../services/deviceAlerts';
 import { OFFLINE_QUEUE_EVENT, countOfflineTransactions } from '../services/offlineStore';
 import { ALERT_REFRESH_EVENT, connectRealtimeAlertStream } from '../services/realtimeAlerts';
@@ -771,6 +773,7 @@ export default function Layout({ children, onLogout }) {
         buildHighDemandAlertKey
       );
 
+      await configureBackgroundAlertChecks();
       window.showToast?.('Phone alerts enabled for stock and demand warnings.', 'success');
       if (unreadLowStockItems.length > 0) {
         await sendLowStockDeviceAlert(unreadLowStockItems);
@@ -811,6 +814,7 @@ export default function Layout({ children, onLogout }) {
 
   function confirmLogout() {
     setLogoutConfirmOpen(false);
+    stopBackgroundAlertChecks();
     onLogout();
   }
 
@@ -1018,6 +1022,9 @@ export default function Layout({ children, onLogout }) {
       const permission = await getAlertPermissionStatus();
       if (active) {
         setAlertPermission(permission);
+      }
+      if (permission === 'granted') {
+        await configureBackgroundAlertChecks();
       }
     }
 

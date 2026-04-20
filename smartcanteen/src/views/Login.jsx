@@ -637,7 +637,7 @@ export default function Login({ onLogin }) {
                     </div>
                   </div>
                 )}
-                {error && (
+                {error && !isAuthenticatorStep && pendingRecoveryCodes.length === 0 && (
                   <DismissibleAlert
                     resetKey={error}
                     tone="red"
@@ -793,6 +793,17 @@ export default function Login({ onLogin }) {
             </div>
 
             <form onSubmit={handleSubmit} className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 py-5">
+              {error && (
+                <DismissibleAlert
+                  resetKey={`${error}-${authenticatorCode}`}
+                  tone="red"
+                  title={isAuthenticatorSetup ? 'Authenticator setup issue' : 'Verification issue'}
+                  className="mb-4 border-red-400/30 bg-red-950/50 text-red-100"
+                >
+                  {error}
+                </DismissibleAlert>
+              )}
+
               {isAuthenticatorSetup && (
                 <div className="mb-4 grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)]">
                   {authenticatorQrCode && (
