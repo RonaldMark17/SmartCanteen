@@ -136,15 +136,6 @@ function getPasskeySupportStatus() {
   const protocol = window.location?.protocol;
   const isLocalhost = hostname === 'localhost';
 
-  if (isNativeRuntime()) {
-    return {
-      supported: false,
-      reason: 'Passkey MFA must be set up from Chrome, Edge, or Safari on the web app.',
-      platform: getRuntimePlatform(),
-      deviceClass: getDeviceClass(),
-    };
-  }
-
   if (isIpHostname(hostname)) {
     return {
       supported: false,
@@ -163,14 +154,18 @@ function getPasskeySupportStatus() {
   if (!window.isSecureContext) {
     return {
       supported: false,
-      reason: 'Passkeys require a secure browser context: HTTPS or localhost.',
+      reason: isNativeRuntime()
+        ? 'Passkey MFA is required, but this APK WebView is not a secure passkey context. Open the web app in Chrome, Edge, or Safari to finish verification.'
+        : 'Passkeys require a secure browser context: HTTPS or localhost.',
     };
   }
 
   if (typeof window.PublicKeyCredential === 'undefined' || typeof navigator === 'undefined' || !navigator.credentials) {
     return {
       supported: false,
-      reason: 'This browser does not support passkeys.',
+      reason: isNativeRuntime()
+        ? 'Passkey MFA is required, but this APK WebView cannot open the passkey prompt. Open the web app in Chrome, Edge, or Safari to finish verification.'
+        : 'This browser does not support passkeys.',
     };
   }
 
@@ -591,6 +586,23 @@ function buildOfflineSessionResponse(user) {
   };
 }
 
+function assertMfaWasCompleted(response) {
+  if (!response?.access_token) {
+    throw new Error('Passkey verification did not complete. Try signing in again.');
+  }
+
+  if (
+    response?.mobile_password_fallback ||
+    response?.passkey_mfa_deferred ||
+    response?.passkey_registration_deferred ||
+    !response?.user?.passkey_mfa_enabled
+  ) {
+    throw new Error(
+      'Passkey MFA is required before opening the dashboard. Complete passkey verification in a supported browser, then sign in again.'
+    );
+  }
+}
+
 function isOfflineSessionToken(token) {
   return String(token || '').startsWith('offline-session:');
 }
@@ -997,6 +1009,8 @@ async function login(username, password) {
       });
     }
 
+    assertMfaWasCompleted(response);
+
     const offlineProfileUser = {
       ...response?.user,
       mobile_password_fallback: Boolean(response?.mobile_password_fallback),
@@ -1019,7 +1033,11 @@ async function login(username, password) {
       );
     }
 
-    if (offlineUser.passkey_mfa_enabled && !offlineUser.mobile_password_fallback) {
+    if (
+      offlineUser.passkey_mfa_enabled ||
+      offlineUser.passkey_mfa_deferred ||
+      offlineUser.passkey_registration_deferred
+    ) {
       throw new Error('Passkey MFA requires an online connection for this account.');
     }
 

@@ -232,10 +232,6 @@ export default function Login({ onLogin }) {
       localStorage.setItem('sc_user', JSON.stringify(res.user));
       if (res.offline) {
         window.showToast?.('Signed in with offline access saved on this device.', 'warning');
-      } else if (res.passkey_mfa_deferred) {
-        window.showToast?.('Signed in on mobile. Passkey MFA will be used on supported web browsers.', 'warning');
-      } else if (res.passkey_registration_deferred) {
-        window.showToast?.('Signed in on mobile. Set up a passkey later from a supported web browser.', 'warning');
       }
       onLogin();
     } catch (err) {
@@ -522,7 +518,7 @@ export default function Login({ onLogin }) {
                 <div className="hidden items-start gap-2 rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2.5 sm:flex [@media(max-height:650px)]:hidden">
                   <FingerPrintIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
                   <div className="text-xs leading-5 text-slate-400">
-                    <span className="font-black text-slate-100">Passkey MFA:</span> Supported web browsers can use passkeys; the mobile app signs in with password login.
+                    <span className="font-black text-slate-100">Passkey MFA:</span> Sign-in must finish passkey verification before the dashboard opens.
                   </div>
                 </div>
 

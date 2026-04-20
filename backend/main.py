@@ -523,17 +523,6 @@ def _env_int(name: str, default: int) -> int:
 PASSKEY_OPERATION_TIMEOUT_MS = _env_int("SMARTCANTEEN_PASSKEY_TIMEOUT_MS", 120000)
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-
-    return value.strip().lower() not in {"0", "false", "no", "off"}
-
-
-PASSKEY_MOBILE_FALLBACK_ENABLED = _env_flag("SMARTCANTEEN_PASSKEY_MOBILE_FALLBACK", True)
-
-
 def _enum_value(value):
     return getattr(value, "value", value)
 
@@ -594,50 +583,6 @@ def _request_origin(req: Request) -> str:
         raise HTTPException(status_code=400, detail="Unable to determine passkey origin")
 
     return f"{scheme}://{host}".rstrip("/")
-
-
-def _request_header(req: Request, name: str) -> str:
-    return (req.headers.get(name) or "").strip().lower()
-
-
-def _request_is_native_client(req: Request) -> bool:
-    client = _request_header(req, "x-smartcanteen-client")
-    platform = _request_header(req, "x-smartcanteen-platform")
-
-    return client in {"native", "android", "ios", "mobile-app"} or platform in {"android", "ios"}
-
-
-def _request_is_mobile_client(req: Request) -> bool:
-    if _request_is_native_client(req):
-        return True
-
-    if _request_header(req, "x-smartcanteen-device-class") == "mobile":
-        return True
-
-    return "mobile" in _request_header(req, "user-agent")
-
-
-def _request_reports_passkey_unsupported(req: Request) -> bool:
-    value = _request_header(req, "x-smartcanteen-passkey-supported")
-    return value in {"0", "false", "no", "unsupported"}
-
-
-def _passkey_mobile_fallback_allowed(req: Request) -> bool:
-    if not PASSKEY_MOBILE_FALLBACK_ENABLED:
-        return False
-
-    if _request_is_native_client(req) or _request_is_mobile_client(req):
-        return True
-
-    if not _request_reports_passkey_unsupported(req):
-        return False
-
-    try:
-        hostname = (urlparse(_request_origin(req)).hostname or "").rstrip(".").lower()
-    except HTTPException:
-        return False
-
-    return hostname in {"localhost", "127.0.0.1"} or _is_ip_hostname(hostname)
 
 
 def _rp_id_from_origin(origin: str) -> str:
@@ -888,47 +833,13 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     passkeys = _active_passkeys(db, user.id)
-    mobile_passkey_fallback = _passkey_mobile_fallback_allowed(req)
-
-    if passkeys and not mobile_passkey_fallback:
+    if passkeys:
         response = _begin_passkey_authentication(db, req, user, passkeys)
         _add_audit_log(
             db,
             user_id=user.id,
             action="LOGIN_MFA_REQUIRED",
             details="Password accepted; passkey MFA required",
-            request=req,
-        )
-        db.commit()
-        return response
-
-    if passkeys and mobile_passkey_fallback:
-        response = _build_login_success(db, user)
-        response.update({
-            "mobile_password_fallback": True,
-            "passkey_mfa_deferred": True,
-        })
-        _add_audit_log(
-            db,
-            user_id=user.id,
-            action="LOGIN_MFA_DEFERRED",
-            details="Password accepted; passkey MFA deferred for mobile/native client",
-            request=req,
-        )
-        db.commit()
-        return response
-
-    if mobile_passkey_fallback:
-        response = _build_login_success(db, user)
-        response.update({
-            "mobile_password_fallback": True,
-            "passkey_registration_deferred": True,
-        })
-        _add_audit_log(
-            db,
-            user_id=user.id,
-            action="LOGIN_PASSKEY_REGISTRATION_DEFERRED",
-            details="Password accepted; passkey setup deferred for mobile/native client",
             request=req,
         )
         db.commit()
