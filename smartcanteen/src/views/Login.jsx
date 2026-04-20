@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
@@ -197,6 +197,7 @@ export default function Login({ onLogin }) {
   const [authenticatorQrCode, setAuthenticatorQrCode] = useState('');
   const [secretCopied, setSecretCopied] = useState(false);
   const [lockoutNow, setLockoutNow] = useState(() => Date.now());
+  const authenticatorCodeRef = useRef(null);
 
   const loginIdentifier = normalizeLoginIdentifier(username);
   const lockoutState = getLoginLockoutState(loginIdentifier, lockoutNow);
@@ -247,6 +248,18 @@ export default function Login({ onLogin }) {
       active = false;
     };
   }, [authenticatorChallenge]);
+
+  useEffect(() => {
+    if (!isAuthenticatorStep) {
+      return;
+    }
+
+    const focusTimer = window.setTimeout(() => {
+      authenticatorCodeRef.current?.focus();
+    }, 80);
+
+    return () => window.clearTimeout(focusTimer);
+  }, [isAuthenticatorStep]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -596,78 +609,6 @@ export default function Login({ onLogin }) {
                   </div>
                 </label>
 
-                {isAuthenticatorStep && (
-                  <div className="rounded-[16px] border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-50">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-200">
-                          Authenticator app
-                        </div>
-                        <div className="mt-1 text-sm font-black text-white">
-                          {isAuthenticatorSetup ? 'Set up verification' : 'Enter verification code'}
-                        </div>
-                      </div>
-                      <ShieldCheckIcon className="h-5 w-5 shrink-0 text-emerald-300" />
-                    </div>
-
-                    {isAuthenticatorSetup && (
-                      <div className="mt-3 grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)]">
-                        {authenticatorQrCode && (
-                          <div className="mx-auto rounded-xl bg-white p-2 sm:mx-0">
-                            <img
-                              src={authenticatorQrCode}
-                              alt="Authenticator setup QR code"
-                              className="h-32 w-32"
-                            />
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <div className="text-xs leading-5 text-emerald-100/90">
-                            Scan the QR code or enter this setup key in Google Authenticator,
-                            Microsoft Authenticator, Authy, or another TOTP app.
-                          </div>
-                          <div className="mt-2 break-all rounded-xl border border-emerald-300/20 bg-slate-950/80 px-3 py-2 font-mono text-sm font-black tracking-widest text-white">
-                            {authenticatorChallenge?.authenticator?.secret_formatted}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={copySetupKey}
-                            className="mt-2 rounded-xl border border-emerald-300/20 px-3 py-1.5 text-xs font-black text-emerald-100 transition hover:bg-emerald-300/10"
-                          >
-                            {secretCopied ? 'Copied' : 'Copy key'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    <label className="mt-3 block">
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-                        6-digit code
-                      </span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        required={isAuthenticatorStep}
-                        placeholder="000000"
-                        className="mt-1.5 w-full rounded-2xl border border-emerald-300/25 bg-slate-950 px-4 py-3.5 text-center font-mono text-xl font-black tracking-[0.28em] text-white outline-none transition duration-200 placeholder:text-slate-700 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20 disabled:cursor-not-allowed disabled:opacity-60"
-                        value={authenticatorCode}
-                        onChange={(event) => setAuthenticatorCode(normalizeAuthenticatorCode(event.target.value))}
-                        disabled={loading}
-                        autoComplete="one-time-code"
-                      />
-                    </label>
-
-                    <button
-                      type="button"
-                      onClick={resetAuthenticatorStep}
-                      className="mt-2 text-xs font-black text-emerald-100/80 transition hover:text-white"
-                    >
-                      Use a different account
-                    </button>
-                  </div>
-                )}
-
                 <div className="flex items-center justify-between gap-3 text-xs">
                   <label className="flex items-center gap-2 font-bold text-slate-400">
                     <input
@@ -737,6 +678,117 @@ export default function Login({ onLogin }) {
           </section>
         </div>
       </div>
+
+      {isAuthenticatorStep && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/78 px-4 py-5 backdrop-blur-md">
+          <div
+            className="w-full max-w-[28rem] overflow-hidden rounded-[24px] border border-emerald-300/20 bg-slate-950 text-slate-100 shadow-[0_28px_90px_rgba(0,0,0,0.6)]"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="authenticator-modal-title"
+          >
+            <div className="border-b border-slate-800 bg-slate-900/80 px-5 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-200">
+                    <ShieldCheckIcon className="h-4 w-4" />
+                    Authenticator app
+                  </div>
+                  <h3 id="authenticator-modal-title" className="mt-3 text-xl font-black leading-7 text-white">
+                    {isAuthenticatorSetup ? 'Set up verification' : 'Enter verification code'}
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-400">
+                    {isAuthenticatorSetup
+                      ? 'Add SmartCanteen to your authenticator app, then enter the 6-digit code.'
+                      : 'Open your authenticator app and enter the current 6-digit code.'}
+                  </p>
+                </div>
+                <div className="rounded-[14px] border border-emerald-400/20 bg-emerald-400/10 p-2 text-emerald-200">
+                  <LockClosedIcon className="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 py-5">
+              {isAuthenticatorSetup && (
+                <div className="mb-4 grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)]">
+                  {authenticatorQrCode && (
+                    <div className="mx-auto rounded-2xl bg-white p-2 sm:mx-0">
+                      <img
+                        src={authenticatorQrCode}
+                        alt="Authenticator setup QR code"
+                        className="h-36 w-36"
+                      />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs leading-5 text-slate-400">
+                      Scan the QR code or enter this setup key in Google Authenticator,
+                      Microsoft Authenticator, Authy, or another TOTP app.
+                    </div>
+                    <div className="mt-2 break-all rounded-2xl border border-emerald-300/20 bg-slate-900 px-3 py-2 font-mono text-sm font-black tracking-widest text-white">
+                      {authenticatorChallenge?.authenticator?.secret_formatted}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copySetupKey}
+                      className="mt-2 rounded-xl border border-emerald-300/20 px-3 py-1.5 text-xs font-black text-emerald-100 transition hover:bg-emerald-300/10"
+                    >
+                      {secretCopied ? 'Copied' : 'Copy key'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+                  6-digit code
+                </span>
+                <input
+                  ref={authenticatorCodeRef}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  required
+                  placeholder="000000"
+                  className="mt-2 w-full rounded-2xl border border-emerald-300/25 bg-slate-900 px-4 py-4 text-center font-mono text-2xl font-black tracking-[0.32em] text-white outline-none transition duration-200 placeholder:text-slate-700 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20 disabled:cursor-not-allowed disabled:opacity-60 sm:text-3xl"
+                  value={authenticatorCode}
+                  onChange={(event) => setAuthenticatorCode(normalizeAuthenticatorCode(event.target.value))}
+                  disabled={loading}
+                  autoComplete="one-time-code"
+                />
+              </label>
+
+              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <button
+                  type="button"
+                  onClick={resetAuthenticatorStep}
+                  disabled={loading}
+                  className="rounded-2xl border border-slate-700 px-4 py-3 text-sm font-black text-slate-300 transition hover:border-slate-500 hover:bg-slate-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Use a different account
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading || authenticatorCode.length !== 6}
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 shadow-[0_16px_34px_rgba(16,185,129,0.28)] transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {loading ? (
+                    <>
+                      <span className="h-4 w-4 rounded-full border-2 border-slate-950/30 border-t-slate-950 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : isAuthenticatorSetup ? (
+                    'Set Up & Sign In'
+                  ) : (
+                    'Verify Code'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
