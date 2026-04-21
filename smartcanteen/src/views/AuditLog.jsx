@@ -7,7 +7,9 @@ import {
   ChevronRightIcon,
   ClockIcon,
   ComputerDesktopIcon,
+  FunnelIcon,
   KeyIcon,
+  MagnifyingGlassIcon,
   ShieldCheckIcon,
   UserGroupIcon,
 } from '@heroicons/react/24/outline';
@@ -96,6 +98,15 @@ function getActionTone(action) {
   }
 
   return 'bg-slate-100 text-slate-700 ring-slate-200';
+}
+
+function getAuditSearchText(log) {
+  return [
+    log?.timestamp,
+    log?.action,
+    log?.details,
+    log?.ip_address,
+  ].filter(Boolean).join(' ').toLowerCase();
 }
 
 function getInitials(user) {
@@ -193,6 +204,8 @@ export default function AuditLog() {
   const [resettingUserId, setResettingUserId] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [actionFilter, setActionFilter] = useState('All');
   const [philippineNow, setPhilippineNow] = useState(() => formatPhilippineDateTime(new Date()));
 
   const loadLogs = useCallback(async ({ showLoading = false } = {}) => {
@@ -286,12 +299,29 @@ export default function AuditLog() {
     };
   }, []);
 
-  const totalPages = Math.max(1, Math.ceil(logs.length / AUDIT_LOGS_PER_PAGE));
+  const actionOptions = [
+    'All',
+    ...new Set(
+      logs
+        .map((log) => String(log.action || '').trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right))
+    ),
+  ];
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredLogs = logs.filter((log) => {
+    const matchesSearch = !normalizedSearch || getAuditSearchText(log).includes(normalizedSearch);
+    const matchesAction = actionFilter === 'All' || log.action === actionFilter;
+
+    return matchesSearch && matchesAction;
+  });
+  const filtersActive = normalizedSearch !== '' || actionFilter !== 'All';
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / AUDIT_LOGS_PER_PAGE));
   const safeCurrentPage = Math.min(currentPage, totalPages);
-  const pageStartIndex = logs.length === 0 ? 0 : (safeCurrentPage - 1) * AUDIT_LOGS_PER_PAGE;
-  const paginatedLogs = logs.slice(pageStartIndex, pageStartIndex + AUDIT_LOGS_PER_PAGE);
-  const pageStartCount = logs.length === 0 ? 0 : pageStartIndex + 1;
-  const pageEndCount = Math.min(pageStartIndex + paginatedLogs.length, logs.length);
+  const pageStartIndex = filteredLogs.length === 0 ? 0 : (safeCurrentPage - 1) * AUDIT_LOGS_PER_PAGE;
+  const paginatedLogs = filteredLogs.slice(pageStartIndex, pageStartIndex + AUDIT_LOGS_PER_PAGE);
+  const pageStartCount = filteredLogs.length === 0 ? 0 : pageStartIndex + 1;
+  const pageEndCount = Math.min(pageStartIndex + paginatedLogs.length, filteredLogs.length);
   const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
   const mfaEnabledCount = users.filter((user) => Boolean(user.authenticator_mfa_enabled)).length;
   const lowRecoveryCount = users.filter((user) => Number(user.recovery_codes_remaining || 0) <= 1).length;
@@ -301,6 +331,10 @@ export default function AuditLog() {
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [actionFilter, searchQuery]);
 
   return (
     <div className="view-shell h-auto min-h-full pb-6">
@@ -382,16 +416,52 @@ export default function AuditLog() {
 
       <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_26rem]">
         <section className="data-card flex min-h-0 flex-col">
-          <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex shrink-0 flex-col gap-4 border-b border-slate-100 bg-white px-5 py-4">
             <div>
-              <h2 className="text-[22px] font-extrabold tracking-tight text-slate-900">Activity Feed</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Login attempts, inventory changes, seeding, and cashier activity.
-              </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-[22px] font-extrabold tracking-tight text-slate-900">Activity Feed</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Login attempts, inventory changes, seeding, and cashier activity.
+                  </p>
+                </div>
+                <span className="self-start rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600 sm:self-center">
+                  {filtersActive
+                    ? `${formatCount(filteredLogs.length)}/${formatCount(logs.length)} activities`
+                    : `${formatCount(logs.length)} activities`}
+                </span>
+              </div>
             </div>
-            <span className="self-start rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600 sm:self-center">
-              {formatCount(logs.length)} activities
-            </span>
+
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_15rem]">
+              <label className="relative block">
+                <span className="sr-only">Search audit activity</span>
+                <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search action, details, timestamp, or IP"
+                  className="field-control w-full pl-10"
+                />
+              </label>
+
+              <label className="relative block">
+                <span className="sr-only">Filter audit action</span>
+                <FunnelIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <select
+                  value={actionFilter}
+                  onChange={(event) => setActionFilter(event.target.value)}
+                  className="field-control w-full appearance-none pl-10"
+                >
+                  {actionOptions.map((action) => (
+                    <option key={action} value={action}>
+                      {action === 'All' ? 'All actions' : formatActionLabel(action)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
 
           <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-auto md:block">
@@ -414,8 +484,12 @@ export default function AuditLog() {
                       <td className="px-6 py-4"><Skeleton className="h-4 w-24" /></td>
                     </tr>
                   ))
-                ) : logs.length === 0 ? (
-                  <tr><td colSpan="4" className="text-center py-12 text-slate-500">No audit activity found.</td></tr>
+                ) : filteredLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="text-center py-12 text-slate-500">
+                      {logs.length === 0 ? 'No audit activity found.' : 'No activity matches these filters.'}
+                    </td>
+                  </tr>
                 ) : paginatedLogs.map((log, index) => (
                   <tr key={log.id || `${log.timestamp}-${index}`} className="transition-colors hover:bg-slate-50">
                     <td className="whitespace-nowrap px-6 py-4 font-semibold text-slate-700">
@@ -450,9 +524,9 @@ export default function AuditLog() {
                   </div>
                 ))}
               </div>
-            ) : logs.length === 0 ? (
+            ) : filteredLogs.length === 0 ? (
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                No audit activity found.
+                {logs.length === 0 ? 'No audit activity found.' : 'No activity matches these filters.'}
               </div>
             ) : (
               <div className="space-y-3">
@@ -478,10 +552,10 @@ export default function AuditLog() {
             )}
           </div>
 
-          {!loading && logs.length > 0 && (
+          {!loading && filteredLogs.length > 0 && (
             <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm font-semibold text-slate-600">
-                Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(logs.length)} activities
+                Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(filteredLogs.length)} activities
               </div>
 
               <PageControls

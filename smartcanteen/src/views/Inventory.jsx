@@ -11,7 +11,12 @@ import {
   ArrowPathIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CubeIcon,
+  ExclamationTriangleIcon,
+  MagnifyingGlassIcon,
   PlusIcon,
+  Squares2X2Icon,
+  TagIcon,
 } from '@heroicons/react/24/outline';
 
 const INVENTORY_ITEMS_PER_PAGE = 10;
@@ -45,6 +50,27 @@ function sortActiveProducts(products) {
   });
 }
 
+function getProductSearchText(product) {
+  return [
+    product?.id,
+    product?.name,
+    product?.category,
+    product?.barcode,
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function productMatchesFilters(product, { searchQuery, categoryFilter, stockFilter }) {
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const matchesSearch = !normalizedSearch || getProductSearchText(product).includes(normalizedSearch);
+  const matchesCategory = categoryFilter === 'All' || product.category === categoryFilter;
+  const matchesStock =
+    stockFilter === 'all' ||
+    (stockFilter === 'low' && isBelowMinimumStock(product)) ||
+    (stockFilter === 'healthy' && !isBelowMinimumStock(product));
+
+  return matchesSearch && matchesCategory && matchesStock;
+}
+
 function getInventoryPageNumbers(currentPage, totalPages) {
   const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
   let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
@@ -52,6 +78,29 @@ function getInventoryPageNumbers(currentPage, totalPages) {
   start = Math.max(1, end - visibleCount + 1);
 
   return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
+
+function InventoryMetricCard({ title, value, detail, icon, tone = 'slate' }) {
+  const MetricIcon = icon;
+  const toneClass = {
+    emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-100',
+    red: 'bg-red-50 text-red-600 ring-red-100',
+    fuchsia: 'bg-fuchsia-50 text-fuchsia-600 ring-fuchsia-100',
+    slate: 'bg-slate-100 text-slate-600 ring-slate-200',
+  }[tone];
+
+  return (
+    <div className="panel-card flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">{title}</div>
+        <div className="mt-2 truncate text-2xl font-black text-slate-950">{value}</div>
+        <div className="mt-1 truncate text-sm font-semibold text-slate-500">{detail}</div>
+      </div>
+      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1 ${toneClass}`}>
+        <MetricIcon className="h-6 w-6" />
+      </div>
+    </div>
+  );
 }
 
 function getPagination(items, currentPage) {
@@ -474,6 +523,9 @@ export default function Inventory() {
   const [notificationFocus, setNotificationFocus] = useState(null);
   const [activeCurrentPage, setActiveCurrentPage] = useState(1);
   const [inactiveCurrentPage, setInactiveCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [stockFilter, setStockFilter] = useState('all');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState(initialFormState());
@@ -647,15 +699,40 @@ export default function Inventory() {
       : products
   );
 
-  const displayedActiveProducts = moveFocusedProductFirst(activeProducts);
-  const displayedInactiveProducts = moveFocusedProductFirst(inactiveProducts);
+  const allProducts = [...activeProducts, ...inactiveProducts];
+  const categoryOptions = [
+    'All',
+    ...new Set(
+      allProducts
+        .map((product) => product.category)
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right))
+    ),
+  ];
+  const activeLowStockCount = activeProducts.filter(isBelowMinimumStock).length;
+  const activeStockUnits = activeProducts.reduce(
+    (total, product) => total + Number(product.stock || 0),
+    0
+  );
+  const filtersActive =
+    searchQuery.trim() !== '' || categoryFilter !== 'All' || stockFilter !== 'all';
+  const displayedActiveProducts = moveFocusedProductFirst(
+    activeProducts.filter((product) =>
+      productMatchesFilters(product, { searchQuery, categoryFilter, stockFilter })
+    )
+  );
+  const displayedInactiveProducts = moveFocusedProductFirst(
+    inactiveProducts.filter((product) =>
+      productMatchesFilters(product, { searchQuery, categoryFilter, stockFilter })
+    )
+  );
   const activePagination = getPagination(displayedActiveProducts, activeCurrentPage);
   const inactivePagination = getPagination(displayedInactiveProducts, inactiveCurrentPage);
 
   useEffect(() => {
     setActiveCurrentPage(1);
     setInactiveCurrentPage(1);
-  }, [notificationFocus?.id, notificationFocus?.name]);
+  }, [categoryFilter, notificationFocus?.id, notificationFocus?.name, searchQuery, stockFilter]);
 
   useEffect(() => {
     if (activeCurrentPage > activePagination.totalPages) {
@@ -670,10 +747,14 @@ export default function Inventory() {
   }, [inactiveCurrentPage, inactivePagination.totalPages]);
 
   return (
-    <div className="view-shell-static relative gap-5">
+    <div className="view-shell custom-scrollbar relative h-auto min-h-full gap-5 pb-6 pr-0">
       <div className="view-header md:flex-row md:items-center">
         <div>
-          <h1 className="view-title">Inventory</h1>
+          <div className="view-eyebrow">
+            <CubeIcon className="h-4 w-4" />
+            Product Control
+          </div>
+          <h1 className="view-title mt-3">Inventory</h1>
           <p className="view-subtitle">
             Manage active products and review inactive products from one workspace
           </p>
@@ -707,10 +788,100 @@ export default function Inventory() {
         </DismissibleAlert>
       )}
 
+      <div className="grid shrink-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <InventoryMetricCard
+          title="Active Products"
+          value={formatCount(activeProducts.length)}
+          detail="Available in POS"
+          icon={CubeIcon}
+          tone="emerald"
+        />
+        <InventoryMetricCard
+          title="Low Stock"
+          value={formatCount(activeLowStockCount)}
+          detail="Below minimum alert"
+          icon={ExclamationTriangleIcon}
+          tone={activeLowStockCount > 0 ? 'red' : 'slate'}
+        />
+        <InventoryMetricCard
+          title="Stock Units"
+          value={formatCount(activeStockUnits)}
+          detail="Active inventory total"
+          icon={Squares2X2Icon}
+          tone="fuchsia"
+        />
+        <InventoryMetricCard
+          title="Inactive"
+          value={formatCount(inactiveProducts.length)}
+          detail="Archived products"
+          icon={ArchiveBoxIcon}
+          tone="slate"
+        />
+      </div>
+
+      <div className="control-surface flex shrink-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_14rem]">
+          <label className="relative block">
+            <span className="sr-only">Search products</span>
+            <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search name, barcode, category, or ID"
+              className="field-control w-full pl-10"
+            />
+          </label>
+
+          <label className="relative block">
+            <span className="sr-only">Filter by category</span>
+            <TagIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+            <select
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+              className="field-control w-full appearance-none pl-10"
+            >
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>
+                  {category === 'All' ? 'All categories' : category}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="inline-flex w-full rounded-2xl border border-slate-200 bg-slate-50 p-1 sm:w-auto">
+          {[
+            { value: 'all', label: 'All' },
+            { value: 'low', label: 'Low' },
+            { value: 'healthy', label: 'Healthy' },
+          ].map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setStockFilter(option.value)}
+              className={`flex-1 rounded-xl px-4 py-2 text-sm font-black transition sm:flex-none ${
+                stockFilter === option.value
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-white'
+              }`}
+              aria-pressed={stockFilter === option.value}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <InventorySection
         title="Active Inventory"
         subtitle="Products available for selling and stock monitoring"
-        countLabel={`${formatCount(activeProducts.length)} active`}
+        icon={CubeIcon}
+        countLabel={
+          filtersActive
+            ? `${formatCount(displayedActiveProducts.length)}/${formatCount(activeProducts.length)} active`
+            : `${formatCount(activeProducts.length)} active`
+        }
         products={displayedActiveProducts}
         paginatedProducts={activePagination.paginatedProducts}
         pagination={activePagination}
@@ -729,7 +900,11 @@ export default function Inventory() {
         title="Inactive Products"
         subtitle="Deactivated products stay here until an admin restores them"
         icon={ArchiveBoxIcon}
-        countLabel={`${formatCount(inactiveProducts.length)} inactive`}
+        countLabel={
+          filtersActive
+            ? `${formatCount(displayedInactiveProducts.length)}/${formatCount(inactiveProducts.length)} inactive`
+            : `${formatCount(inactiveProducts.length)} inactive`
+        }
         products={displayedInactiveProducts}
         paginatedProducts={inactivePagination.paginatedProducts}
         pagination={inactivePagination}
