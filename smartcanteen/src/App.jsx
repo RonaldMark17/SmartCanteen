@@ -69,6 +69,7 @@ export default function App() {
     dashboard: <Dashboard />,
     pos: <POS />,
     inventory: <Inventory />,
+    inactiveProducts: <Inventory mode="inactive" />,
     analytics: <Analytics />,
     transactions: <TransactionHistory />,
     predictions: <Predictions />,

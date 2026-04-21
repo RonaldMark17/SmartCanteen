@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useCallback, useState, useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
@@ -7,6 +7,8 @@ import { getPhilippineDateKey } from '../utils/dateTime';
 import { requestAlertRefresh } from '../services/realtimeAlerts';
 import {
   ArrowDownTrayIcon,
+  ArchiveBoxIcon,
+  ArrowPathIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   PlusIcon,
@@ -23,6 +25,10 @@ function isBelowMinimumStock(product) {
   return Number(product?.stock || 0) < Number(product?.min_stock || 0);
 }
 
+function isProductActive(product) {
+  return product?.is_active !== false;
+}
+
 function getInventoryPageNumbers(currentPage, totalPages) {
   const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
   let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
@@ -32,7 +38,7 @@ function getInventoryPageNumbers(currentPage, totalPages) {
   return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
-export default function Inventory() {
+export default function Inventory({ mode = 'active' }) {
   const location = useLocation();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,20 +53,24 @@ export default function Inventory() {
   const user = JSON.parse(localStorage.getItem('sc_user') || '{}');
   const isAdmin = user?.role === 'admin';
   const tableColumnCount = isAdmin ? 7 : 6;
+  const isInactivePage = mode === 'inactive';
 
   function initialFormState() {
     return { id: null, name: "", category: "Staple", price: "", stock: 0, min_stock: 5, barcode: "" };
   }
 
-  const fetchProducts = async () => {
+  const fetchProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await API.getProducts(false);
+      const data = await API.getProducts(isInactivePage ? false : true);
+      const scopedData = (Array.isArray(data) ? data : []).filter((product) =>
+        isInactivePage ? !isProductActive(product) : isProductActive(product)
+      );
       
-      // Sorting logic: Low stock items come first, then alphabetical by name
-      const sortedData = data.sort((a, b) => {
-        const aIsLow = !isProductActive(a) || isBelowMinimumStock(a);
-        const bIsLow = !isProductActive(b) || isBelowMinimumStock(b);
+      // Sorting logic: Low stock items come first on active inventory, then alphabetical by name
+      const sortedData = scopedData.sort((a, b) => {
+        const aIsLow = !isInactivePage && isBelowMinimumStock(a);
+        const bIsLow = !isInactivePage && isBelowMinimumStock(b);
 
         if (aIsLow && !bIsLow) return -1; // a comes first
         if (!aIsLow && bIsLow) return 1;  // b comes first
@@ -75,11 +85,11 @@ export default function Inventory() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isInactivePage]);
 
   useEffect(() => {
     fetchProducts();
-  }, []);
+  }, [fetchProducts]);
 
   useEffect(() => {
     const alertState = location.state;
@@ -94,7 +104,7 @@ export default function Inventory() {
       name: alertState.highlightProductName || '',
       type: alertState.notificationType || 'notification',
     });
-  }, [location.key]);
+  }, [location.key, location.state]);
 
   const openAddModal = () => {
     setFormData(initialFormState());
@@ -116,7 +126,19 @@ export default function Inventory() {
       fetchProducts();
     } catch (err) {
       console.error(err);
-      window.showToast("Failed to delete product", "error");
+      window.showToast("Failed to deactivate product", "error");
+    }
+  };
+
+  const handleRestore = async (id) => {
+    try {
+      await API.updateProduct(id, { is_active: true });
+      requestAlertRefresh({ source: 'inventory', reason: 'product-restored' });
+      fetchProducts();
+      window.showToast("Product restored successfully!", "success");
+    } catch (err) {
+      console.error(err);
+      window.showToast("Failed to restore product", "error");
     }
   };
 
@@ -135,7 +157,7 @@ export default function Inventory() {
       };
 
       if (formData.id) {
-        if (parsedStock > 0) {
+        if (!isInactivePage && parsedStock > 0) {
           payload.is_active = true;
         }
         await API.updateProduct(formData.id, payload);
@@ -177,7 +199,10 @@ export default function Inventory() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `SmartCanteen_Inventory_Report_${getPhilippineDateKey(new Date())}.csv`);
+    link.setAttribute(
+      "download",
+      `SmartCanteen_${isInactivePage ? 'Inactive_Products' : 'Inventory'}_Report_${getPhilippineDateKey(new Date())}.csv`
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -194,10 +219,6 @@ export default function Inventory() {
 
     return product.name.toLowerCase() === notificationFocus.name.toLowerCase();
   };
-
-  function isProductActive(product) {
-    return product?.is_active !== false;
-  }
 
   const displayedProducts = notificationFocus
     ? [...products].sort((left, right) => {
@@ -235,11 +256,23 @@ export default function Inventory() {
     <div className="view-shell-static relative">
       <div className="view-header md:flex-row md:items-center">
         <div>
-          <h1 className="view-title">Inventory</h1>
-          <p className="view-subtitle">Manage products and stock levels</p>
+          <h1 className="view-title">{isInactivePage ? 'Inactive Products' : 'Inventory'}</h1>
+          <p className="view-subtitle">
+            {isInactivePage
+              ? 'Review deactivated products and restore them when needed'
+              : 'Manage active products and stock levels'}
+          </p>
         </div>
         
         <div className="flex w-full flex-wrap gap-3 md:w-auto">
+          <Link
+            to={isInactivePage ? '/inventory' : '/inventory/inactive'}
+            className="action-button"
+          >
+            <ArchiveBoxIcon className="w-5 h-5" />
+            {isInactivePage ? 'Active Inventory' : 'Inactive Products'}
+          </Link>
+
           <button 
             onClick={exportCSVReport} 
             className="action-button"
@@ -247,7 +280,7 @@ export default function Inventory() {
             <ArrowDownTrayIcon className="w-5 h-5" /> Export CSV
           </button>
           
-          {isAdmin && (
+          {isAdmin && !isInactivePage && (
             <button onClick={openAddModal} className="primary-action-button">
               <PlusIcon className="w-5 h-5" /> Add Product
             </button>
@@ -302,7 +335,11 @@ export default function Inventory() {
                   </tr>
                 ))
               ) : displayedProducts.length === 0 ? (
-                <tr><td colSpan={tableColumnCount} className="text-center py-10">No products found.</td></tr>
+                <tr>
+                  <td colSpan={tableColumnCount} className="text-center py-10">
+                    {isInactivePage ? 'No inactive products found.' : 'No products found.'}
+                  </td>
+                </tr>
               ) : paginatedProducts.map(p => {
                 const isHighlighted = isNotificationFocusMatch(p);
                 const isActive = isProductActive(p);
@@ -336,7 +373,14 @@ export default function Inventory() {
                   {isAdmin && (
                     <td className="px-6 py-4 text-right space-x-2">
                       <button onClick={() => openEditModal(p)} className="text-sky-600 hover:bg-sky-50 px-3 py-1.5 rounded-md border border-sky-200 font-medium text-xs transition-colors">Edit</button>
-                      <button onClick={() => handleDelete(p.id)} className="text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-md border border-red-200 font-medium text-xs transition-colors">Delete</button>
+                      {isInactivePage ? (
+                        <button onClick={() => handleRestore(p.id)} className="inline-flex items-center gap-1 text-emerald-600 hover:bg-emerald-50 px-3 py-1.5 rounded-md border border-emerald-200 font-medium text-xs transition-colors">
+                          <ArrowPathIcon className="h-3.5 w-3.5" />
+                          Restore
+                        </button>
+                      ) : (
+                        <button onClick={() => handleDelete(p.id)} className="text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-md border border-red-200 font-medium text-xs transition-colors">Deactivate</button>
+                      )}
                     </td>
                   )}
                 </tr>
@@ -365,7 +409,7 @@ export default function Inventory() {
             </div>
           ) : displayedProducts.length === 0 ? (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-              No products found.
+              {isInactivePage ? 'No inactive products found.' : 'No products found.'}
             </div>
           ) : (
             <div className="space-y-3">
@@ -440,12 +484,22 @@ export default function Inventory() {
                       >
                         Edit
                       </button>
-                      <button
-                        onClick={() => handleDelete(p.id)}
-                        className="flex-1 rounded-lg border border-red-200 px-3 py-2 text-sm font-bold text-red-600 transition-colors hover:bg-red-50"
-                      >
-                        Delete
-                      </button>
+                      {isInactivePage ? (
+                        <button
+                          onClick={() => handleRestore(p.id)}
+                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-200 px-3 py-2 text-sm font-bold text-emerald-600 transition-colors hover:bg-emerald-50"
+                        >
+                          <ArrowPathIcon className="h-4 w-4" />
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleDelete(p.id)}
+                          className="flex-1 rounded-lg border border-red-200 px-3 py-2 text-sm font-bold text-red-600 transition-colors hover:bg-red-50"
+                        >
+                          Deactivate
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

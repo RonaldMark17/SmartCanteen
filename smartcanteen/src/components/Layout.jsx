@@ -4,6 +4,7 @@ import {
   ArrowPathIcon,
   ArrowRightOnRectangleIcon,
   ArrowTrendingUpIcon,
+  ArchiveBoxIcon,
   Bars3Icon,
   BellAlertIcon,
   BuildingStorefrontIcon,
@@ -381,6 +382,9 @@ function getNavDescription(path) {
   if (path === '/inventory') {
     return 'Stock visibility and product review';
   }
+  if (path === '/inventory/inactive') {
+    return 'Deactivated products and restore tools';
+  }
   if (path === '/transactions') {
     return 'Sales history and receipt tracking';
   }
@@ -434,6 +438,7 @@ export default function Layout({ children, onLogout }) {
     { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
+    { name: 'Inactive Products', path: '/inventory/inactive', icon: ArchiveBoxIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
     { name: 'AI Predictions', path: '/predictions', icon: SparklesIcon },
@@ -1113,10 +1118,70 @@ export default function Layout({ children, onLogout }) {
     return () => window.clearInterval(intervalId);
   }, []);
 
+  const sidebarShellClass = darkMode
+    ? 'border-slate-900/80 bg-slate-950 text-slate-300 shadow-slate-950/20'
+    : 'border-slate-200 bg-white text-slate-600 shadow-slate-200/70';
+  const sidebarBrandTitleClass = darkMode ? 'text-white' : 'text-slate-950';
+  const sidebarBrandMetaClass = darkMode ? 'text-violet-300' : 'text-primary';
+  const sidebarSectionLabelClass = darkMode ? 'text-slate-500' : 'text-slate-400';
+  const sidebarFooterClass = darkMode ? 'border-slate-800/70' : 'border-slate-200';
+  const sidebarLogoutClass = darkMode
+    ? 'text-slate-400 hover:border-red-400/20 hover:bg-red-500/10 hover:text-red-300'
+    : 'text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600';
+  const mobileSidebarShellClass = darkMode ? 'bg-slate-950 text-slate-300' : 'bg-white text-slate-600';
+
+  const getSidebarNavLinkClass = (active) => {
+    if (active) {
+      return darkMode
+        ? 'border-white/10 bg-gradient-to-r from-violet-600 to-primary text-white shadow-lg shadow-primary/25'
+        : 'border-primary/20 bg-fuchsia-50 text-slate-950 shadow-sm shadow-primary/10';
+    }
+
+    return darkMode
+      ? 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+      : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
+  };
+
+  const getSidebarIconClass = (active) => {
+    if (active) {
+      return darkMode ? 'text-white' : 'text-primary';
+    }
+
+    return darkMode ? 'text-slate-500 group-hover:text-violet-300' : 'text-slate-400 group-hover:text-primary';
+  };
+
+  const getSidebarDescriptionClass = (active) => {
+    if (active) {
+      return darkMode ? 'text-violet-100/80' : 'text-primary/80';
+    }
+
+    return darkMode ? 'text-slate-500' : 'text-slate-400';
+  };
+
+  const getMobileNavLinkClass = (active) => {
+    if (active) {
+      return darkMode
+        ? 'border-white/10 bg-primary text-white shadow-lg shadow-primary/20'
+        : 'border-primary bg-primary text-white shadow-lg shadow-primary/20';
+    }
+
+    return darkMode
+      ? 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+      : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
+  };
+
+  const getMobileNavDescriptionClass = (active) => {
+    if (active) {
+      return 'text-white/80';
+    }
+
+    return darkMode ? 'text-slate-500' : 'text-slate-400';
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <nav
-        className={`z-30 hidden shrink-0 flex-col border-r border-slate-900/80 bg-slate-950 text-slate-300 shadow-2xl shadow-slate-950/20 transition-[width] duration-300 lg:flex ${
+        className={`z-30 hidden shrink-0 flex-col border-r shadow-2xl transition-[width] duration-300 lg:flex ${sidebarShellClass} ${
           sidebarCollapsed ? 'w-24' : 'w-80'
         }`}
       >
@@ -1131,10 +1196,10 @@ export default function Layout({ children, onLogout }) {
             </div>
             {!sidebarCollapsed && (
               <div className="min-w-0">
-                <h2 className="truncate text-lg font-black tracking-tight text-white">
+                <h2 className={`truncate text-lg font-black tracking-tight ${sidebarBrandTitleClass}`}>
                   SmartCanteen
                 </h2>
-                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300">
+                <p className={`mt-0.5 text-[10px] font-bold uppercase tracking-[0.22em] ${sidebarBrandMetaClass}`}>
                   Operations Workspace
                 </p>
               </div>
@@ -1145,7 +1210,7 @@ export default function Layout({ children, onLogout }) {
 
         <div className={`custom-scrollbar flex-1 overflow-y-auto ${sidebarCollapsed ? 'px-3' : 'px-4'} transition-all duration-300`}>
           {!sidebarCollapsed && (
-            <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+            <div className={`mb-2 px-3 text-[10px] font-bold uppercase tracking-widest ${sidebarSectionLabelClass}`}>
               Operational Menu
             </div>
           )}
@@ -1159,28 +1224,26 @@ export default function Layout({ children, onLogout }) {
                   key={item.name}
                   to={item.path}
                   title={sidebarCollapsed ? item.name : undefined}
-                  className={`group relative flex items-center rounded-2xl border py-3 transition-all duration-200 ${
-                    active
-                      ? 'border-white/10 bg-gradient-to-r from-violet-600 to-primary text-white shadow-lg shadow-primary/25'
-                      : 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
-                  } ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-3.5'}`}
+                  className={`group relative flex items-center rounded-2xl border py-3 transition-all duration-200 ${getSidebarNavLinkClass(active)} ${
+                    sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-3.5'
+                  }`}
                 >
                   <item.icon
                     className={`h-5 w-5 shrink-0 stroke-[1.8] ${
-                      active ? 'text-white' : 'text-slate-500 group-hover:text-violet-300'
+                      getSidebarIconClass(active)
                     }`}
                   />
                   {!sidebarCollapsed && (
                     <>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-black">{item.name}</span>
-                        <span className={`mt-0.5 block truncate text-[11px] font-semibold ${
-                          active ? 'text-violet-100/80' : 'text-slate-500'
-                        }`}>
+                        <span className={`mt-0.5 block truncate text-[11px] font-semibold ${getSidebarDescriptionClass(active)}`}>
                           {getNavDescription(item.path)}
                         </span>
                       </span>
-                      {active && <span className="h-2 w-2 rounded-full bg-white/80" />}
+                      {active && (
+                        <span className={`h-2 w-2 rounded-full ${darkMode ? 'bg-white/80' : 'bg-primary'}`} />
+                      )}
                     </>
                   )}
                 </Link>
@@ -1190,11 +1253,11 @@ export default function Layout({ children, onLogout }) {
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-slate-800/70 p-4">
+        <div className={`shrink-0 border-t p-4 ${sidebarFooterClass}`}>
           <button
             onClick={requestLogout}
             title={sidebarCollapsed ? 'Logout' : undefined}
-            className={`flex w-full items-center rounded-xl border border-transparent py-3 text-sm font-bold text-slate-400 transition-all hover:border-red-400/20 hover:bg-red-500/10 hover:text-red-300 ${
+            className={`flex w-full items-center rounded-xl border border-transparent py-3 text-sm font-bold transition-all ${sidebarLogoutClass} ${
               sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-4'
             }`}
           >
@@ -1972,22 +2035,26 @@ export default function Layout({ children, onLogout }) {
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <nav className="fixed inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col bg-slate-950 text-slate-300 shadow-2xl animate-in slide-in-from-left duration-300">
+          <nav className={`fixed inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col shadow-2xl animate-in slide-in-from-left duration-300 ${mobileSidebarShellClass}`}>
             <div className="flex items-center justify-between p-5">
               <div className="flex items-center gap-2">
                 <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary font-black text-white shadow-lg shadow-primary/30">
                   S
                 </div>
                 <div>
-                  <h2 className="text-lg font-black tracking-tight text-white">SmartCanteen</h2>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300">
+                  <h2 className={`text-lg font-black tracking-tight ${sidebarBrandTitleClass}`}>SmartCanteen</h2>
+                  <p className={`text-[10px] font-bold uppercase tracking-[0.22em] ${sidebarBrandMetaClass}`}>
                     {user.role || 'staff'} workspace
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:bg-white/10 hover:text-white"
+                className={`inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${
+                  darkMode
+                    ? 'text-slate-500 hover:bg-white/10 hover:text-white'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+                }`}
                 aria-label="Close navigation menu"
               >
                 <XMarkIcon className="h-6 w-6" />
@@ -1995,13 +2062,27 @@ export default function Layout({ children, onLogout }) {
             </div>
 
             <div className="px-5 pb-4">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+              <div
+                className={`rounded-2xl border p-3 ${
+                  darkMode ? 'border-white/10 bg-white/[0.04]' : 'border-slate-200 bg-slate-50'
+                }`}
+              >
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-black text-white">{workspaceStatus}</div>
-                    <div className="mt-1 truncate text-xs font-semibold text-slate-400">{alertSummary}</div>
+                    <div className={`truncate text-sm font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                      {workspaceStatus}
+                    </div>
+                    <div className={`mt-1 truncate text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {alertSummary}
+                    </div>
                   </div>
-                  <CloudArrowUpIcon className={`h-5 w-5 shrink-0 ${isSynced ? 'text-emerald-300' : 'text-amber-300'}`} />
+                  <CloudArrowUpIcon
+                    className={`h-5 w-5 shrink-0 ${
+                      isSynced
+                        ? darkMode ? 'text-emerald-300' : 'text-emerald-500'
+                        : darkMode ? 'text-amber-300' : 'text-amber-500'
+                    }`}
+                  />
                 </div>
               </div>
             </div>
@@ -2015,18 +2096,12 @@ export default function Layout({ children, onLogout }) {
                     key={item.name}
                     to={item.path}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3.5 transition-all ${
-                      active
-                        ? 'border-white/10 bg-primary text-white shadow-lg shadow-primary/20'
-                        : 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
-                    }`}
+                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3.5 transition-all ${getMobileNavLinkClass(active)}`}
                   >
                     <item.icon className="h-5 w-5 shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-black">{item.name}</span>
-                      <span className={`mt-0.5 block truncate text-[11px] font-semibold ${
-                        active ? 'text-violet-100/80' : 'text-slate-500'
-                      }`}>
+                      <span className={`mt-0.5 block truncate text-[11px] font-semibold ${getMobileNavDescriptionClass(active)}`}>
                         {getNavDescription(item.path)}
                       </span>
                     </span>
@@ -2036,10 +2111,14 @@ export default function Layout({ children, onLogout }) {
 
             </div>
 
-            <div className="border-t border-slate-800/80 p-4">
+            <div className={`border-t p-4 ${darkMode ? 'border-slate-800/80' : 'border-slate-200'}`}>
               <button
                 onClick={requestLogout}
-                className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-slate-400 transition hover:bg-red-500/10 hover:text-red-300"
+                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold transition ${
+                  darkMode
+                    ? 'text-slate-400 hover:bg-red-500/10 hover:text-red-300'
+                    : 'text-slate-500 hover:bg-red-50 hover:text-red-600'
+                }`}
               >
                 <ArrowRightOnRectangleIcon className="h-5 w-5" /> Logout
               </button>

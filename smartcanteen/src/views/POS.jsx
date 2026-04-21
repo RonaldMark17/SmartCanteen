@@ -121,7 +121,6 @@ export default function POS() {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Checkout State
-  const [discount, setDiscount] = useState(0);
   const [paymentType, setPaymentType] = useState('cash');
   const [amountReceived, setAmountReceived] = useState('');
 
@@ -197,17 +196,14 @@ export default function POS() {
   const clearCart = () => {
     if (window.confirm('Are you sure you want to clear the cart?')) {
       setCart([]);
-      setDiscount(0);
       setAmountReceived('');
       setShowOrderModal(false);
     }
   };
 
   // --- Calculations ---
-  const numericDiscount = Math.max(0, parseFloat(discount || 0) || 0);
-  const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const totalUnits = cart.reduce((sum, item) => sum + item.qty, 0);
-  const cartTotal = Math.max(0, subtotal - numericDiscount);
+  const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const numericAmountReceived = parseFloat(amountReceived || 0) || 0;
   const change = paymentType === 'cash' ? Math.max(0, numericAmountReceived - cartTotal) : 0;
   const remainingBalance =
@@ -254,7 +250,6 @@ export default function POS() {
         quantity: item.qty,
         unit_price: item.price,
       })),
-      discount: numericDiscount,
       payment_type: paymentType,
     };
 
@@ -315,7 +310,6 @@ export default function POS() {
 
   const resetCheckout = () => {
     setCart([]);
-    setDiscount(0);
     setAmountReceived('');
     setShowOrderModal(false);
   };
@@ -655,8 +649,7 @@ export default function POS() {
                       Review order before checkout
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-slate-300">
-                      Check item quantities, apply discounts, and confirm the payment details before
-                      completing this sale.
+                      Check item quantities and confirm the payment details before completing this sale.
                     </p>
                   </div>
 
@@ -817,24 +810,10 @@ export default function POS() {
                       Order details
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Apply a discount and choose how the customer will pay.
+                      Choose how the customer will pay.
                     </p>
 
-                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="rounded-[22px] border border-slate-200 bg-slate-50 p-3">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                          Discount
-                        </span>
-                        <input
-                          type="number"
-                          min="0"
-                          value={discount}
-                          onChange={(e) => setDiscount(e.target.value)}
-                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-primary"
-                          placeholder="0.00"
-                        />
-                      </label>
-
+                    <div className="mt-4 grid grid-cols-1 gap-3">
                       <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-3">
                         <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Payment
@@ -918,13 +897,7 @@ export default function POS() {
                   )}
 
                   <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
-                    <div className="flex items-center justify-between text-sm text-slate-300">
-                      <span>Discount</span>
-                      <span className="font-bold text-white">
-                        - {formatCurrency(numericDiscount)}
-                      </span>
-                    </div>
-                    <div className="mt-4 flex items-end justify-between border-t border-white/10 pt-4">
+                    <div className="flex items-end justify-between">
                       <div>
                         <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Total Due
@@ -1082,24 +1055,10 @@ export default function POS() {
                       Order details
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Apply discounts and choose how the customer will pay.
+                      Choose how the customer will pay.
                     </p>
 
                     <div className="mt-4 grid grid-cols-1 gap-4">
-                      <label>
-                        <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                          Discount
-                        </span>
-                        <input
-                          type="number"
-                          min="0"
-                          value={discount}
-                          onChange={(e) => setDiscount(e.target.value)}
-                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-primary focus:bg-white"
-                          placeholder="0.00"
-                        />
-                      </label>
-
                       <div>
                         <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Payment Method
@@ -1196,11 +1155,7 @@ export default function POS() {
                   )}
 
                   <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
-                    <div className="flex items-center justify-between text-sm text-slate-300">
-                      <span>Discount</span>
-                      <span className="font-bold text-white">- {formatCurrency(numericDiscount)}</span>
-                    </div>
-                    <div className="mt-4 flex items-end justify-between border-t border-white/10 pt-4">
+                    <div className="flex items-end justify-between">
                       <div>
                         <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Total Due
@@ -1274,14 +1229,6 @@ export default function POS() {
               </div>
 
               <div className="space-y-2 border-t-2 border-dashed border-slate-200 pt-4">
-                {Number(receiptData.discount || 0) > 0 && (
-                  <div className="flex justify-between text-sm text-red-500">
-                    <span>Discount</span>
-                    <span className="font-bold">
-                      - {formatCurrency(receiptData.discount)}
-                    </span>
-                  </div>
-                )}
                 <div className="flex justify-between pt-2 text-lg">
                   <span className="font-black text-slate-900">TOTAL</span>
                   <span className="font-black text-primary">{formatCurrency(receiptData.total)}</span>
