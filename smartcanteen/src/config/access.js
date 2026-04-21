@@ -21,11 +21,6 @@ export const APP_ROUTE_ACCESS = [
     allowedRoles: ['admin', 'staff', 'cashier'],
   },
   {
-    key: 'inactiveProducts',
-    path: '/inventory/inactive',
-    allowedRoles: ['admin', 'staff', 'cashier'],
-  },
-  {
     key: 'analytics',
     path: '/analytics',
     allowedRoles: ['admin', 'staff'],

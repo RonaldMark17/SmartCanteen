@@ -1,0 +1,70 @@
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/alert-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/products?active_only=true[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/transactions?start_date=2026-04-14&end_date=2026-04-21&skip=0&limit=200[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/products/low-stock[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/transactions?start_date=2026-01-01&end_date=2026-04-21&skip=0&limit=2000[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/summary[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/daily-sales?days=14[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/predictions/tomorrow?algorithm=XGBoost&weather=clear&event=none[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/top-products?days=14[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/hourly-heatmap[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/audit-logs[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mws proxy error:[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/hourly-heatmap?start_date=2026-04-21&end_date=2026-04-21[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/daily-sales?start_date=2026-04-21&end_date=2026-04-21[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/category-sales?start_date=2026-04-21&end_date=2026-04-21[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/top-products?start_date=2026-04-21&end_date=2026-04-21[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mws proxy error:[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/payment-summary?start_date=2026-04-21&end_date=2026-04-21[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/transactions?start_date=2026-04-21&end_date=2026-04-21&skip=0&limit=5[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:44 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/alert-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:44 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/alert-state[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:46 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/products/low-stock[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+[2m11:33:46 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/predictions/tomorrow?algorithm=XGBoost&weather=clear&event=none[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+^C

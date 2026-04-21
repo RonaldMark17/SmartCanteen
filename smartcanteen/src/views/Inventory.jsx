@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
@@ -29,6 +29,22 @@ function isProductActive(product) {
   return product?.is_active !== false;
 }
 
+function sortProductsByName(left, right) {
+  return String(left?.name || '').localeCompare(String(right?.name || ''));
+}
+
+function sortActiveProducts(products) {
+  return [...products].sort((a, b) => {
+    const aIsLow = isBelowMinimumStock(a);
+    const bIsLow = isBelowMinimumStock(b);
+
+    if (aIsLow && !bIsLow) return -1;
+    if (!aIsLow && bIsLow) return 1;
+
+    return sortProductsByName(a, b);
+  });
+}
+
 function getInventoryPageNumbers(currentPage, totalPages) {
   const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
   let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
@@ -38,54 +54,455 @@ function getInventoryPageNumbers(currentPage, totalPages) {
   return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
-export default function Inventory({ mode = 'active' }) {
+function getPagination(items, currentPage) {
+  const totalPages = Math.max(1, Math.ceil(items.length / INVENTORY_ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = items.length === 0 ? 0 : (safeCurrentPage - 1) * INVENTORY_ITEMS_PER_PAGE;
+  const paginatedProducts = items.slice(pageStartIndex, pageStartIndex + INVENTORY_ITEMS_PER_PAGE);
+
+  return {
+    totalPages,
+    safeCurrentPage,
+    pageStartCount: items.length === 0 ? 0 : pageStartIndex + 1,
+    pageEndCount: Math.min(pageStartIndex + paginatedProducts.length, items.length),
+    pageNumbers: getInventoryPageNumbers(safeCurrentPage, totalPages),
+    paginatedProducts,
+  };
+}
+
+function InventoryPagination({
+  currentPage,
+  totalPages,
+  pageNumbers,
+  pageStartCount,
+  pageEndCount,
+  totalItems,
+  onPageChange,
+  ariaLabel,
+}) {
+  if (totalItems === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="text-sm font-semibold text-slate-600">
+        Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(totalItems)} products
+      </div>
+
+      {totalPages > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onPageChange((page) => Math.max(1, page - 1))}
+            disabled={currentPage === 1}
+            aria-label={`Previous ${ariaLabel} page`}
+            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ChevronLeftIcon className="h-4 w-4" />
+            <span className="hidden sm:inline">Previous</span>
+          </button>
+
+          {pageNumbers.map((pageNumber) => (
+            <button
+              key={pageNumber}
+              type="button"
+              onClick={() => onPageChange(pageNumber)}
+              aria-current={pageNumber === currentPage ? 'page' : undefined}
+              className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
+                pageNumber === currentPage
+                  ? 'bg-slate-900 text-white'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              {formatCount(pageNumber)}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            onClick={() => onPageChange((page) => Math.min(totalPages, page + 1))}
+            disabled={currentPage === totalPages}
+            aria-label={`Next ${ariaLabel} page`}
+            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="hidden sm:inline">Next</span>
+            <ChevronRightIcon className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductStatusBadge({ product }) {
+  const isActive = isProductActive(product);
+
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold ${isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+      <span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+      {isActive ? 'Active' : 'Inactive'}
+    </span>
+  );
+}
+
+function ProductActions({
+  product,
+  isAdmin,
+  isInactiveSection,
+  onEdit,
+  onDeactivate,
+  onRestore,
+}) {
+  if (!isAdmin) {
+    return null;
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => onEdit(product)}
+        className="text-sky-600 hover:bg-sky-50 px-3 py-1.5 rounded-md border border-sky-200 font-medium text-xs transition-colors"
+      >
+        Edit
+      </button>
+      {isInactiveSection ? (
+        <button
+          onClick={() => onRestore(product.id)}
+          className="inline-flex items-center gap-1 text-emerald-600 hover:bg-emerald-50 px-3 py-1.5 rounded-md border border-emerald-200 font-medium text-xs transition-colors"
+        >
+          <ArrowPathIcon className="h-3.5 w-3.5" />
+          Restore
+        </button>
+      ) : (
+        <button
+          onClick={() => onDeactivate(product.id)}
+          className="text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-md border border-red-200 font-medium text-xs transition-colors"
+        >
+          Deactivate
+        </button>
+      )}
+    </>
+  );
+}
+
+function InventorySection({
+  title,
+  subtitle,
+  icon: SectionIcon,
+  countLabel,
+  products,
+  paginatedProducts,
+  pagination,
+  setCurrentPage,
+  loading,
+  emptyMessage,
+  tableColumnCount,
+  isAdmin,
+  isInactiveSection = false,
+  isNotificationFocusMatch,
+  openEditModal,
+  handleDelete,
+  handleRestore,
+}) {
+  return (
+    <section className="data-card flex min-h-0 flex-col">
+      <div className="flex shrink-0 flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="flex min-w-0 items-start gap-3">
+          {SectionIcon && (
+            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${isInactiveSection ? 'bg-slate-100 text-slate-500' : 'bg-fuchsia-50 text-primary'}`}>
+              <SectionIcon className="h-5 w-5" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <h2 className="text-lg font-black text-slate-900">{title}</h2>
+            <p className="mt-1 text-sm font-medium leading-6 text-slate-500">{subtitle}</p>
+          </div>
+        </div>
+        <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-black uppercase tracking-widest ${isInactiveSection ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
+          {countLabel}
+        </span>
+      </div>
+
+      <div className="custom-scrollbar hidden overflow-x-auto md:block">
+        <table className="w-full text-left text-sm text-slate-600">
+          <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
+            <tr>
+              <th className="px-6 py-4">ID</th>
+              <th className="px-6 py-4">Name</th>
+              <th className="px-6 py-4">Category</th>
+              <th className="px-6 py-4">Price</th>
+              <th className="px-6 py-4">Stock</th>
+              <th className="px-6 py-4">Status</th>
+              {isAdmin && <th className="px-6 py-4 text-right">Actions</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {loading ? (
+              Array.from({ length: 4 }, (_, index) => (
+                <tr key={`${title}-skeleton-${index}`}>
+                  <td className="px-6 py-4"><Skeleton className="h-4 w-10" /></td>
+                  <td className="px-6 py-4"><SkeletonText lines={['h-4 w-40']} /></td>
+                  <td className="px-6 py-4"><Skeleton className="h-7 w-24 rounded-full" /></td>
+                  <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
+                  <td className="px-6 py-4"><Skeleton className="h-7 w-24 rounded-full" /></td>
+                  <td className="px-6 py-4"><Skeleton className="h-7 w-20 rounded-full" /></td>
+                  {isAdmin && (
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        <Skeleton className="h-8 w-14 rounded-md" />
+                        <Skeleton className="h-8 w-16 rounded-md" />
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))
+            ) : products.length === 0 ? (
+              <tr>
+                <td colSpan={tableColumnCount} className="text-center py-10">
+                  {emptyMessage}
+                </td>
+              </tr>
+            ) : paginatedProducts.map((product) => {
+              const isHighlighted = isNotificationFocusMatch(product);
+              const isActive = isProductActive(product);
+              const shouldWarnStock = !isInactiveSection && isBelowMinimumStock(product);
+
+              return (
+                <tr
+                  key={product.id}
+                  className={`transition-colors ${
+                    isHighlighted
+                      ? 'bg-sky-50 ring-2 ring-inset ring-sky-200'
+                      : !isActive
+                        ? 'bg-slate-50 opacity-80'
+                        : shouldWarnStock
+                          ? 'bg-red-50/50'
+                          : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <td className="px-6 py-4">{product.id}</td>
+                  <td className="px-6 py-4 font-semibold text-slate-900">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{product.name}</span>
+                      {isHighlighted && (
+                        <span className="rounded-full bg-sky-100 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-sky-700">
+                          Alert item
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="bg-fuchsia-50 text-fuchsia-700 px-3 py-1 rounded-full text-xs font-bold">
+                      {product.category}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">{`PHP ${Number(product.price || 0).toFixed(2)}`}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${shouldWarnStock ? 'bg-red-100 text-red-700 animate-pulse' : isInactiveSection ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {product.stock} {shouldWarnStock && ' (LOW)'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <ProductStatusBadge product={product} />
+                  </td>
+                  {isAdmin && (
+                    <td className="px-6 py-4 text-right space-x-2">
+                      <ProductActions
+                        product={product}
+                        isAdmin={isAdmin}
+                        isInactiveSection={isInactiveSection}
+                        onEdit={openEditModal}
+                        onDeactivate={handleDelete}
+                        onRestore={handleRestore}
+                      />
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="custom-scrollbar p-4 md:hidden">
+        {loading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }, (_, index) => (
+              <div key={`${title}-mobile-skeleton-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <SkeletonText lines={['h-4 w-40', 'h-3 w-24']} className="flex-1" />
+                  <Skeleton className="h-6 w-16 rounded-full" />
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <Skeleton className="h-14 rounded-xl" />
+                  <Skeleton className="h-14 rounded-xl" />
+                  <Skeleton className="h-14 rounded-xl" />
+                  <Skeleton className="h-14 rounded-xl" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : products.length === 0 ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+            {emptyMessage}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {paginatedProducts.map((product) => {
+              const isHighlighted = isNotificationFocusMatch(product);
+              const isActive = isProductActive(product);
+              const shouldWarnStock = !isInactiveSection && isBelowMinimumStock(product);
+
+              return (
+                <div
+                  key={product.id}
+                  className={`rounded-2xl border p-4 shadow-sm ${
+                    isHighlighted
+                      ? 'border-sky-300 bg-sky-50/70 ring-2 ring-sky-100'
+                      : !isActive
+                        ? 'border-slate-200 bg-slate-50/90 opacity-90'
+                        : shouldWarnStock
+                          ? 'border-red-200 bg-red-50/60'
+                          : 'border-slate-200 bg-white'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold uppercase tracking-widest text-slate-400">Product #{product.id}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-base font-black text-slate-900">
+                        <span>{product.name}</span>
+                        {isHighlighted && (
+                          <span className="rounded-full bg-sky-100 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-sky-700">
+                            Alert item
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 inline-flex rounded-full bg-fuchsia-50 px-3 py-1 text-xs font-bold text-fuchsia-700">
+                        {product.category}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-bold uppercase tracking-widest text-slate-400">Price</div>
+                      <div className="mt-1 text-sm font-black text-slate-900">{`PHP ${Number(product.price || 0).toFixed(2)}`}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Stock</div>
+                      <div className="mt-1 font-black text-slate-900">{product.stock}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Min Alert</div>
+                      <div className="mt-1 font-black text-slate-900">{product.min_stock}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${
+                        shouldWarnStock
+                          ? 'bg-red-100 text-red-700'
+                          : isInactiveSection
+                            ? 'bg-slate-100 text-slate-600'
+                            : 'bg-emerald-100 text-emerald-700'
+                      }`}
+                    >
+                      {shouldWarnStock ? 'Low stock' : isInactiveSection ? 'Inactive stock' : 'Healthy stock'}
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-600">
+                      <span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                      {isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+
+                  {isAdmin && (
+                    <div className="mt-4 flex gap-2">
+                      <button
+                        onClick={() => openEditModal(product)}
+                        className="flex-1 rounded-lg border border-sky-200 px-3 py-2 text-sm font-bold text-sky-600 transition-colors hover:bg-sky-50"
+                      >
+                        Edit
+                      </button>
+                      {isInactiveSection ? (
+                        <button
+                          onClick={() => handleRestore(product.id)}
+                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-200 px-3 py-2 text-sm font-bold text-emerald-600 transition-colors hover:bg-emerald-50"
+                        >
+                          <ArrowPathIcon className="h-4 w-4" />
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleDelete(product.id)}
+                          className="flex-1 rounded-lg border border-red-200 px-3 py-2 text-sm font-bold text-red-600 transition-colors hover:bg-red-50"
+                        >
+                          Deactivate
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {!loading && (
+        <InventoryPagination
+          currentPage={pagination.safeCurrentPage}
+          totalPages={pagination.totalPages}
+          pageNumbers={pagination.pageNumbers}
+          pageStartCount={pagination.pageStartCount}
+          pageEndCount={pagination.pageEndCount}
+          totalItems={products.length}
+          onPageChange={setCurrentPage}
+          ariaLabel={isInactiveSection ? 'inactive products' : 'inventory'}
+        />
+      )}
+    </section>
+  );
+}
+
+export default function Inventory() {
   const location = useLocation();
-  const [products, setProducts] = useState([]);
+  const [activeProducts, setActiveProducts] = useState([]);
+  const [inactiveProducts, setInactiveProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notificationFocus, setNotificationFocus] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  
-  // Modal State
+  const [activeCurrentPage, setActiveCurrentPage] = useState(1);
+  const [inactiveCurrentPage, setInactiveCurrentPage] = useState(1);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState(initialFormState());
-  const [formError, setFormError] = useState("");
+  const [formError, setFormError] = useState('');
 
   const user = JSON.parse(localStorage.getItem('sc_user') || '{}');
   const isAdmin = user?.role === 'admin';
   const tableColumnCount = isAdmin ? 7 : 6;
-  const isInactivePage = mode === 'inactive';
 
   function initialFormState() {
-    return { id: null, name: "", category: "Staple", price: "", stock: 0, min_stock: 5, barcode: "" };
+    return { id: null, name: '', category: 'Staple', price: '', stock: 0, min_stock: 5, barcode: '' };
   }
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await API.getProducts(isInactivePage ? false : true);
-      const scopedData = (Array.isArray(data) ? data : []).filter((product) =>
-        isInactivePage ? !isProductActive(product) : isProductActive(product)
-      );
-      
-      // Sorting logic: Low stock items come first on active inventory, then alphabetical by name
-      const sortedData = scopedData.sort((a, b) => {
-        const aIsLow = !isInactivePage && isBelowMinimumStock(a);
-        const bIsLow = !isInactivePage && isBelowMinimumStock(b);
+      const data = await API.getProducts(false);
+      const productList = Array.isArray(data) ? data : [];
+      const nextActiveProducts = productList.filter(isProductActive);
+      const nextInactiveProducts = productList.filter((product) => !isProductActive(product));
 
-        if (aIsLow && !bIsLow) return -1; // a comes first
-        if (!aIsLow && bIsLow) return 1;  // b comes first
-        
-        // If both are in the same status, sort by name
-        return a.name.localeCompare(b.name);
-      });
-
-      setProducts(sortedData);
+      setActiveProducts(sortActiveProducts(nextActiveProducts));
+      setInactiveProducts([...nextInactiveProducts].sort(sortProductsByName));
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [isInactivePage]);
+  }, []);
 
   useEffect(() => {
     fetchProducts();
@@ -108,25 +525,25 @@ export default function Inventory({ mode = 'active' }) {
 
   const openAddModal = () => {
     setFormData(initialFormState());
-    setFormError("");
+    setFormError('');
     setIsModalOpen(true);
   };
 
   const openEditModal = (product) => {
     setFormData({ ...product });
-    setFormError("");
+    setFormError('');
     setIsModalOpen(true);
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to deactivate this product?")) return;
+    if (!window.confirm('Are you sure you want to deactivate this product?')) return;
     try {
       await API.deleteProduct(id);
       requestAlertRefresh({ source: 'inventory', reason: 'product-deleted' });
       fetchProducts();
     } catch (err) {
       console.error(err);
-      window.showToast("Failed to deactivate product", "error");
+      window.showToast('Failed to deactivate product', 'error');
     }
   };
 
@@ -135,73 +552,70 @@ export default function Inventory({ mode = 'active' }) {
       await API.updateProduct(id, { is_active: true });
       requestAlertRefresh({ source: 'inventory', reason: 'product-restored' });
       fetchProducts();
-      window.showToast("Product restored successfully!", "success");
+      window.showToast('Product restored successfully!', 'success');
     } catch (err) {
       console.error(err);
-      window.showToast("Failed to restore product", "error");
+      window.showToast('Failed to restore product', 'error');
     }
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
-    setFormError("");
+    setFormError('');
     try {
-      const parsedStock = parseInt(formData.stock);
       const payload = {
         name: formData.name,
         category: formData.category,
         price: parseFloat(formData.price),
-        stock: parsedStock,
+        stock: parseInt(formData.stock),
         min_stock: parseInt(formData.min_stock),
-        barcode: formData.barcode || null
+        barcode: formData.barcode || null,
       };
 
       if (formData.id) {
-        if (!isInactivePage && parsedStock > 0) {
-          payload.is_active = true;
-        }
         await API.updateProduct(formData.id, payload);
       } else {
         await API.createProduct(payload);
       }
+
       setIsModalOpen(false);
       requestAlertRefresh({
         source: 'inventory',
         reason: formData.id ? 'product-updated' : 'product-created',
       });
       fetchProducts();
-      window.showToast("Product saved successfully!", "success");
+      window.showToast('Product saved successfully!', 'success');
     } catch (err) {
-      setFormError(err.message || "Failed to save product.");
+      setFormError(err.message || 'Failed to save product.');
     }
   };
 
-  // Automated Reporting (Research Objective f)
   const exportCSVReport = () => {
-    const headers = ["ID", "Product Name", "Category", "Price (PHP)", "Current Stock", "Min Stock Alert", "Status"];
-    const csvRows = [headers.join(",")];
-    
-    products.forEach(p => {
+    const reportProducts = [...activeProducts, ...inactiveProducts];
+    const headers = ['ID', 'Product Name', 'Category', 'Price (PHP)', 'Current Stock', 'Min Stock Alert', 'Status'];
+    const csvRows = [headers.join(',')];
+
+    reportProducts.forEach((product) => {
       const row = [
-        p.id,
-        `"${p.name}"`, // Quotes handle commas in product names safely
-        p.category,
-        p.price.toFixed(2),
-        p.stock,
-        p.min_stock,
-        isProductActive(p) ? "Active" : "Inactive"
+        product.id,
+        `"${String(product.name || '').replace(/"/g, '""')}"`,
+        product.category,
+        Number(product.price || 0).toFixed(2),
+        product.stock,
+        product.min_stock,
+        isProductActive(product) ? 'Active' : 'Inactive',
       ];
-      csvRows.push(row.join(","));
+      csvRows.push(row.join(','));
     });
 
-    const csvContent = csvRows.join("\n");
+    const csvContent = csvRows.join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
     link.setAttribute(
-      "download",
-      `SmartCanteen_${isInactivePage ? 'Inactive_Products' : 'Inventory'}_Report_${getPhilippineDateKey(new Date())}.csv`
+      'download',
+      `SmartCanteen_Inventory_Report_${getPhilippineDateKey(new Date())}.csv`
     );
     document.body.appendChild(link);
     link.click();
@@ -220,67 +634,60 @@ export default function Inventory({ mode = 'active' }) {
     return product.name.toLowerCase() === notificationFocus.name.toLowerCase();
   };
 
-  const displayedProducts = notificationFocus
-    ? [...products].sort((left, right) => {
-        const leftMatch = isNotificationFocusMatch(left);
-        const rightMatch = isNotificationFocusMatch(right);
+  const moveFocusedProductFirst = (products) => (
+    notificationFocus
+      ? [...products].sort((left, right) => {
+          const leftMatch = isNotificationFocusMatch(left);
+          const rightMatch = isNotificationFocusMatch(right);
 
-        if (leftMatch && !rightMatch) return -1;
-        if (!leftMatch && rightMatch) return 1;
-        return 0;
-      })
-    : products;
-
-  const totalPages = Math.max(1, Math.ceil(displayedProducts.length / INVENTORY_ITEMS_PER_PAGE));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const pageStartIndex = displayedProducts.length === 0 ? 0 : (safeCurrentPage - 1) * INVENTORY_ITEMS_PER_PAGE;
-  const paginatedProducts = displayedProducts.slice(
-    pageStartIndex,
-    pageStartIndex + INVENTORY_ITEMS_PER_PAGE
+          if (leftMatch && !rightMatch) return -1;
+          if (!leftMatch && rightMatch) return 1;
+          return 0;
+        })
+      : products
   );
-  const pageStartCount = displayedProducts.length === 0 ? 0 : pageStartIndex + 1;
-  const pageEndCount = Math.min(pageStartIndex + paginatedProducts.length, displayedProducts.length);
-  const pageNumbers = getInventoryPageNumbers(safeCurrentPage, totalPages);
+
+  const displayedActiveProducts = moveFocusedProductFirst(activeProducts);
+  const displayedInactiveProducts = moveFocusedProductFirst(inactiveProducts);
+  const activePagination = getPagination(displayedActiveProducts, activeCurrentPage);
+  const inactivePagination = getPagination(displayedInactiveProducts, inactiveCurrentPage);
 
   useEffect(() => {
-    setCurrentPage(1);
+    setActiveCurrentPage(1);
+    setInactiveCurrentPage(1);
   }, [notificationFocus?.id, notificationFocus?.name]);
 
   useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
+    if (activeCurrentPage > activePagination.totalPages) {
+      setActiveCurrentPage(activePagination.totalPages);
     }
-  }, [currentPage, totalPages]);
+  }, [activeCurrentPage, activePagination.totalPages]);
+
+  useEffect(() => {
+    if (inactiveCurrentPage > inactivePagination.totalPages) {
+      setInactiveCurrentPage(inactivePagination.totalPages);
+    }
+  }, [inactiveCurrentPage, inactivePagination.totalPages]);
 
   return (
-    <div className="view-shell-static relative">
+    <div className="view-shell-static relative gap-5">
       <div className="view-header md:flex-row md:items-center">
         <div>
-          <h1 className="view-title">{isInactivePage ? 'Inactive Products' : 'Inventory'}</h1>
+          <h1 className="view-title">Inventory</h1>
           <p className="view-subtitle">
-            {isInactivePage
-              ? 'Review deactivated products and restore them when needed'
-              : 'Manage active products and stock levels'}
+            Manage active products and review inactive products from one workspace
           </p>
         </div>
-        
-        <div className="flex w-full flex-wrap gap-3 md:w-auto">
-          <Link
-            to={isInactivePage ? '/inventory' : '/inventory/inactive'}
-            className="action-button"
-          >
-            <ArchiveBoxIcon className="w-5 h-5" />
-            {isInactivePage ? 'Active Inventory' : 'Inactive Products'}
-          </Link>
 
-          <button 
-            onClick={exportCSVReport} 
+        <div className="flex w-full flex-wrap gap-3 md:w-auto">
+          <button
+            onClick={exportCSVReport}
             className="action-button"
           >
             <ArrowDownTrayIcon className="w-5 h-5" /> Export CSV
           </button>
-          
-          {isAdmin && !isInactivePage && (
+
+          {isAdmin && (
             <button onClick={openAddModal} className="primary-action-button">
               <PlusIcon className="w-5 h-5" /> Add Product
             </button>
@@ -300,272 +707,50 @@ export default function Inventory({ mode = 'active' }) {
         </DismissibleAlert>
       )}
 
-      <div className="data-card flex min-h-0 flex-1 flex-col">
-        <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-y-auto md:block">
-          <table className="w-full text-left text-sm text-slate-600">
-            <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200 sticky top-0">
-              <tr>
-                <th className="px-6 py-4">ID</th>
-                <th className="px-6 py-4">Name</th>
-                <th className="px-6 py-4">Category</th>
-                <th className="px-6 py-4">Price</th>
-                <th className="px-6 py-4">Stock</th>
-                <th className="px-6 py-4">Status</th>
-                {isAdmin && <th className="px-6 py-4 text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                Array.from({ length: 6 }, (_, index) => (
-                  <tr key={`inventory-skeleton-${index}`}>
-                    <td className="px-6 py-4"><Skeleton className="h-4 w-10" /></td>
-                    <td className="px-6 py-4"><SkeletonText lines={['h-4 w-40']} /></td>
-                    <td className="px-6 py-4"><Skeleton className="h-7 w-24 rounded-full" /></td>
-                    <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
-                    <td className="px-6 py-4"><Skeleton className="h-7 w-24 rounded-full" /></td>
-                    <td className="px-6 py-4"><Skeleton className="h-7 w-20 rounded-full" /></td>
-                    {isAdmin && (
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          <Skeleton className="h-8 w-14 rounded-md" />
-                          <Skeleton className="h-8 w-16 rounded-md" />
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))
-              ) : displayedProducts.length === 0 ? (
-                <tr>
-                  <td colSpan={tableColumnCount} className="text-center py-10">
-                    {isInactivePage ? 'No inactive products found.' : 'No products found.'}
-                  </td>
-                </tr>
-              ) : paginatedProducts.map(p => {
-                const isHighlighted = isNotificationFocusMatch(p);
-                const isActive = isProductActive(p);
+      <InventorySection
+        title="Active Inventory"
+        subtitle="Products available for selling and stock monitoring"
+        countLabel={`${formatCount(activeProducts.length)} active`}
+        products={displayedActiveProducts}
+        paginatedProducts={activePagination.paginatedProducts}
+        pagination={activePagination}
+        setCurrentPage={setActiveCurrentPage}
+        loading={loading}
+        emptyMessage="No active products found."
+        tableColumnCount={tableColumnCount}
+        isAdmin={isAdmin}
+        isNotificationFocusMatch={isNotificationFocusMatch}
+        openEditModal={openEditModal}
+        handleDelete={handleDelete}
+        handleRestore={handleRestore}
+      />
 
-                return (
-                <tr key={p.id} className={`transition-colors ${isHighlighted ? 'bg-sky-50 ring-2 ring-inset ring-sky-200' : 'hover:bg-slate-50'} ${!isActive && !isHighlighted ? 'bg-slate-50 opacity-80' : isBelowMinimumStock(p) && !isHighlighted ? 'bg-red-50/50' : ''}`}>
-                  <td className="px-6 py-4">{p.id}</td>
-                  <td className="px-6 py-4 font-semibold text-slate-900">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span>{p.name}</span>
-                      {isHighlighted && (
-                        <span className="rounded-full bg-sky-100 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-sky-700">
-                          Alert item
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4"><span className="bg-fuchsia-50 text-fuchsia-700 px-3 py-1 rounded-full text-xs font-bold">{p.category}</span></td>
-                  <td className="px-6 py-4">{`PHP ${p.price.toFixed(2)}`}</td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${isBelowMinimumStock(p) ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-emerald-100 text-emerald-700'}`}>
-                      {p.stock} {isBelowMinimumStock(p) && ' (LOW)'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold ${isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                      <span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
-                      {isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  {isAdmin && (
-                    <td className="px-6 py-4 text-right space-x-2">
-                      <button onClick={() => openEditModal(p)} className="text-sky-600 hover:bg-sky-50 px-3 py-1.5 rounded-md border border-sky-200 font-medium text-xs transition-colors">Edit</button>
-                      {isInactivePage ? (
-                        <button onClick={() => handleRestore(p.id)} className="inline-flex items-center gap-1 text-emerald-600 hover:bg-emerald-50 px-3 py-1.5 rounded-md border border-emerald-200 font-medium text-xs transition-colors">
-                          <ArrowPathIcon className="h-3.5 w-3.5" />
-                          Restore
-                        </button>
-                      ) : (
-                        <button onClick={() => handleDelete(p.id)} className="text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-md border border-red-200 font-medium text-xs transition-colors">Deactivate</button>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              )})}
-            </tbody>
-          </table>
-        </div>
+      <InventorySection
+        title="Inactive Products"
+        subtitle="Deactivated products stay here until an admin restores them"
+        icon={ArchiveBoxIcon}
+        countLabel={`${formatCount(inactiveProducts.length)} inactive`}
+        products={displayedInactiveProducts}
+        paginatedProducts={inactivePagination.paginatedProducts}
+        pagination={inactivePagination}
+        setCurrentPage={setInactiveCurrentPage}
+        loading={loading}
+        emptyMessage="No inactive products found."
+        tableColumnCount={tableColumnCount}
+        isAdmin={isAdmin}
+        isInactiveSection
+        isNotificationFocusMatch={isNotificationFocusMatch}
+        openEditModal={openEditModal}
+        handleDelete={handleDelete}
+        handleRestore={handleRestore}
+      />
 
-        <div className="custom-scrollbar flex-1 overflow-y-auto p-4 md:hidden">
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }, (_, index) => (
-                <div key={`inventory-mobile-skeleton-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <SkeletonText lines={['h-4 w-40', 'h-3 w-24']} className="flex-1" />
-                    <Skeleton className="h-6 w-16 rounded-full" />
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <Skeleton className="h-14 rounded-xl" />
-                    <Skeleton className="h-14 rounded-xl" />
-                    <Skeleton className="h-14 rounded-xl" />
-                    <Skeleton className="h-14 rounded-xl" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : displayedProducts.length === 0 ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-              {isInactivePage ? 'No inactive products found.' : 'No products found.'}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {paginatedProducts.map((p) => {
-                const isHighlighted = isNotificationFocusMatch(p);
-                const isActive = isProductActive(p);
-
-                return (
-                <div
-                  key={p.id}
-                  className={`rounded-2xl border p-4 shadow-sm ${
-                    isHighlighted
-                      ? 'border-sky-300 bg-sky-50/70 ring-2 ring-sky-100'
-                      : !isActive
-                        ? 'border-slate-200 bg-slate-50/90 opacity-90'
-                        : isBelowMinimumStock(p)
-                        ? 'border-red-200 bg-red-50/60'
-                        : 'border-slate-200 bg-white'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold uppercase tracking-widest text-slate-400">Product #{p.id}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-base font-black text-slate-900">
-                        <span>{p.name}</span>
-                        {isHighlighted && (
-                          <span className="rounded-full bg-sky-100 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-sky-700">
-                            Alert item
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-2 inline-flex rounded-full bg-fuchsia-50 px-3 py-1 text-xs font-bold text-fuchsia-700">
-                        {p.category}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs font-bold uppercase tracking-widest text-slate-400">Price</div>
-                      <div className="mt-1 text-sm font-black text-slate-900">{`PHP ${p.price.toFixed(2)}`}</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-xl bg-slate-50 px-3 py-2">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Stock</div>
-                      <div className="mt-1 font-black text-slate-900">{p.stock}</div>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 px-3 py-2">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Min Alert</div>
-                      <div className="mt-1 font-black text-slate-900">{p.min_stock}</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <span
-                      className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${
-                        isBelowMinimumStock(p) ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
-                      }`}
-                    >
-                      {isBelowMinimumStock(p) ? 'Low stock' : 'Healthy stock'}
-                    </span>
-                    <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-600">
-                      <span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                      {isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </div>
-
-                  {isAdmin && (
-                    <div className="mt-4 flex gap-2">
-                      <button
-                        onClick={() => openEditModal(p)}
-                        className="flex-1 rounded-lg border border-sky-200 px-3 py-2 text-sm font-bold text-sky-600 transition-colors hover:bg-sky-50"
-                      >
-                        Edit
-                      </button>
-                      {isInactivePage ? (
-                        <button
-                          onClick={() => handleRestore(p.id)}
-                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-200 px-3 py-2 text-sm font-bold text-emerald-600 transition-colors hover:bg-emerald-50"
-                        >
-                          <ArrowPathIcon className="h-4 w-4" />
-                          Restore
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleDelete(p.id)}
-                          className="flex-1 rounded-lg border border-red-200 px-3 py-2 text-sm font-bold text-red-600 transition-colors hover:bg-red-50"
-                        >
-                          Deactivate
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )})}
-            </div>
-          )}
-        </div>
-
-        {!loading && displayedProducts.length > 0 && (
-          <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm font-semibold text-slate-600">
-              Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(displayedProducts.length)} products
-            </div>
-
-            {totalPages > 1 && (
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
-                  disabled={safeCurrentPage === 1}
-                  aria-label="Previous inventory page"
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ChevronLeftIcon className="h-4 w-4" />
-                  <span className="hidden sm:inline">Previous</span>
-                </button>
-
-                {pageNumbers.map((pageNumber) => (
-                  <button
-                    key={pageNumber}
-                    type="button"
-                    onClick={() => setCurrentPage(pageNumber)}
-                    aria-current={pageNumber === safeCurrentPage ? 'page' : undefined}
-                    className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
-                      pageNumber === safeCurrentPage
-                        ? 'bg-slate-900 text-white'
-                        : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    {formatCount(pageNumber)}
-                  </button>
-                ))}
-
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
-                  disabled={safeCurrentPage === totalPages}
-                  aria-label="Next inventory page"
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <span className="hidden sm:inline">Next</span>
-                  <ChevronRightIcon className="h-4 w-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Modal Overlay */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-6">
               <h3 className="text-xl font-bold text-slate-900 mb-4">{formData.id ? 'Edit Product' : 'Add Product'}</h3>
-              
+
               {formError && (
                 <DismissibleAlert
                   resetKey={formError}
@@ -576,36 +761,41 @@ export default function Inventory({ mode = 'active' }) {
                   {formError}
                 </DismissibleAlert>
               )}
-              
+
               <form onSubmit={handleSave} className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">Product Name *</label>
-                  <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
+                  <input type="text" required value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                 </div>
-                
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1">Category *</label>
-                    <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none bg-white">
+                    <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none bg-white">
                       <option>Staple</option><option>Viand</option><option>Soup</option><option>Snacks</option>
                       <option>Bread</option><option>Drinks</option><option>Dessert</option><option>General</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1">Price (PHP) *</label>
-                    <input type="number" step="0.01" required value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
+                    <input type="number" step="0.01" required value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1">Current Stock</label>
-                    <input type="number" required value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
+                    <input type="number" required value={formData.stock} onChange={(e) => setFormData({ ...formData, stock: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1">Min Alert Stock</label>
-                    <input type="number" required value={formData.min_stock} onChange={e => setFormData({...formData, min_stock: e.target.value})} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
+                    <input type="number" required value={formData.min_stock} onChange={(e) => setFormData({ ...formData, min_stock: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Barcode</label>
+                  <input type="text" value={formData.barcode || ''} onChange={(e) => setFormData({ ...formData, barcode: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                 </div>
 
                 <div className="flex flex-col gap-3 pt-4 sm:flex-row">

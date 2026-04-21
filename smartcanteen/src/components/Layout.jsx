@@ -4,7 +4,6 @@ import {
   ArrowPathIcon,
   ArrowRightOnRectangleIcon,
   ArrowTrendingUpIcon,
-  ArchiveBoxIcon,
   Bars3Icon,
   BellAlertIcon,
   BuildingStorefrontIcon,
@@ -382,9 +381,6 @@ function getNavDescription(path) {
   if (path === '/inventory') {
     return 'Stock visibility and product review';
   }
-  if (path === '/inventory/inactive') {
-    return 'Deactivated products and restore tools';
-  }
   if (path === '/transactions') {
     return 'Sales history and receipt tracking';
   }
@@ -438,7 +434,6 @@ export default function Layout({ children, onLogout }) {
     { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
-    { name: 'Inactive Products', path: '/inventory/inactive', icon: ArchiveBoxIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
     { name: 'AI Predictions', path: '/predictions', icon: SparklesIcon },

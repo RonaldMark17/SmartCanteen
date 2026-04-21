@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import ipaddress
 import os
+import re
 import secrets
 import struct
 import subprocess
@@ -45,10 +46,51 @@ from backend.time_utils import (
 from sqlalchemy.orm import joinedload
 
 
+PRODUCT_NAME_CHARS_RE = re.compile(r"[^a-z0-9]+")
+
+
 class TransactionValidationError(Exception):
     def __init__(self, message: str, status_code: int = 400):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _normalize_product_name_for_match(name: str) -> str:
+    normalized = PRODUCT_NAME_CHARS_RE.sub("", str(name or "").strip().lower())
+    if len(normalized) > 3 and normalized.endswith("s") and not normalized.endswith("ss"):
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _find_duplicate_product_name(
+    db: Session,
+    name: str,
+    exclude_product_id: Optional[int] = None,
+):
+    normalized_name = _normalize_product_name_for_match(name)
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Product name is required")
+
+    query = db.query(models.Product)
+    if exclude_product_id is not None:
+        query = query.filter(models.Product.id != exclude_product_id)
+
+    for product in query.all():
+        if _normalize_product_name_for_match(product.name) == normalized_name:
+            return product
+
+    return None
+
+
+def _raise_duplicate_product_name(product: models.Product):
+    status = "inactive" if product.is_active is False else "active"
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"Product already exists: {product.name} ({status}). "
+            "Update or restore that product instead of adding a duplicate."
+        ),
+    )
 
 
 def _get_client_ip(request: Optional[Request] = None):
@@ -1331,7 +1373,13 @@ def create_product(
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
-    product = models.Product(**data.model_dump())
+    product_data = data.model_dump()
+    product_data["name"] = str(product_data.get("name") or "").strip()
+    duplicate_product = _find_duplicate_product_name(db, product_data["name"])
+    if duplicate_product:
+        _raise_duplicate_product_name(duplicate_product)
+
+    product = models.Product(**product_data)
     db.add(product)
     db.commit()
     db.refresh(product)
@@ -1339,7 +1387,7 @@ def create_product(
         db,
         user_id=current.id,
         action="PRODUCT_CREATED",
-        details=f"Product: {data.name}",
+        details=f"Product: {product_data['name']}",
         request=req,
     )
     db.commit()
@@ -1366,7 +1414,18 @@ def update_product(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    if "name" in update_data and update_data["name"] is not None:
+        update_data["name"] = str(update_data["name"]).strip()
+        duplicate_product = _find_duplicate_product_name(
+            db,
+            update_data["name"],
+            exclude_product_id=product.id,
+        )
+        if duplicate_product:
+            _raise_duplicate_product_name(duplicate_product)
+
+    for field, value in update_data.items():
         setattr(product, field, value)
     product.updated_at = datetime.utcnow()
     db.commit()

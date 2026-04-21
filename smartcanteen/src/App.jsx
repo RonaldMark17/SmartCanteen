@@ -69,7 +69,6 @@ export default function App() {
     dashboard: <Dashboard />,
     pos: <POS />,
     inventory: <Inventory />,
-    inactiveProducts: <Inventory mode="inactive" />,
     analytics: <Analytics />,
     transactions: <TransactionHistory />,
     predictions: <Predictions />,
@@ -103,6 +102,8 @@ export default function App() {
               }
             />
           ))}
+
+          <Route path="/inventory/inactive" element={<Navigate to="/inventory" replace />} />
 
           <Route path="*" element={<Navigate to={defaultRoute} replace />} />
         </Routes>
