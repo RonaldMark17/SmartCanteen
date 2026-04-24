@@ -1,9 +1,13 @@
+import { safeLocalStorageSetJson } from './storage';
+
 const API_CACHE_STORAGE_KEY = 'sc_api_cache_v1';
 const OFFLINE_TRANSACTIONS_STORAGE_KEY = 'sc_offline_transactions_v1';
 const OFFLINE_LOGIN_STORAGE_KEY = 'sc_offline_login_v1';
 export const OFFLINE_QUEUE_EVENT = 'sc-offline-queue-changed';
 
-const MAX_API_CACHE_ENTRIES = 120;
+const MAX_API_CACHE_ENTRIES = 40;
+const MAX_API_CACHE_TOTAL_CHARS = 1_200_000;
+const MAX_API_CACHE_ENTRY_CHARS = 280_000;
 
 function canUseStorage() {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
@@ -28,9 +32,17 @@ function writeJson(key, value) {
   }
 
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    safeLocalStorageSetJson(key, value);
   } catch {
     // Ignore quota and serialization failures so the app can continue online.
+  }
+}
+
+function estimateSerializedLength(value) {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
   }
 }
 
@@ -110,8 +122,7 @@ export function buildApiCacheKeys({ method = 'GET', path }) {
 export function saveApiCacheEntry({ method = 'GET', path, data }) {
   const { cacheKey, groupKey, namespace } = buildApiCacheKeys({ method, path });
   const cache = readJson(API_CACHE_STORAGE_KEY, {});
-
-  cache[cacheKey] = {
+  const nextEntry = {
     cacheKey,
     groupKey,
     namespace,
@@ -119,14 +130,37 @@ export function saveApiCacheEntry({ method = 'GET', path, data }) {
     data,
     updatedAt: new Date().toISOString(),
   };
+  const nextEntryLength = estimateSerializedLength(nextEntry);
+
+  if (!Number.isFinite(nextEntryLength) || nextEntryLength > MAX_API_CACHE_ENTRY_CHARS) {
+    return;
+  }
+
+  cache[cacheKey] = nextEntry;
 
   const entries = Object.values(cache).sort(
     (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
   );
 
-  const trimmedEntries = entries.slice(0, MAX_API_CACHE_ENTRIES);
-  const nextCache = trimmedEntries.reduce((result, entry) => {
+  let totalChars = 0;
+  let keptEntries = 0;
+  const nextCache = entries.reduce((result, entry) => {
+    if (keptEntries >= MAX_API_CACHE_ENTRIES) {
+      return result;
+    }
+
+    const entryLength = estimateSerializedLength(entry);
+    if (!Number.isFinite(entryLength) || entryLength > MAX_API_CACHE_ENTRY_CHARS) {
+      return result;
+    }
+
+    if (keptEntries > 0 && totalChars + entryLength > MAX_API_CACHE_TOTAL_CHARS) {
+      return result;
+    }
+
     result[entry.cacheKey] = entry;
+    totalChars += entryLength;
+    keptEntries += 1;
     return result;
   }, {});
 

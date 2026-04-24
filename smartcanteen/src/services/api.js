@@ -8,6 +8,7 @@ import {
   saveApiCacheEntry,
   saveOfflineLoginProfile,
 } from './offlineStore';
+import { safeLocalStorageSetItem, safeLocalStorageSetJson } from './storage';
 
 const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
@@ -120,7 +121,11 @@ function readTrustedDeviceMap() {
 }
 
 function writeTrustedDeviceMap(devices) {
-  localStorage.setItem(TRUSTED_DEVICE_STORAGE_KEY, JSON.stringify(devices));
+  try {
+    safeLocalStorageSetJson(TRUSTED_DEVICE_STORAGE_KEY, devices);
+  } catch {
+    // Remembered device storage is optional; keep login usable if storage is tight.
+  }
 }
 
 function clearTrustedDeviceToken(username) {
@@ -478,6 +483,19 @@ function getClientRequestHeaders() {
   };
 }
 
+function getAuthorizedRequestHeaders() {
+  const headers = {
+    ...getClientRequestHeaders(),
+  };
+  const token = localStorage.getItem('sc_token');
+
+  if (token && !isOfflineSessionToken(token)) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return headers;
+}
+
 async function fetchWithTimeout(requestUrl, options = {}) {
   if (typeof AbortController === 'undefined' || API_REQUEST_TIMEOUT_MS <= 0) {
     return fetch(requestUrl, options);
@@ -496,6 +514,30 @@ async function fetchWithTimeout(requestUrl, options = {}) {
   } finally {
     clearTimer(timeoutId);
   }
+}
+
+function extractFilenameFromDisposition(value, fallback = 'download') {
+  const header = String(value || '');
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const quotedMatch = header.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+
+  const plainMatch = header.match(/filename=([^;]+)/i);
+  if (plainMatch?.[1]) {
+    return plainMatch[1].trim();
+  }
+
+  return fallback;
 }
 
 function buildConnectionError(apiBase, error) {
@@ -712,6 +754,94 @@ function request(method, path, body = null) {
   return requestPromise;
 }
 
+async function requestFile(path) {
+  const token = localStorage.getItem('sc_token');
+  const offlineSession = isOfflineSessionActive() || isOfflineSessionToken(token);
+
+  if (offlineSession) {
+    throw new OfflineError('Offline mode is active. Reconnect to download this file.');
+  }
+
+  if (!isOnline()) {
+    throw new OfflineError('You are offline.');
+  }
+
+  const apiBases = [API_BASE, API_FALLBACK_BASE].filter(Boolean);
+  let lastConnectionBase = API_BASE;
+
+  for (let index = 0; index < apiBases.length; index += 1) {
+    const apiBase = apiBases[index];
+    const hasFallback = index < apiBases.length - 1;
+    const requestUrl = `${apiBase}${path}`;
+    const headers = getAuthorizedRequestHeaders();
+
+    if (isNgrokUrl(apiBase) || (typeof window !== 'undefined' && isNgrokUrl(window.location.origin))) {
+      headers['ngrok-skip-browser-warning'] = 'true';
+    }
+
+    let res;
+    try {
+      res = await fetchWithTimeout(requestUrl, {
+        method: 'GET',
+        headers,
+      });
+    } catch (error) {
+      lastConnectionBase = apiBase;
+      if (hasFallback) {
+        continue;
+      }
+
+      throw buildConnectionError(apiBase, error);
+    }
+
+    if (hasFallback && (res.status === 502 || res.status === 503 || res.status === 504)) {
+      lastConnectionBase = apiBase;
+      continue;
+    }
+
+    if (res.status === 401) {
+      clearSession();
+      window.location.href = '/';
+      return null;
+    }
+
+    if (!res.ok) {
+      let errMsg = `HTTP ${res.status}`;
+      const raw = await res.text().catch(() => '');
+      if (looksLikeHtml(raw) && hasFallback) {
+        lastConnectionBase = apiBase;
+        continue;
+      }
+
+      try {
+        const parsed = raw ? JSON.parse(raw) : null;
+        errMsg = parsed?.detail || parsed?.message || errMsg;
+      } catch {
+        if (raw) {
+          errMsg = raw;
+        }
+      }
+
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        errMsg = `Cannot connect to server at ${apiBase}. Check your backend and API config.`;
+      }
+
+      throw new Error(errMsg);
+    }
+
+    const blob = await res.blob();
+    return {
+      blob,
+      filename: extractFilenameFromDisposition(
+        res.headers.get('content-disposition'),
+        path.split('/').filter(Boolean).pop() || 'download'
+      ),
+    };
+  }
+
+  throw new Error(`Cannot connect to server at ${lastConnectionBase}. Check your backend and API config.`);
+}
+
 async function primeOfflineData({ role } = {}) {
   if (!isOnline()) {
     return { primed: 0, failed: 0 };
@@ -810,7 +940,11 @@ async function completeAuthenticatedLoginResponse(response, password, { remember
   assertMfaWasCompleted(response);
 
   if (response?.background_alert_token) {
-    localStorage.setItem(BACKGROUND_ALERT_STORAGE_KEY, response.background_alert_token);
+    try {
+      safeLocalStorageSetItem(BACKGROUND_ALERT_STORAGE_KEY, response.background_alert_token);
+    } catch {
+      // Background alert storage is optional and should not block login.
+    }
   }
 
   if (rememberDevice) {
@@ -929,6 +1063,16 @@ export const API = {
     request('POST', '/alert-state', { alert_type, state, signatures }),
 
   getAuditLogs: () => request('GET', '/audit-logs'),
+  getFinancialSchoolYears: () => request('GET', '/financial-reports/school-years'),
+  createFinancialSchoolYear: (data) => request('POST', '/financial-reports/school-years', data),
+  getFinancialSchoolYearDetail: (schoolYearId) => request('GET', `/financial-reports/school-years/${schoolYearId}`),
+  updateFinancialReport: (reportId, data) => request('PUT', `/financial-reports/reports/${reportId}`, data),
+  updateFinancialReportExpenses: (reportId, expenses) =>
+    request('PUT', `/financial-reports/reports/${reportId}/expenses`, { expenses }),
+  updateFinancialAllocations: (schoolYearId, allocations) =>
+    request('PUT', `/financial-reports/school-years/${schoolYearId}/allocations`, { allocations }),
+  downloadFinancialReportTemplate: () => requestFile('/financial-reports/template'),
+  backupFinancialDatabase: () => request('POST', '/financial-reports/backup'),
   seed: () => request('POST', '/seed'),
   health: () => request('GET', '/health'),
   primeOfflineData,

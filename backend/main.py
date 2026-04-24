@@ -31,6 +31,7 @@ import backend.schemas as schemas
 import backend.auth as auth
 import backend.analytics_helpers as analytics_helpers
 import backend.ml_predictor as ml_predictor
+import backend.financial_reports as financial_reports
 from backend.demo_data import seed_demo_canteen_database
 from backend.database import engine, get_db, Base
 from backend.time_utils import (
@@ -382,6 +383,7 @@ app = FastAPI(
     description="Predictive Inventory & Sales System",
     version="1.0.0",
 )
+app.include_router(financial_reports.router)
 
 cors_options = {
     "allow_origins": [

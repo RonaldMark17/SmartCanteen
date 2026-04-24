@@ -4,6 +4,7 @@ import {
   ArrowPathIcon,
   ArrowRightOnRectangleIcon,
   ArrowTrendingUpIcon,
+  BanknotesIcon,
   Bars3Icon,
   BellAlertIcon,
   BuildingStorefrontIcon,
@@ -387,6 +388,9 @@ function getNavDescription(path) {
   if (path === '/analytics') {
     return 'Revenue trends and performance insights';
   }
+  if (path === '/financial-reports') {
+    return 'Monthly canteen finance and exports';
+  }
   if (path === '/predictions') {
     return 'Demand planning and AI guidance';
   }
@@ -434,6 +438,7 @@ export default function Layout({ children, onLogout }) {
     { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
+    { name: 'Financial Reports', path: '/financial-reports', icon: BanknotesIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
     { name: 'AI Predictions', path: '/predictions', icon: SparklesIcon },

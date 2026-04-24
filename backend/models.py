@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Float, Date, DateTime,
-    Boolean, ForeignKey, Text
+    Boolean, ForeignKey, Text, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -168,3 +168,91 @@ class PredictionCache(Base):
     payload        = Column(Text, nullable=False)
     created_at     = Column(DateTime, default=utc_now_naive)
     updated_at     = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class SchoolYear(Base):
+    __tablename__ = "school_years"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    name       = Column(String, unique=True, index=True, nullable=False)
+    start_year = Column(Integer, nullable=False)
+    end_year   = Column(Integer, nullable=False)
+    is_active  = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    monthly_reports = relationship(
+        "MonthlyReport",
+        back_populates="school_year",
+        cascade="all, delete-orphan",
+        order_by="MonthlyReport.month_index",
+    )
+    allocations = relationship(
+        "Allocation",
+        back_populates="school_year",
+        cascade="all, delete-orphan",
+        order_by="Allocation.sort_order",
+    )
+
+
+class MonthlyReport(Base):
+    __tablename__ = "monthly_reports"
+    __table_args__ = (
+        UniqueConstraint("school_year_id", "month_index", name="uq_monthly_reports_school_year_month"),
+    )
+
+    id                     = Column(Integer, primary_key=True, index=True)
+    school_year_id         = Column(Integer, ForeignKey("school_years.id"), nullable=False, index=True)
+    month_index            = Column(Integer, nullable=False)
+    month_number           = Column(Integer, nullable=False)
+    month_name             = Column(String, nullable=False)
+    calendar_year          = Column(Integer, nullable=False)
+    beginning_cash_on_hand = Column(Float, default=0.0)
+    current_sales          = Column(Float, default=0.0)
+    other_income           = Column(Float, default=0.0)
+    purchases              = Column(Float, default=0.0)
+    inventory_used         = Column(Float, default=0.0)
+    product_cost           = Column(Float, default=0.0)
+    notes                  = Column(Text, nullable=True)
+    created_at             = Column(DateTime, default=utc_now_naive)
+    updated_at             = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    school_year = relationship("SchoolYear", back_populates="monthly_reports")
+    expenses = relationship(
+        "Expense",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        order_by="Expense.sort_order",
+    )
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    report_id   = Column(Integer, ForeignKey("monthly_reports.id"), nullable=False, index=True)
+    category    = Column(String, nullable=False)
+    amount      = Column(Float, default=0.0)
+    sort_order  = Column(Integer, default=0)
+    created_at  = Column(DateTime, default=utc_now_naive)
+    updated_at  = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    report = relationship("MonthlyReport", back_populates="expenses")
+
+
+class Allocation(Base):
+    __tablename__ = "allocations"
+    __table_args__ = (
+        UniqueConstraint("school_year_id", "category_key", name="uq_allocations_school_year_category"),
+    )
+
+    id            = Column(Integer, primary_key=True, index=True)
+    school_year_id = Column(Integer, ForeignKey("school_years.id"), nullable=False, index=True)
+    category_key   = Column(String, nullable=False)
+    label          = Column(String, nullable=False)
+    percentage     = Column(Float, default=0.0)
+    sort_order     = Column(Integer, default=0)
+    created_at     = Column(DateTime, default=utc_now_naive)
+    updated_at     = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    school_year = relationship("SchoolYear", back_populates="allocations")

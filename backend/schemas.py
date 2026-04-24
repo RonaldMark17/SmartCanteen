@@ -118,3 +118,42 @@ class AlertStateUpdateRequest(BaseModel):
     alert_type: str
     state: str
     signatures: List[str]
+
+
+# Financial reports
+
+class FinancialSchoolYearCreate(BaseModel):
+    start_year: int
+    end_year: Optional[int] = None
+    set_active: bool = True
+
+
+class FinancialReportUpdate(BaseModel):
+    beginning_cash_on_hand: Optional[float] = None
+    current_sales: Optional[float] = None
+    other_income: Optional[float] = None
+    purchases: Optional[float] = None
+    inventory_used: Optional[float] = None
+    product_cost: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class FinancialExpenseInput(BaseModel):
+    category: str
+    amount: float = 0.0
+    sort_order: int = 0
+
+
+class FinancialExpensesUpdate(BaseModel):
+    expenses: List[FinancialExpenseInput]
+
+
+class FinancialAllocationInput(BaseModel):
+    category_key: str
+    label: str
+    percentage: float
+    sort_order: int = 0
+
+
+class FinancialAllocationsUpdate(BaseModel):
+    allocations: List[FinancialAllocationInput]

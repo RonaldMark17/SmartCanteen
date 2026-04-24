@@ -7,6 +7,7 @@ import Dashboard from './views/Dashboard';
 import POS from './views/POS';
 import Inventory from './views/Inventory';
 import Analytics from './views/Analytics';
+import FinancialReports from './views/FinancialReports';
 import Predictions from './views/Predictions';
 import AuditLog from './views/AuditLog';
 import TransactionHistory from './views/TransactionHistory';
@@ -70,6 +71,7 @@ export default function App() {
     pos: <POS />,
     inventory: <Inventory />,
     analytics: <Analytics />,
+    financialReports: <FinancialReports />,
     transactions: <TransactionHistory />,
     predictions: <Predictions />,
     audit: <AuditLog />,

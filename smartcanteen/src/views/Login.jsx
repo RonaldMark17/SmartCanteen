@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { API } from '../services/api';
+import { safeLocalStorageSetItem, safeLocalStorageSetJson } from '../services/storage';
 import DismissibleAlert from '../components/DismissibleAlert';
 import {
   ArrowTrendingUpIcon,
@@ -209,6 +210,23 @@ function getPortalLabel(identifier) {
   return 'Staff Portal';
 }
 
+function persistAuthenticatedSession(accessToken, user) {
+  const quotaMessage =
+    'This device is out of browser storage. SmartCanteen cleared temporary cache, but there is still not enough space to save your session. Clear site data for this app and try again.';
+
+  safeLocalStorageSetItem('sc_token', accessToken, { quotaMessage });
+
+  try {
+    safeLocalStorageSetJson('sc_user', user, {
+      protectedKeys: ['sc_token'],
+      quotaMessage,
+    });
+  } catch (error) {
+    localStorage.removeItem('sc_token');
+    throw error;
+  }
+}
+
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState(getRememberedUsername);
   const [password, setPassword] = useState('');
@@ -295,12 +313,15 @@ export default function Login({ onLogin }) {
     clearLoginLockout(identifier);
     setLockoutNow(Date.now());
     if (rememberUsername) {
-      localStorage.setItem(REMEMBERED_USERNAME_STORAGE_KEY, submittedUsername.trim());
+      try {
+        safeLocalStorageSetItem(REMEMBERED_USERNAME_STORAGE_KEY, submittedUsername.trim());
+      } catch {
+        // Remembered username is optional and should not block sign-in.
+      }
     } else {
       localStorage.removeItem(REMEMBERED_USERNAME_STORAGE_KEY);
     }
-    localStorage.setItem('sc_token', res.access_token);
-    localStorage.setItem('sc_user', JSON.stringify(res.user));
+    persistAuthenticatedSession(res.access_token, res.user);
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
     setPendingRecoveryCodes([]);

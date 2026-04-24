@@ -26,6 +26,11 @@ export const APP_ROUTE_ACCESS = [
     allowedRoles: ['admin', 'staff'],
   },
   {
+    key: 'financialReports',
+    path: '/financial-reports',
+    allowedRoles: ['admin', 'staff'],
+  },
+  {
     key: 'transactions',
     path: '/transactions',
     allowedRoles: ['admin', 'staff', 'cashier'],
