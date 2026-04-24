@@ -1,17 +1,22 @@
 import calendar
 import os
 import shutil
+import tempfile
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from openpyxl import load_workbook
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
+from starlette.background import BackgroundTask
 
 import backend.auth as auth
 import backend.models as models
 import backend.schemas as schemas
 from backend.database import SQLALCHEMY_DATABASE_URL, get_db
+from backend.time_utils import build_ph_date_range_bounds, get_ph_today
 
 
 router = APIRouter(tags=["Financial Reports"])
@@ -33,12 +38,13 @@ MONTH_SEQUENCE = [
     (11, 5, "May"),
 ]
 DEFAULT_EXPENSE_CATEGORIES = [
+    "Transportation/Freight",
     "Gas",
     "Supplies",
-    "Helper Salary",
-    "Repairs",
-    "Utilities",
-    "Other Expenses",
+    "Helpers",
+    "Repair",
+    "Purchase from the looses of tools",
+    "Other expenses",
 ]
 DEFAULT_ALLOCATIONS = [
     ("supplementary_feeding", "Supplementary Feeding", 35.0),
@@ -48,6 +54,155 @@ DEFAULT_ALLOCATIONS = [
     ("he_instructional_fund", "H.E Instructional Fund", 10.0),
     ("revolving_capital_fund", "Revolving Capital Fund", 10.0),
 ]
+EXPENSE_CELL_BY_CATEGORY = {
+    "transportation/freight": "F21",
+    "gas": "F22",
+    "supplies": "F23",
+    "helpers": "F24",
+    "repair": "F25",
+    "purchase from the looses of tools": "F26",
+    "other expenses": "F27",
+}
+EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DEMO_BEGINNING_CASH_ON_HAND = 11834.59
+DEMO_MONTHLY_REPORT_ROWS = [
+    {
+        "month_index": 0,
+        "current_sales": 39840.00,
+        "cost_of_sales": 31872.00,
+        "expenses": {
+            "Gas": 950.00,
+            "Supplies": 1000.00,
+            "Helpers": 800.00,
+            "Repair": 3000.00,
+        },
+    },
+    {
+        "month_index": 1,
+        "current_sales": 68483.70,
+        "cost_of_sales": 54498.70,
+        "expenses": {
+            "Gas": 950.00,
+            "Supplies": 1000.00,
+            "Helpers": 1300.00,
+            "Repair": 1800.00,
+        },
+    },
+    {
+        "month_index": 2,
+        "current_sales": 93243.00,
+        "cost_of_sales": 74595.00,
+        "expenses": {
+            "Gas": 1800.00,
+            "Supplies": 1600.00,
+            "Helpers": 2300.00,
+        },
+    },
+    {
+        "month_index": 3,
+        "current_sales": 89345.00,
+        "cost_of_sales": 72476.00,
+        "expenses": {
+            "Gas": 1900.00,
+            "Supplies": 2200.00,
+            "Helpers": 2100.00,
+        },
+    },
+    {
+        "month_index": 4,
+        "current_sales": 70345.00,
+        "cost_of_sales": 54345.00,
+        "expenses": {
+            "Gas": 400.00,
+            "Supplies": 915.00,
+            "Helpers": 2600.00,
+        },
+    },
+    {
+        "month_index": 5,
+        "current_sales": 190480.00,
+        "cost_of_sales": 163840.00,
+        "expenses": {
+            "Gas": 300.00,
+            "Supplies": 1830.00,
+            "Helpers": 1480.00,
+            "Repair": 6500.00,
+        },
+    },
+    {
+        "month_index": 6,
+        "current_sales": 85165.00,
+        "cost_of_sales": 68038.00,
+        "expenses": {
+            "Gas": 915.00,
+            "Supplies": 1800.00,
+            "Helpers": 6800.00,
+        },
+    },
+    {
+        "month_index": 7,
+        "current_sales": 208342.00,
+        "cost_of_sales": 179482.00,
+        "expenses": {
+            "Transportation/Freight": 450.00,
+            "Gas": 2890.00,
+            "Supplies": 3650.00,
+            "Helpers": 2300.00,
+            "Repair": 2800.00,
+        },
+    },
+    {
+        "month_index": 8,
+        "current_sales": 164280.00,
+        "cost_of_sales": 132940.00,
+        "expenses": {
+            "Transportation/Freight": 350.00,
+            "Gas": 2100.00,
+            "Supplies": 2400.00,
+            "Helpers": 2200.00,
+            "Other expenses": 300.00,
+        },
+    },
+    {
+        "month_index": 9,
+        "current_sales": 152760.00,
+        "cost_of_sales": 124180.00,
+        "expenses": {
+            "Transportation/Freight": 300.00,
+            "Gas": 1750.00,
+            "Supplies": 2150.00,
+            "Helpers": 2150.00,
+            "Repair": 600.00,
+        },
+    },
+    {
+        "month_index": 10,
+        "current_sales": 167420.00,
+        "cost_of_sales": 136050.00,
+        "expenses": {
+            "Transportation/Freight": 320.00,
+            "Gas": 1950.00,
+            "Supplies": 2280.00,
+            "Helpers": 2350.00,
+            "Repair": 900.00,
+        },
+    },
+    {
+        "month_index": 11,
+        "current_sales": 173880.00,
+        "cost_of_sales": 140920.00,
+        "expenses": {
+            "Transportation/Freight": 400.00,
+            "Gas": 2200.00,
+            "Supplies": 2460.00,
+            "Helpers": 2500.00,
+            "Repair": 1200.00,
+        },
+    },
+]
+DEMO_MONTHLY_REPORTS_BY_INDEX = {
+    int(item["month_index"]): item for item in DEMO_MONTHLY_REPORT_ROWS
+}
 
 
 def require_financial_report_user(
@@ -154,6 +309,163 @@ def _ensure_school_year_defaults(db: Session, school_year: models.SchoolYear) ->
     return changed
 
 
+def _school_year_has_report_values(school_year: models.SchoolYear) -> bool:
+    return any(
+        any(
+            [
+                report.beginning_cash_on_hand,
+                report.current_sales,
+                report.other_income,
+                report.purchases,
+                report.inventory_used,
+                report.product_cost,
+                any(float(expense.amount or 0.0) for expense in report.expenses),
+            ]
+        )
+        for report in school_year.monthly_reports
+    )
+
+
+def clear_financial_reporting_tables(db: Session) -> None:
+    db.query(models.Expense).delete(synchronize_session=False)
+    db.query(models.Allocation).delete(synchronize_session=False)
+    db.query(models.MonthlyReport).delete(synchronize_session=False)
+    db.query(models.SchoolYear).delete(synchronize_session=False)
+    db.flush()
+
+
+def _resolve_demo_school_year_bounds() -> tuple[int, int]:
+    today = get_ph_today()
+    start_year = today.year if today.month >= 6 else today.year - 1
+    return start_year, start_year + 1
+
+
+def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
+    if reset:
+        clear_financial_reporting_tables(db)
+
+    start_year, end_year = _resolve_demo_school_year_bounds()
+    school_year_name = _format_school_year_name(start_year, end_year)
+    existing_school_years = int(db.query(models.SchoolYear).count())
+    school_year = (
+        db.query(models.SchoolYear)
+        .options(
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.allocations),
+        )
+        .filter(models.SchoolYear.name == school_year_name)
+        .first()
+    )
+    active_school_year = (
+        db.query(models.SchoolYear)
+        .options(
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.allocations),
+        )
+        .filter(models.SchoolYear.is_active.is_(True))
+        .order_by(models.SchoolYear.updated_at.desc(), models.SchoolYear.id.desc())
+        .first()
+    )
+
+    if not reset and active_school_year and not _school_year_has_report_values(active_school_year):
+        school_year = active_school_year
+        school_year_name = active_school_year.name
+    elif school_year and not reset and _school_year_has_report_values(school_year):
+        if active_school_year and active_school_year.id != school_year.id and not _school_year_has_report_values(active_school_year):
+            school_year = active_school_year
+            school_year_name = active_school_year.name
+        else:
+            return {
+                "message": f"Monthly canteen reporting already seeded for {school_year_name}.",
+                "school_year": school_year_name,
+                "created": False,
+                "months_populated": 0,
+            }
+
+    created = False
+    if not school_year:
+        school_year = models.SchoolYear(
+            name=school_year_name,
+            start_year=start_year,
+            end_year=end_year,
+            is_active=existing_school_years == 0,
+        )
+        db.add(school_year)
+        db.flush()
+        created = True
+
+    _ensure_school_year_defaults(db, school_year)
+    db.flush()
+
+    school_year = _load_school_year(db, school_year.id) or school_year
+    reports_by_index = {int(report.month_index): report for report in school_year.monthly_reports}
+    running_beginning_cash = _round_money(DEMO_BEGINNING_CASH_ON_HAND)
+
+    for month_index, month_number, month_name in MONTH_SEQUENCE:
+        report = reports_by_index.get(month_index)
+        if not report:
+            continue
+
+        demo_row = DEMO_MONTHLY_REPORTS_BY_INDEX.get(month_index, {})
+        current_sales = _round_money(demo_row.get("current_sales"))
+        cost_of_sales = _round_money(demo_row.get("cost_of_sales"))
+        expense_values = {
+            str(category or "").strip().lower(): _round_money(amount)
+            for category, amount in dict(demo_row.get("expenses") or {}).items()
+        }
+
+        report.month_number = month_number
+        report.month_name = month_name
+        report.calendar_year = _month_calendar_year(school_year, month_number)
+        report.beginning_cash_on_hand = running_beginning_cash
+        report.current_sales = current_sales
+        report.other_income = 0.0
+        report.purchases = 0.0
+        report.inventory_used = 0.0
+        report.product_cost = cost_of_sales
+        report.notes = "Seeded demo monthly canteen reporting data"
+
+        _create_default_expenses(db, report)
+        expense_map = {
+            str(expense.category or "").strip().lower(): expense
+            for expense in report.expenses
+        }
+
+        total_operating_expenses = 0.0
+        for sort_order, category in enumerate(DEFAULT_EXPENSE_CATEGORIES):
+            normalized_category = category.strip().lower()
+            expense = expense_map.get(normalized_category)
+            if not expense:
+                expense = models.Expense(
+                    report_id=report.id,
+                    category=category,
+                    amount=0.0,
+                    sort_order=sort_order,
+                )
+                db.add(expense)
+                report.expenses.append(expense)
+                expense_map[normalized_category] = expense
+
+            amount = _round_money(expense_values.get(normalized_category))
+            expense.category = category
+            expense.amount = amount
+            expense.sort_order = sort_order
+            total_operating_expenses += amount
+
+        running_beginning_cash = _round_money(
+            running_beginning_cash + (current_sales - cost_of_sales) - total_operating_expenses
+        )
+
+    db.flush()
+
+    return {
+        "message": f"Monthly canteen reporting demo data seeded for {school_year_name}.",
+        "school_year": school_year_name,
+        "created": created,
+        "months_populated": len(DEMO_MONTHLY_REPORT_ROWS),
+    }
+
+
 def _serialize_expense(expense: models.Expense) -> dict:
     return {
         "id": expense.id,
@@ -175,11 +487,36 @@ def _serialize_allocation(allocation: models.Allocation, net_profit: float = 0.0
     }
 
 
-def _serialize_report(report: models.MonthlyReport, allocations: list[models.Allocation]) -> dict:
+def _build_report_month_bounds(report: models.MonthlyReport) -> tuple[datetime, datetime]:
+    last_day = calendar.monthrange(int(report.calendar_year), int(report.month_number))[1]
+    return build_ph_date_range_bounds(
+        f"{int(report.calendar_year):04d}-{int(report.month_number):02d}-01",
+        f"{int(report.calendar_year):04d}-{int(report.month_number):02d}-{last_day:02d}",
+    )
+
+
+def _get_report_transaction_sales(db: Session, report: models.MonthlyReport) -> float:
+    start_utc, end_utc = _build_report_month_bounds(report)
+    total_sales = (
+        db.query(func.coalesce(func.sum(models.Transaction.total), 0.0))
+        .filter(models.Transaction.created_at.between(start_utc, end_utc))
+        .scalar()
+    )
+    return _round_money(total_sales)
+
+
+def _serialize_report(
+    report: models.MonthlyReport,
+    allocations: list[models.Allocation],
+    *,
+    current_sales_override: Optional[float] = None,
+) -> dict:
     expenses = sorted(report.expenses, key=lambda item: (item.sort_order, item.id))
     serialized_expenses = [_serialize_expense(expense) for expense in expenses]
     beginning_cash = _round_money(report.beginning_cash_on_hand)
-    current_sales = _round_money(report.current_sales)
+    current_sales = _round_money(
+        report.current_sales if current_sales_override is None else current_sales_override
+    )
     other_income = _round_money(report.other_income)
     purchases = _round_money(report.purchases)
     inventory_used = _round_money(report.inventory_used)
@@ -208,6 +545,8 @@ def _serialize_report(report: models.MonthlyReport, allocations: list[models.All
         "month_label": f"{report.month_name} {report.calendar_year}",
         "beginning_cash_on_hand": beginning_cash,
         "current_sales": current_sales,
+        "analytics_current_sales": current_sales if current_sales_override is not None else None,
+        "current_sales_source": "analytics" if current_sales_override is not None else "saved",
         "other_income": other_income,
         "purchases": purchases,
         "inventory_used": inventory_used,
@@ -224,6 +563,104 @@ def _serialize_report(report: models.MonthlyReport, allocations: list[models.All
         "notes": report.notes or "",
         "updated_at": report.updated_at.isoformat() if report.updated_at else None,
         "comparison": None,
+    }
+
+
+def _build_auto_input_payload(
+    report: dict,
+    *,
+    previous_report: Optional[dict],
+    transaction_sales: float,
+    historical_reports: list[dict],
+) -> tuple[dict, dict]:
+    historical_cost_reports = [
+        item for item in historical_reports if item["current_sales"] > 0 and item["cost_of_sales"] > 0
+    ]
+    historical_operation_reports = [
+        item for item in historical_reports if item["total_operating_expenses"] > 0
+    ]
+
+    if historical_cost_reports:
+        historical_cost_ratio = sum(item["cost_of_sales"] for item in historical_cost_reports) / max(
+            sum(item["current_sales"] for item in historical_cost_reports),
+            1,
+        )
+    else:
+        historical_cost_ratio = None
+
+    auto_inputs = {
+        "beginning_cash_on_hand": {
+            "value": _round_money(
+                previous_report["ending_cash"] if previous_report else report["beginning_cash_on_hand"]
+            ),
+            "source": (
+                f'Auto-carried from {previous_report["month_label"]} ending cash'
+                if previous_report
+                else 'Using the saved value for this month'
+            ),
+        },
+        "current_sales": {
+            "value": transaction_sales,
+            "source": (
+                f'Auto-calculated from POS transactions for {report["month_label"]}'
+                if transaction_sales > 0
+                else 'No POS transactions found for this month yet'
+            ),
+        },
+        "cost_of_sales": {
+            "value": 0.0,
+            "source": 'No historical cost-of-sales pattern found yet',
+        },
+        "operation_expenses": {
+            "value": 0.0,
+            "source": 'No historical operation-expense pattern found yet',
+        },
+    }
+
+    if report["cost_of_sales"] > 0:
+        auto_inputs["cost_of_sales"] = {
+            "value": report["cost_of_sales"],
+            "source": 'Using the saved cost of sales for this month',
+        }
+    elif previous_report and previous_report["cost_of_sales"] > 0:
+        auto_inputs["cost_of_sales"] = {
+            "value": previous_report["cost_of_sales"],
+            "source": f'Copied from {previous_report["month_label"]} cost of sales',
+        }
+    elif historical_cost_ratio is not None and transaction_sales > 0:
+        auto_inputs["cost_of_sales"] = {
+            "value": _round_money(transaction_sales * historical_cost_ratio),
+            "source": 'Estimated from historical cost-of-sales rate',
+        }
+
+    if report["total_operating_expenses"] > 0:
+        auto_inputs["operation_expenses"] = {
+            "value": report["total_operating_expenses"],
+            "source": 'Using the saved operation expenses for this month',
+        }
+    elif previous_report and previous_report["total_operating_expenses"] > 0:
+        auto_inputs["operation_expenses"] = {
+            "value": previous_report["total_operating_expenses"],
+            "source": f'Copied from {previous_report["month_label"]} operation expenses',
+        }
+    elif historical_operation_reports:
+        auto_inputs["operation_expenses"] = {
+            "value": _round_money(
+                sum(item["total_operating_expenses"] for item in historical_operation_reports)
+                / len(historical_operation_reports)
+            ),
+            "source": 'Estimated from average historical operation expenses',
+        }
+
+    default_inputs = {
+        "beginning_cash_on_hand": report["beginning_cash_on_hand"],
+        "current_sales": report["current_sales"],
+        "cost_of_sales": report["cost_of_sales"],
+        "operation_expenses": report["total_operating_expenses"],
+    }
+
+    return auto_inputs, {
+        key: _round_money(value) for key, value in default_inputs.items()
     }
 
 
@@ -297,13 +734,36 @@ def _build_dashboard(serialized_reports: list[dict], allocations: list[models.Al
     }
 
 
-def _serialize_school_year_detail(school_year: models.SchoolYear) -> dict:
+def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -> dict:
     allocations = sorted(school_year.allocations, key=lambda item: (item.sort_order, item.id))
     reports = sorted(school_year.monthly_reports, key=lambda item: item.month_index)
-    serialized_reports = [_serialize_report(report, allocations) for report in reports]
+    transaction_sales_by_report_id = {
+        report.id: _get_report_transaction_sales(db, report)
+        for report in reports
+    }
+    serialized_reports = [
+        _serialize_report(
+            report,
+            allocations,
+            current_sales_override=transaction_sales_by_report_id[report.id],
+        )
+        for report in reports
+    ]
 
     previous_report = None
+    historical_reports = []
     for report in serialized_reports:
+        transaction_sales = transaction_sales_by_report_id[report["id"]]
+        auto_inputs, default_inputs = _build_auto_input_payload(
+            report,
+            previous_report=previous_report,
+            transaction_sales=transaction_sales,
+            historical_reports=historical_reports,
+        )
+        report["auto_inputs"] = auto_inputs
+        report["default_inputs"] = default_inputs
+        report["auto_fill_applied_by_default"] = False
+
         if previous_report:
             report["comparison"] = {
                 "previous_month_label": previous_report["month_label"],
@@ -311,6 +771,7 @@ def _serialize_school_year_detail(school_year: models.SchoolYear) -> dict:
                 "net_profit_delta": _round_money(report["net_profit"] - previous_report["net_profit"]),
             }
         previous_report = report
+        historical_reports.append(report)
 
     return {
         "school_year": {
@@ -328,12 +789,21 @@ def _serialize_school_year_detail(school_year: models.SchoolYear) -> dict:
     }
 
 
-def _build_school_year_summary(school_year: models.SchoolYear) -> dict:
-    detail = _serialize_school_year_detail(school_year)
-    reports = detail["reports"]
+def _build_school_year_summary(db: Session, school_year: models.SchoolYear) -> dict:
+    allocations = sorted(school_year.allocations, key=lambda item: (item.sort_order, item.id))
+    reports = sorted(school_year.monthly_reports, key=lambda item: item.month_index)
+    serialized_reports = [
+        _serialize_report(
+            report,
+            allocations,
+            current_sales_override=_get_report_transaction_sales(db, report),
+        )
+        for report in reports
+    ]
+    dashboard = _build_dashboard(serialized_reports, allocations)
     months_with_entries = sum(
         1
-        for report in reports
+        for report in serialized_reports
         if any(
             [
                 report["beginning_cash_on_hand"],
@@ -346,16 +816,16 @@ def _build_school_year_summary(school_year: models.SchoolYear) -> dict:
     )
 
     return {
-        "id": detail["school_year"]["id"],
-        "name": detail["school_year"]["name"],
-        "start_year": detail["school_year"]["start_year"],
-        "end_year": detail["school_year"]["end_year"],
-        "is_active": detail["school_year"]["is_active"],
+        "id": school_year.id,
+        "name": school_year.name,
+        "start_year": school_year.start_year,
+        "end_year": school_year.end_year,
+        "is_active": bool(school_year.is_active),
         "months_with_entries": months_with_entries,
-        "report_count": len(reports),
-        "total_sales": detail["dashboard"]["total_monthly_sales"],
-        "net_profit": detail["dashboard"]["net_profit"],
-        "updated_at": detail["school_year"]["updated_at"],
+        "report_count": len(serialized_reports),
+        "total_sales": dashboard["total_monthly_sales"],
+        "net_profit": dashboard["net_profit"],
+        "updated_at": school_year.updated_at.isoformat() if school_year.updated_at else None,
     }
 
 
@@ -395,6 +865,87 @@ def _sqlite_database_path() -> Optional[str]:
     return os.path.abspath(SQLALCHEMY_DATABASE_URL.replace("sqlite:///", "", 1))
 
 
+def _remove_file_if_exists(path: str) -> None:
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _prepare_workbook_recalculation(workbook) -> None:
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    workbook.calculation.calcMode = "auto"
+
+
+def _populate_report_worksheet(
+    worksheet,
+    report: models.MonthlyReport,
+    *,
+    current_sales_override: Optional[float] = None,
+) -> None:
+    worksheet["A13"] = f"For the Month of {report.month_name} {report.calendar_year}"
+    worksheet["C15"] = _round_money(report.beginning_cash_on_hand)
+    worksheet["F16"] = _round_money(
+        report.current_sales if current_sales_override is None else current_sales_override
+    )
+    worksheet["F17"] = _round_money(
+        _round_money(report.purchases)
+        + _round_money(report.inventory_used)
+        + _round_money(report.product_cost)
+    )
+
+    for cell_address in EXPENSE_CELL_BY_CATEGORY.values():
+        worksheet[cell_address] = 0.0
+
+    for expense in sorted(report.expenses, key=lambda item: (item.sort_order, item.id)):
+        category = str(expense.category or "").strip().lower()
+        cell_address = EXPENSE_CELL_BY_CATEGORY.get(category)
+        if cell_address:
+            worksheet[cell_address] = _round_money(expense.amount)
+
+    worksheet["G32"] = 0.0
+    worksheet["G33"] = 0.0
+    worksheet["G34"] = _round_money(report.other_income)
+    worksheet["F28"] = "=SUM(F21:G27)"
+
+
+def _build_school_year_workbook_export(db: Session, school_year: models.SchoolYear) -> str:
+    template_path = _template_path()
+    if not os.path.isfile(template_path):
+        raise HTTPException(status_code=404, detail="Report template file not found")
+
+    workbook = load_workbook(template_path)
+    _prepare_workbook_recalculation(workbook)
+
+    for report in sorted(school_year.monthly_reports, key=lambda item: item.month_index):
+        if report.month_name in workbook.sheetnames:
+            _populate_report_worksheet(
+                workbook[report.month_name],
+                report,
+                current_sales_override=_get_report_transaction_sales(db, report),
+            )
+
+    export_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        prefix=f"canteen-report-{school_year.name}-",
+        suffix=".xlsx",
+    )
+    export_path = export_file.name
+    export_file.close()
+
+    try:
+        workbook.save(export_path)
+    except Exception:
+        _remove_file_if_exists(export_path)
+        raise
+    finally:
+        workbook.close()
+
+    return export_path
+
+
 @router.get("/api/financial-reports/school-years")
 def list_school_years(
     db: Session = Depends(get_db),
@@ -415,7 +966,7 @@ def list_school_years(
         if _ensure_school_year_defaults(db, school_year):
             db.commit()
             school_year = _load_school_year(db, school_year.id)
-        summaries.append(_build_school_year_summary(school_year))
+        summaries.append(_build_school_year_summary(db, school_year))
 
     return summaries
 
@@ -459,7 +1010,7 @@ def create_school_year(
     )
     db.commit()
 
-    return _serialize_school_year_detail(_ensure_and_reload_school_year(db, school_year.id))
+    return _serialize_school_year_detail(db, _ensure_and_reload_school_year(db, school_year.id))
 
 
 @router.get("/api/financial-reports/school-years/{school_year_id}")
@@ -469,7 +1020,7 @@ def get_school_year_detail(
     _: models.User = Depends(require_financial_report_user),
 ):
     school_year = _ensure_and_reload_school_year(db, school_year_id)
-    return _serialize_school_year_detail(school_year)
+    return _serialize_school_year_detail(db, school_year)
 
 
 @router.put("/api/financial-reports/reports/{report_id}")
@@ -519,7 +1070,13 @@ def update_report(
     )
 
     allocations = sorted(report.school_year.allocations, key=lambda item: (item.sort_order, item.id))
-    return {"report": _serialize_report(report, allocations)}
+    return {
+        "report": _serialize_report(
+            report,
+            allocations,
+            current_sales_override=_get_report_transaction_sales(db, report),
+        )
+    }
 
 
 @router.put("/api/financial-reports/reports/{report_id}/expenses")
@@ -590,7 +1147,13 @@ def replace_report_expenses(
         .first()
     )
     allocations = sorted(report.school_year.allocations, key=lambda item: (item.sort_order, item.id))
-    return {"report": _serialize_report(report, allocations)}
+    return {
+        "report": _serialize_report(
+            report,
+            allocations,
+            current_sales_override=_get_report_transaction_sales(db, report),
+        )
+    }
 
 
 @router.put("/api/financial-reports/school-years/{school_year_id}/allocations")
@@ -632,11 +1195,28 @@ def replace_allocations(
     db.commit()
 
     school_year = _ensure_and_reload_school_year(db, school_year_id)
-    detail = _serialize_school_year_detail(school_year)
+    detail = _serialize_school_year_detail(db, school_year)
     return {
         "allocations": detail["allocations"],
         "allocation_percent_total": detail["dashboard"]["allocation_percent_total"],
     }
+
+
+@router.get("/api/financial-reports/school-years/{school_year_id}/export")
+def export_school_year_workbook(
+    school_year_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_financial_report_user),
+):
+    school_year = _ensure_and_reload_school_year(db, school_year_id)
+    export_path = _build_school_year_workbook_export(db, school_year)
+
+    return FileResponse(
+        export_path,
+        filename=f"CANTEEN-REPORT-{school_year.name}.xlsx",
+        media_type=EXCEL_MEDIA_TYPE,
+        background=BackgroundTask(_remove_file_if_exists, export_path),
+    )
 
 
 @router.get("/api/financial-reports/template")
@@ -650,7 +1230,7 @@ def download_report_template(
     return FileResponse(
         template_path,
         filename=TEMPLATE_FILENAME,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type=EXCEL_MEDIA_TYPE,
     )
 
 

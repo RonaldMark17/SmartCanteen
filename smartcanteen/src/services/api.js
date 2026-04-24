@@ -1072,6 +1072,8 @@ export const API = {
   updateFinancialAllocations: (schoolYearId, allocations) =>
     request('PUT', `/financial-reports/school-years/${schoolYearId}/allocations`, { allocations }),
   downloadFinancialReportTemplate: () => requestFile('/financial-reports/template'),
+  downloadFinancialSchoolYearWorkbook: (schoolYearId) =>
+    requestFile(`/financial-reports/school-years/${schoolYearId}/export`),
   backupFinancialDatabase: () => request('POST', '/financial-reports/backup'),
   seed: () => request('POST', '/seed'),
   health: () => request('GET', '/health'),

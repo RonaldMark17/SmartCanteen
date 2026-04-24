@@ -1,53 +1,14 @@
 import { useEffect, useState } from 'react';
 import { API } from '../services/api';
 import {
-  ArrowDownTrayIcon,
-  ArrowTrendingDownIcon,
-  ArrowTrendingUpIcon,
   BanknotesIcon,
   CalendarDaysIcon,
-  ChartBarIcon,
   ExclamationTriangleIcon,
-  MagnifyingGlassIcon,
   PlusIcon,
-  PresentationChartLineIcon,
   PrinterIcon,
   ScaleIcon,
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
-import {
-  BarElement,
-  CategoryScale,
-  Chart as ChartJS,
-  Filler,
-  Legend,
-  LineElement,
-  LinearScale,
-  PointElement,
-  Tooltip,
-} from 'chart.js';
-import { Bar, Line } from 'react-chartjs-2';
-
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler
-);
-
-const DEFAULT_EXPENSE_CATEGORIES = [
-  'Gas',
-  'Supplies',
-  'Helper Salary',
-  'Repairs',
-  'Utilities',
-  'Other Expenses',
-];
 
 function getStoredUser() {
   try {
@@ -64,18 +25,19 @@ function formatCurrency(value) {
   })}`;
 }
 
-function formatSignedCurrency(value) {
-  const numeric = Number(value || 0);
-  const prefix = numeric > 0 ? '+' : '';
-  return `${prefix}${formatCurrency(numeric)}`;
-}
-
 function formatPercent(value) {
   return `${Number(value || 0).toFixed(2)}%`;
 }
 
 function toInputValue(value) {
-  return Number(value || 0) === 0 ? '' : String(value);
+  const rawValue = value ?? 0;
+  const normalized = String(rawValue).trim();
+  if (!normalized) {
+    return '0';
+  }
+
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? String(rawValue) : '0';
 }
 
 function toMoney(value) {
@@ -110,13 +72,151 @@ function buildSchoolYearSuggestion(now = new Date()) {
   };
 }
 
-function isProtectedExpenseCategory(category) {
-  return DEFAULT_EXPENSE_CATEGORIES.some(
-    (defaultCategory) => defaultCategory.toLowerCase() === String(category || '').trim().toLowerCase()
+function getNextSchoolYearStartYear(schoolYears, fallbackStartYear) {
+  const latestEndYear = Math.max(
+    0,
+    ...(schoolYears || []).map((schoolYear) => {
+      const endYear = Number(schoolYear.end_year);
+      const startYear = Number(schoolYear.start_year);
+
+      if (Number.isFinite(endYear) && endYear > 0) {
+        return endYear;
+      }
+
+      if (Number.isFinite(startYear) && startYear > 0) {
+        return startYear + 1;
+      }
+
+      return 0;
+    })
+  );
+
+  return latestEndYear || fallbackStartYear;
+}
+
+const OPERATION_EXPENSE_FIELDS = [
+  {
+    key: 'transportation_freight',
+    label: 'Transportation/Freight',
+    category: 'Transportation/Freight',
+  },
+  {
+    key: 'gas',
+    label: 'Gas',
+    category: 'Gas',
+  },
+  {
+    key: 'supplies',
+    label: 'Supplies',
+    category: 'Supplies',
+  },
+  {
+    key: 'helpers',
+    label: 'Helpers',
+    category: 'Helpers',
+  },
+  {
+    key: 'repair',
+    label: 'Repair',
+    category: 'Repair',
+  },
+  {
+    key: 'purchase_from_looses_of_tools',
+    label: 'Purchase from the looses of tools',
+    category: 'Purchase from the looses of tools',
+  },
+  {
+    key: 'other_expenses',
+    label: 'Other expenses',
+    category: 'Other expenses',
+  },
+];
+
+const OPERATION_EXPENSE_KEY_BY_CATEGORY = Object.fromEntries(
+  OPERATION_EXPENSE_FIELDS.map((field) => [String(field.category || '').trim().toLowerCase(), field.key])
+);
+
+function createEmptyOperationExpenseDraft() {
+  const draft = {};
+  OPERATION_EXPENSE_FIELDS.forEach((field) => {
+    draft[field.key] = '';
+  });
+  return draft;
+}
+
+function buildOperationExpenseDraft(report) {
+  const draft = createEmptyOperationExpenseDraft();
+
+  (report?.expenses || []).forEach((expense) => {
+    const categoryKey = OPERATION_EXPENSE_KEY_BY_CATEGORY[String(expense.category || '').trim().toLowerCase()];
+    if (categoryKey) {
+      draft[categoryKey] = toInputValue(expense.amount);
+    }
+  });
+
+  return draft;
+}
+
+function sumOperationExpenseDraft(expenseDraft) {
+  return OPERATION_EXPENSE_FIELDS.reduce(
+    (total, field) => total + toMoney(expenseDraft?.[field.key]),
+    0
   );
 }
 
-function buildPrintableHtml(schoolYearName, report) {
+function getPreviousFundBalance(detail, selectedReport, categoryKey) {
+  const selectedMonthIndex = Number(selectedReport?.month_index ?? -1);
+
+  return (detail?.reports || [])
+    .filter((report) => Number(report.month_index ?? 0) < selectedMonthIndex)
+    .reduce((total, report) => {
+      const allocation = (report.allocations || []).find((item) => item.category_key === categoryKey);
+      return total + toMoney(allocation?.amount);
+    }, 0);
+}
+
+function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, netProfit) {
+  return (allocationDrafts || []).map((allocation) => {
+    const savedAllocation = (selectedReport?.allocations || []).find(
+      (item) => item.category_key === allocation.category_key
+    );
+    const percentage = toMoney(allocation.percentage ?? savedAllocation?.percentage);
+    const previousBalance = getPreviousFundBalance(detail, selectedReport, allocation.category_key);
+    const interest = 0;
+    const netIncome = (toMoney(netProfit) * percentage) / 100;
+    const expenses = 0;
+    const others = 0;
+    const totalCurrentExpenses = expenses;
+    const currentBalance = previousBalance + interest + netIncome - totalCurrentExpenses + others;
+
+    return {
+      category_key: allocation.category_key,
+      label: allocation.label || savedAllocation?.label || 'Fund',
+      percentage,
+      previousBalance,
+      interest,
+      netIncome,
+      expenses,
+      others,
+      totalCurrentExpenses,
+      currentBalance,
+      cashOnBank: currentBalance,
+    };
+  });
+}
+
+const FUND_MONITORING_ROWS = [
+  { key: 'previousBalance', label: 'Balance in Previous Month' },
+  { key: 'interest', label: 'Interest on the Bank' },
+  { key: 'netIncome', label: 'Net Income for the Month' },
+  { key: 'expenses', label: 'Expenses for the Month' },
+  { key: 'others', label: 'Others' },
+  { key: 'totalCurrentExpenses', label: 'Total Current Expenses' },
+  { key: 'currentBalance', label: 'Current Balance', emphasis: true },
+  { key: 'cashOnBank', label: 'Cash on Bank', emphasis: true },
+];
+
+function buildPrintableHtml(schoolYearName, report, fundMonitoringFunds = []) {
   const expenseRows = report.expenses
     .map(
       (expense) => `
@@ -139,6 +239,22 @@ function buildPrintableHtml(schoolYearName, report) {
       `
     )
     .join('');
+
+  const fundMonitoringHeader = fundMonitoringFunds
+    .map((fund) => `<th style="text-align:right;">${fund.label}<br><span>${formatPercent(fund.percentage)}</span></th>`)
+    .join('');
+  const fundMonitoringRows = FUND_MONITORING_ROWS.map(
+    (row) => `
+      <tr>
+        <td>${row.label}</td>
+        ${fundMonitoringFunds
+          .map(
+            (fund) => `<td style="text-align:right;${row.emphasis ? ' font-weight:700;' : ''}">${formatCurrency(fund[row.key])}</td>`
+          )
+          .join('')}
+      </tr>
+    `
+  ).join('');
 
   return `
     <html>
@@ -183,37 +299,27 @@ function buildPrintableHtml(schoolYearName, report) {
             <tbody>${allocationRows}</tbody>
           </table>
         </div>
+
+        <div class="section">
+          <h2>Fund Allocation and Bank Monitoring</h2>
+          <table>
+            <thead><tr><th>Particulars</th>${fundMonitoringHeader}</tr></thead>
+            <tbody>${fundMonitoringRows}</tbody>
+          </table>
+        </div>
       </body>
     </html>
   `;
 }
 
-function MetricCard({ title, value, detail, icon: Icon, tone = 'slate' }) {
-  const toneClasses = {
-    emerald: 'border-emerald-200 bg-emerald-50/80 text-emerald-700',
-    blue: 'border-blue-200 bg-blue-50/80 text-blue-700',
-    amber: 'border-amber-200 bg-amber-50/80 text-amber-700',
-    rose: 'border-rose-200 bg-rose-50/80 text-rose-700',
-    slate: 'border-slate-200 bg-white text-slate-700',
-  };
-
-  return (
-    <div className={`rounded-[20px] border p-5 shadow-sm ${toneClasses[tone] || toneClasses.slate}`}>
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-[11px] font-black uppercase tracking-widest">{title}</div>
-          <div className="mt-2 text-2xl font-black text-slate-950">{value}</div>
-          <div className="mt-2 text-sm text-slate-600">{detail}</div>
-        </div>
-        <div className="rounded-2xl bg-white/80 p-3 shadow-sm">
-          <Icon className="h-5 w-5" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FormField({ label, value, onChange, placeholder = '0.00', type = 'number', disabled = false }) {
+function FormField({
+  label,
+  value,
+  onChange,
+  placeholder = '0.00',
+  type = 'number',
+  disabled = false,
+}) {
   return (
     <label className="flex flex-col gap-2">
       <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">{label}</span>
@@ -254,33 +360,34 @@ export default function FinancialReports() {
   const [reportDraft, setReportDraft] = useState({
     beginning_cash_on_hand: '',
     current_sales: '',
-    other_income: '',
-    purchases: '',
-    inventory_used: '',
-    product_cost: '',
-    notes: '',
+    cost_of_sales: '',
   });
-  const [expenseDrafts, setExpenseDrafts] = useState([]);
+  const [expenseDraft, setExpenseDraft] = useState(() => createEmptyOperationExpenseDraft());
   const [allocationDrafts, setAllocationDrafts] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [createStartYear, setCreateStartYear] = useState(String(schoolYearSuggestion.startYear));
-  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+  const [exportingWorkbook, setExportingWorkbook] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
-  const [savingExpenses, setSavingExpenses] = useState(false);
   const [savingAllocations, setSavingAllocations] = useState(false);
   const [creatingSchoolYear, setCreatingSchoolYear] = useState(false);
-  const [backingUpDatabase, setBackingUpDatabase] = useState(false);
+  const nextSchoolYearStartYear = getNextSchoolYearStartYear(schoolYears, schoolYearSuggestion.startYear);
+  const nextSchoolYearLabel = `${nextSchoolYearStartYear}-${nextSchoolYearStartYear + 1}`;
 
   const selectedReport =
     detail?.reports?.find((report) => report.id === selectedReportId) || detail?.reports?.[0] || null;
-  const dashboard = detail?.dashboard || {};
-  const filteredReports = (detail?.reports || []).filter((report) => {
-    const haystack = `${report.month_label} ${report.month_name} ${detail?.school_year?.name || ''}`.toLowerCase();
-    return haystack.includes(searchTerm.trim().toLowerCase());
-  });
   const allocationPercentTotal = allocationDrafts.reduce(
     (total, allocation) => total + toMoney(allocation.percentage),
     0
+  );
+  const draftOperationExpensesTotal = sumOperationExpenseDraft(expenseDraft);
+  const draftGrossIncome = toMoney(reportDraft.current_sales) - toMoney(reportDraft.cost_of_sales);
+  const draftNetProfit = draftGrossIncome - draftOperationExpensesTotal;
+  const draftEndingCash = toMoney(reportDraft.beginning_cash_on_hand) + draftNetProfit;
+  const draftTotalExpenses = toMoney(reportDraft.cost_of_sales) + draftOperationExpensesTotal;
+  const draftExpensesExceedSales = draftTotalExpenses > toMoney(reportDraft.current_sales);
+  const fundMonitoringFunds = buildFundMonitoringFunds(
+    detail,
+    selectedReport,
+    allocationDrafts,
+    draftNetProfit
   );
 
   useEffect(() => {
@@ -293,22 +400,11 @@ export default function FinancialReports() {
     }
 
     setReportDraft({
-      beginning_cash_on_hand: toInputValue(selectedReport.beginning_cash_on_hand),
-      current_sales: toInputValue(selectedReport.current_sales),
-      other_income: toInputValue(selectedReport.other_income),
-      purchases: toInputValue(selectedReport.purchases),
-      inventory_used: toInputValue(selectedReport.inventory_used),
-      product_cost: toInputValue(selectedReport.product_cost),
-      notes: selectedReport.notes || '',
+      beginning_cash_on_hand: toInputValue(selectedReport.default_inputs?.beginning_cash_on_hand),
+      current_sales: toInputValue(selectedReport.default_inputs?.current_sales),
+      cost_of_sales: toInputValue(selectedReport.default_inputs?.cost_of_sales),
     });
-    setExpenseDrafts(
-      (selectedReport.expenses || []).map((expense, index) => ({
-        id: expense.id,
-        category: expense.category,
-        amount: toInputValue(expense.amount),
-        sort_order: expense.sort_order ?? index,
-      }))
-    );
+    setExpenseDraft(buildOperationExpenseDraft(selectedReport));
   }, [selectedReportId, detail]);
 
   useEffect(() => {
@@ -377,7 +473,7 @@ export default function FinancialReports() {
   async function handleCreateSchoolYear() {
     setCreatingSchoolYear(true);
     try {
-      const startYear = Number(createStartYear || 0);
+      const startYear = nextSchoolYearStartYear;
       const response = await API.createFinancialSchoolYear({
         start_year: startYear,
         end_year: startYear + 1,
@@ -392,18 +488,22 @@ export default function FinancialReports() {
     }
   }
 
-  async function handleDownloadTemplate() {
-    setDownloadingTemplate(true);
+  async function handleExportWorkbook() {
+    if (!selectedSchoolYearId) {
+      return;
+    }
+
+    setExportingWorkbook(true);
     try {
-      const file = await API.downloadFinancialReportTemplate();
+      const file = await API.downloadFinancialSchoolYearWorkbook(selectedSchoolYearId);
       if (file?.blob) {
         downloadBlob(file.blob, file.filename);
-        window.showToast?.('Exact Excel template downloaded.', 'success');
+        window.showToast?.('Excel report exported with saved values.', 'success');
       }
     } catch (error) {
-      window.showToast?.(error.message || 'Unable to download the Excel template.', 'error');
+      window.showToast?.(error.message || 'Unable to export the Excel report.', 'error');
     } finally {
-      setDownloadingTemplate(false);
+      setExportingWorkbook(false);
     }
   }
 
@@ -418,7 +518,7 @@ export default function FinancialReports() {
       return;
     }
 
-    printWindow.document.write(buildPrintableHtml(detail.school_year.name, selectedReport));
+    printWindow.document.write(buildPrintableHtml(detail.school_year.name, selectedReport, fundMonitoringFunds));
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
@@ -433,43 +533,25 @@ export default function FinancialReports() {
     try {
       await API.updateFinancialReport(selectedReport.id, {
         beginning_cash_on_hand: toMoney(reportDraft.beginning_cash_on_hand),
-        current_sales: toMoney(reportDraft.current_sales),
-        other_income: toMoney(reportDraft.other_income),
-        purchases: toMoney(reportDraft.purchases),
-        inventory_used: toMoney(reportDraft.inventory_used),
-        product_cost: toMoney(reportDraft.product_cost),
-        notes: reportDraft.notes || '',
+        other_income: 0,
+        purchases: 0,
+        inventory_used: 0,
+        product_cost: toMoney(reportDraft.cost_of_sales),
       });
+      await API.updateFinancialReportExpenses(
+        selectedReport.id,
+        OPERATION_EXPENSE_FIELDS.map((field, index) => ({
+          category: field.category,
+          amount: toMoney(expenseDraft[field.key]),
+          sort_order: index,
+        }))
+      );
       window.showToast?.(`${selectedReport.month_label} saved.`, 'success');
       await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
     } catch (error) {
       window.showToast?.(error.message || 'Unable to save report values.', 'error');
     } finally {
       setSavingReport(false);
-    }
-  }
-
-  async function handleSaveExpenses() {
-    if (!selectedReport?.id) {
-      return;
-    }
-
-    setSavingExpenses(true);
-    try {
-      await API.updateFinancialReportExpenses(
-        selectedReport.id,
-        expenseDrafts.map((expense, index) => ({
-          category: expense.category,
-          amount: toMoney(expense.amount),
-          sort_order: expense.sort_order ?? index,
-        }))
-      );
-      window.showToast?.('Operating expenses updated.', 'success');
-      await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
-    } catch (error) {
-      window.showToast?.(error.message || 'Unable to save expenses.', 'error');
-    } finally {
-      setSavingExpenses(false);
     }
   }
 
@@ -498,18 +580,6 @@ export default function FinancialReports() {
     }
   }
 
-  async function handleBackupDatabase() {
-    setBackingUpDatabase(true);
-    try {
-      const result = await API.backupFinancialDatabase();
-      window.showToast?.(result?.filename || 'Database backup created.', 'success');
-    } catch (error) {
-      window.showToast?.(error.message || 'Unable to create a backup.', 'error');
-    } finally {
-      setBackingUpDatabase(false);
-    }
-  }
-
   function updateReportDraft(field, value) {
     setReportDraft((currentDraft) => ({
       ...currentDraft,
@@ -517,32 +587,11 @@ export default function FinancialReports() {
     }));
   }
 
-  function updateExpenseDraft(index, field, value) {
-    setExpenseDrafts((currentExpenses) =>
-      currentExpenses.map((expense, currentIndex) =>
-        currentIndex === index
-          ? {
-              ...expense,
-              [field]: value,
-            }
-          : expense
-      )
-    );
-  }
-
-  function addExpenseRow() {
-    setExpenseDrafts((currentExpenses) => [
-      ...currentExpenses,
-      {
-        category: '',
-        amount: '',
-        sort_order: currentExpenses.length,
-      },
-    ]);
-  }
-
-  function removeExpenseRow(index) {
-    setExpenseDrafts((currentExpenses) => currentExpenses.filter((_, currentIndex) => currentIndex !== index));
+  function updateExpenseDraft(field, value) {
+    setExpenseDraft((currentDraft) => ({
+      ...currentDraft,
+      [field]: value,
+    }));
   }
 
   function updateAllocationDraft(index, field, value) {
@@ -557,45 +606,6 @@ export default function FinancialReports() {
       )
     );
   }
-
-  const barData = {
-    labels: (dashboard.monthly_sales_chart || []).map((item) => item.label),
-    datasets: [
-      {
-        label: 'Sales',
-        data: (dashboard.monthly_sales_chart || []).map((item) => item.sales),
-        backgroundColor: '#8b5cf6',
-        borderRadius: 10,
-      },
-      {
-        label: 'Expenses',
-        data: (dashboard.monthly_sales_chart || []).map((item) => item.expenses),
-        backgroundColor: '#f97316',
-        borderRadius: 10,
-      },
-    ],
-  };
-
-  const lineData = {
-    labels: (dashboard.monthly_profit_chart || []).map((item) => item.label),
-    datasets: [
-      {
-        label: 'Net Profit',
-        data: (dashboard.monthly_profit_chart || []).map((item) => item.net_profit),
-        borderColor: '#10b981',
-        backgroundColor: 'rgba(16, 185, 129, 0.12)',
-        tension: 0.35,
-        fill: true,
-      },
-      {
-        label: 'Ending Cash',
-        data: (dashboard.monthly_profit_chart || []).map((item) => item.ending_cash),
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59, 130, 246, 0.08)',
-        tension: 0.35,
-      },
-    ],
-  };
 
   if (schoolYearsLoading) {
     return (
@@ -615,7 +625,7 @@ export default function FinancialReports() {
             <div className="view-eyebrow">Financial Reports</div>
             <h1 className="view-title">Monthly Canteen Reporting</h1>
             <p className="view-subtitle">
-              Manage school-year reports from June to May, review performance trends, and download the exact Excel template used by the canteen office.
+              Create a school year, choose a month, and enter canteen report values.
             </p>
           </div>
         </div>
@@ -636,7 +646,7 @@ export default function FinancialReports() {
                 className="primary-action-button"
               >
                 <PlusIcon className="h-4 w-4" />
-                {creatingSchoolYear ? 'Creating...' : `Create ${createStartYear}-${Number(createStartYear) + 1}`}
+                {creatingSchoolYear ? 'Creating...' : `Create ${nextSchoolYearLabel}`}
               </button>
             ) : null
           }
@@ -646,24 +656,24 @@ export default function FinancialReports() {
   }
 
   return (
-    <div className="view-shell">
-      <div className="view-header">
+    <div className="view-shell overflow-x-hidden pr-0">
+      <div className="flex shrink-0 flex-col gap-4">
         <div>
           <div className="view-eyebrow">Financial Reports</div>
           <h1 className="view-title">Monthly Canteen Reporting</h1>
           <p className="view-subtitle">
-            Review school-year performance, capture monthly report details, and use the official Excel workbook template for downloads and exports.
+            Choose a month, enter the canteen report values, then save or export.
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 xl:items-end">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <label className="flex min-w-[220px] flex-col gap-2">
+        <div className="panel-card">
+          <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${isAdmin ? 'xl:grid-cols-[1fr_180px_170px_160px]' : 'xl:grid-cols-[1fr_170px_160px]'}`}>
+            <label className="flex min-w-0 flex-col gap-2">
               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">School Year</span>
               <select
                 value={selectedSchoolYearId || ''}
                 onChange={(event) => loadSchoolYearDetail(Number(event.target.value), selectedReportId)}
-                className="field-control"
+                className="field-control h-11 w-full"
               >
                 {schoolYears.map((schoolYear) => (
                   <option key={schoolYear.id} value={schoolYear.id}>
@@ -674,68 +684,34 @@ export default function FinancialReports() {
             </label>
 
             {isAdmin ? (
-              <div className="flex items-end gap-2">
-                <label className="flex min-w-[120px] flex-col gap-2">
-                  <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">New Start Year</span>
-                  <select
-                    value={createStartYear}
-                    onChange={(event) => setCreateStartYear(event.target.value)}
-                    className="field-control"
-                  >
-                    {Array.from({ length: 8 }, (_, index) => schoolYearSuggestion.startYear + 2 - index).map((year) => (
-                      <option key={year} value={year}>
-                        {year}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={handleCreateSchoolYear}
-                  disabled={creatingSchoolYear}
-                  className="action-button"
-                >
-                  <PlusIcon className="h-4 w-4" />
-                  {creatingSchoolYear ? 'Creating...' : 'New School Year'}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleCreateSchoolYear}
+                disabled={creatingSchoolYear}
+                className="action-button h-11 w-full self-end whitespace-nowrap"
+                title={`Create ${nextSchoolYearLabel}`}
+              >
+                <PlusIcon className="h-4 w-4" />
+                {creatingSchoolYear ? 'Creating...' : 'New School Year'}
+              </button>
             ) : null}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={handleDownloadTemplate}
-              disabled={downloadingTemplate}
-              className="primary-action-button"
-            >
-              <ArrowDownTrayIcon className="h-4 w-4" />
-              {downloadingTemplate ? 'Downloading...' : 'Download Report'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadTemplate}
-              disabled={downloadingTemplate}
-              className="action-button"
+              onClick={handleExportWorkbook}
+              disabled={exportingWorkbook || !selectedSchoolYearId}
+              className="primary-action-button h-11 w-full self-end whitespace-nowrap"
             >
               <BanknotesIcon className="h-4 w-4" />
-              {downloadingTemplate ? 'Preparing...' : 'Export Excel'}
+              {exportingWorkbook ? 'Preparing...' : 'Export Excel'}
             </button>
-            <button type="button" onClick={handlePrintReport} className="action-button">
+            <button
+              type="button"
+              onClick={handlePrintReport}
+              className="action-button h-11 w-full self-end whitespace-nowrap"
+            >
               <PrinterIcon className="h-4 w-4" />
               Print Report
             </button>
-            {isAdmin ? (
-              <button
-                type="button"
-                onClick={handleBackupDatabase}
-                disabled={backingUpDatabase}
-                className="action-button"
-              >
-                <ArrowDownTrayIcon className="h-4 w-4" />
-                {backingUpDatabase ? 'Backing Up...' : 'Backup Database'}
-              </button>
-            ) : null}
           </div>
         </div>
       </div>
@@ -748,157 +724,55 @@ export default function FinancialReports() {
 
       {!detailLoading && detail ? (
         <>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <MetricCard
-              title="Total Monthly Sales"
-              value={formatCurrency(dashboard.total_monthly_sales)}
-              detail={`${detail.school_year.name} sales captured across June to May`}
-              icon={BanknotesIcon}
-              tone="emerald"
-            />
-            <MetricCard
-              title="Total Expenses"
-              value={formatCurrency(dashboard.total_expenses)}
-              detail="Cost of sales plus operating expenses"
-              icon={WrenchScrewdriverIcon}
-              tone="amber"
-            />
-            <MetricCard
-              title="Net Profit"
-              value={formatCurrency(dashboard.net_profit)}
-              detail="Gross income, other income, and operating costs combined"
-              icon={ArrowTrendingUpIcon}
-              tone="blue"
-            />
-            <MetricCard
-              title="Best Month"
-              value={dashboard.best_month?.label || 'No data yet'}
-              detail={
-                dashboard.best_month
-                  ? `${formatCurrency(dashboard.best_month.net_profit)} net profit`
-                  : 'Sales and profit trends will appear once entries are saved'
-              }
-              icon={PresentationChartLineIcon}
-              tone="rose"
-            />
-            <MetricCard
-              title="Lowest Month"
-              value={dashboard.lowest_month?.label || 'No data yet'}
-              detail={
-                dashboard.lowest_month
-                  ? `${formatCurrency(dashboard.lowest_month.net_profit)} net profit`
-                  : 'The lowest-performing month will be highlighted here'
-              }
-              icon={ArrowTrendingDownIcon}
-              tone="slate"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-            <div className="panel-card xl:col-span-2">
+          <div className="space-y-4">
+            <section className="panel-card">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-black text-slate-900">Monthly Sales vs Expenses</h2>
-                  <p className="mt-1 text-sm text-slate-500">Bar chart view for the current school year.</p>
+                  <h2 className="text-lg font-black text-slate-900">Select Month</h2>
+                  <p className="mt-1 text-sm text-slate-500">{detail.school_year.name}</p>
                 </div>
-                <ChartBarIcon className="h-6 w-6 text-slate-400" />
+                <CalendarDaysIcon className="h-5 w-5 text-slate-400" />
               </div>
-              <div className="mt-5 h-[320px]">
-                <Bar
-                  data={barData}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                      legend: {
-                        position: 'bottom',
-                      },
-                    },
-                  }}
-                />
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
+                {detail.reports.map((report) => (
+                  <button
+                    key={report.id}
+                    type="button"
+                    onClick={() => setSelectedReportId(report.id)}
+                    className={`rounded-[14px] border px-3 py-2.5 text-left transition ${
+                      report.id === selectedReportId
+                        ? 'border-primary bg-primary/10 text-slate-950 shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-primary/30 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-sm font-black">{report.month_name}</div>
+                    <div className="mt-0.5 text-xs font-semibold text-slate-500">{report.calendar_year}</div>
+                  </button>
+                ))}
               </div>
-            </div>
+            </section>
 
-            <div className="panel-card">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900">Net Profit Trend</h2>
-                  <p className="mt-1 text-sm text-slate-500">Line chart for profit and ending cash.</p>
-                </div>
-                <PresentationChartLineIcon className="h-6 w-6 text-slate-400" />
-              </div>
-              <div className="mt-5 h-[320px]">
-                <Line
-                  data={lineData}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                      legend: {
-                        position: 'bottom',
-                      },
-                    },
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="panel-card">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-lg font-black text-slate-900">Monthly Tabs</h2>
-                <p className="mt-1 text-sm text-slate-500">Jump between June to May and save figures per month.</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
-                {detail.dashboard.warning_count > 0
-                  ? `${detail.dashboard.warning_count} month(s) currently have expenses above sales`
-                  : 'All months are currently within the expected expense-to-sales range'}
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
-              {detail.reports.map((report) => (
-                <button
-                  key={report.id}
-                  type="button"
-                  onClick={() => setSelectedReportId(report.id)}
-                  className={`rounded-2xl border px-4 py-3 text-left transition ${
-                    report.id === selectedReportId
-                      ? 'border-primary bg-primary/10 text-slate-900 shadow-sm'
-                      : 'border-slate-200 bg-white hover:border-primary/30 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="text-sm font-black">{report.month_name}</div>
-                  <div className="mt-1 text-xs font-semibold text-slate-500">{report.calendar_year}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {selectedReport ? (
-            <>
-              {selectedReport.expenses_exceed_sales ? (
-                <div className="rounded-[20px] border border-red-200 bg-red-50/80 px-5 py-4 text-red-700 shadow-sm">
-                  <div className="flex items-start gap-3">
-                    <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" />
-                    <div>
-                      <div className="text-sm font-black uppercase tracking-widest">Expenses exceed sales</div>
-                      <div className="mt-1 text-sm leading-6">
-                        {selectedReport.month_label} currently shows {formatCurrency(selectedReport.total_expenses)} in total expenses against{' '}
-                        {formatCurrency(selectedReport.current_sales + selectedReport.other_income)} in sales and other income.
+            {selectedReport ? (
+              <div className="space-y-5">
+                {draftExpensesExceedSales ? (
+                  <div className="rounded-[16px] border border-red-200 bg-red-50/80 px-4 py-3 text-red-700 shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" />
+                      <div>
+                        <div className="text-sm font-black">Expenses exceed sales</div>
+                        <div className="mt-1 text-sm">
+                          {formatCurrency(draftTotalExpenses)} expenses against {formatCurrency(toMoney(reportDraft.current_sales))} sales.
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
 
-              <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.35fr_0.85fr]">
-                <div className="panel-card">
+                <section className="panel-card">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h2 className="text-lg font-black text-slate-900">{selectedReport.month_label}</h2>
-                      <p className="mt-1 text-sm text-slate-500">Sales input and cost-of-sales section for this month.</p>
+                      <p className="mt-1 text-sm text-slate-500">Enter the monthly values, then save.</p>
                     </div>
                     <button
                       type="button"
@@ -911,302 +785,164 @@ export default function FinancialReports() {
                     </button>
                   </div>
 
-                  <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-                    <div className="space-y-4">
-                      <div>
-                        <div className="text-sm font-black uppercase tracking-widest text-slate-500">Sales Input</div>
-                        <div className="mt-4 grid grid-cols-1 gap-4">
-                          <FormField
-                            label="Beginning Cash on Hand"
-                            value={reportDraft.beginning_cash_on_hand}
-                            onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
-                          />
-                          <FormField
-                            label="Current Sales"
-                            value={reportDraft.current_sales}
-                            onChange={(event) => updateReportDraft('current_sales', event.target.value)}
-                          />
-                          <FormField
-                            label="Other Income"
-                            value={reportDraft.other_income}
-                            onChange={(event) => updateReportDraft('other_income', event.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div>
-                        <div className="text-sm font-black uppercase tracking-widest text-slate-500">Cost of Sales</div>
-                        <div className="mt-4 grid grid-cols-1 gap-4">
-                          <FormField
-                            label="Purchases"
-                            value={reportDraft.purchases}
-                            onChange={(event) => updateReportDraft('purchases', event.target.value)}
-                          />
-                          <FormField
-                            label="Inventory Used"
-                            value={reportDraft.inventory_used}
-                            onChange={(event) => updateReportDraft('inventory_used', event.target.value)}
-                          />
-                          <FormField
-                            label="Product Cost"
-                            value={reportDraft.product_cost}
-                            onChange={(event) => updateReportDraft('product_cost', event.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-5">
-                    <label className="flex flex-col gap-2">
-                      <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Notes</span>
-                      <textarea
-                        rows={4}
-                        value={reportDraft.notes}
-                        onChange={(event) => updateReportDraft('notes', event.target.value)}
-                        placeholder="Add monthly observations, reminders, or report notes..."
-                        className="field-control"
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                <div className="panel-card">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900">Auto Calculations</h2>
-                      <p className="mt-1 text-sm text-slate-500">Live numbers from the last saved version of this month.</p>
-                    </div>
-                    <CalendarDaysIcon className="h-6 w-6 text-slate-400" />
-                  </div>
-
-                  <div className="mt-5 space-y-3">
+                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                     {[
-                      ['Gross Income', selectedReport.gross_income],
-                      ['Net Profit', selectedReport.net_profit],
-                      ['Ending Cash', selectedReport.ending_cash],
-                      ['Cost of Sales', selectedReport.cost_of_sales],
-                      ['Operating Expenses', selectedReport.total_operating_expenses],
+                      ['Gross Income', draftGrossIncome],
+                      ['Operation Expenses', draftOperationExpensesTotal],
+                      ['Net Profit', draftNetProfit],
+                      ['Ending Cash', draftEndingCash],
                     ].map(([label, amount]) => (
-                      <div
-                        key={label}
-                        className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3"
-                      >
-                        <div className="text-sm font-bold text-slate-600">{label}</div>
-                        <div className="text-sm font-black text-slate-900">{formatCurrency(amount)}</div>
+                      <div key={label} className="rounded-[14px] bg-slate-50 px-4 py-3">
+                        <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">{label}</div>
+                        <div className="mt-1 text-base font-black text-slate-900">{formatCurrency(amount)}</div>
                       </div>
                     ))}
                   </div>
 
-                  <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">Month Comparison</div>
-                    {selectedReport.comparison ? (
-                      <div className="mt-3 space-y-3">
-                        <div className="text-sm text-slate-500">Compared with {selectedReport.comparison.previous_month_label}</div>
-                        <div className="grid grid-cols-1 gap-3">
-                          <div className="rounded-2xl bg-emerald-50/80 px-4 py-3 text-emerald-700">
-                            <div className="text-[11px] font-black uppercase tracking-widest">Sales Delta</div>
-                            <div className="mt-1 text-lg font-black">{formatSignedCurrency(selectedReport.comparison.sales_delta)}</div>
-                          </div>
-                          <div className="rounded-2xl bg-blue-50/80 px-4 py-3 text-blue-700">
-                            <div className="text-[11px] font-black uppercase tracking-widest">Net Profit Delta</div>
-                            <div className="mt-1 text-lg font-black">{formatSignedCurrency(selectedReport.comparison.net_profit_delta)}</div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-3 text-sm text-slate-500">Comparison will appear after at least two months have data.</div>
-                    )}
+                  <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <FormField
+                      label="Beginning Cash"
+                      value={reportDraft.beginning_cash_on_hand}
+                      onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
+                    />
+                    <FormField
+                      label="Current Sales"
+                      value={reportDraft.current_sales}
+                      disabled
+                    />
+                    <FormField
+                      label="Cost of Sales"
+                      value={reportDraft.cost_of_sales}
+                      onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
+                    />
                   </div>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-                <div className="panel-card">
+                  <div className="mt-6 rounded-[16px] border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-base font-black text-slate-900">Operation Expenses</h3>
+                        <p className="mt-1 text-sm text-slate-500">Fill only the rows that apply.</p>
+                      </div>
+                      <WrenchScrewdriverIcon className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {OPERATION_EXPENSE_FIELDS.map((field) => (
+                        <FormField
+                          key={field.key}
+                          label={field.label}
+                          value={expenseDraft[field.key]}
+                          onChange={(event) => updateExpenseDraft(field.key, event.target.value)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="panel-card">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h2 className="text-lg font-black text-slate-900">Operating Expenses</h2>
-                      <p className="mt-1 text-sm text-slate-500">Dynamic expense rows for gas, supplies, salary, repairs, utilities, and other monthly costs.</p>
+                      <h2 className="text-lg font-black text-slate-900">Fund Allocation</h2>
+                      <p className="mt-1 text-sm text-slate-500">Total rate: {formatPercent(allocationPercentTotal)}</p>
                     </div>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={addExpenseRow} className="action-button">
-                        <PlusIcon className="h-4 w-4" />
-                        Add Expense
-                      </button>
+                    {isAdmin ? (
                       <button
                         type="button"
-                        onClick={handleSaveExpenses}
-                        disabled={savingExpenses}
-                        className="primary-action-button"
+                        onClick={handleSaveAllocations}
+                        disabled={savingAllocations}
+                        className="action-button"
                       >
-                        <WrenchScrewdriverIcon className="h-4 w-4" />
-                        {savingExpenses ? 'Saving...' : 'Save Expenses'}
+                        <ScaleIcon className="h-4 w-4" />
+                        {savingAllocations ? 'Saving...' : 'Save Allocations'}
                       </button>
-                    </div>
+                    ) : null}
                   </div>
 
-                  <div className="mt-5 space-y-3">
-                    {expenseDrafts.map((expense, index) => (
-                      <div key={`${expense.id || 'new'}-${index}`} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-4 md:grid-cols-[1fr_180px_auto]">
-                        <input
-                          type="text"
-                          value={expense.category}
-                          onChange={(event) => updateExpenseDraft(index, 'category', event.target.value)}
-                          placeholder="Expense category"
-                          className="field-control"
-                        />
-                        <input
-                          type="number"
-                          value={expense.amount}
-                          onChange={(event) => updateExpenseDraft(index, 'amount', event.target.value)}
-                          placeholder="0.00"
-                          className="field-control"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeExpenseRow(index)}
-                          disabled={isProtectedExpenseCategory(expense.category)}
-                          className="action-button"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {allocationDrafts.map((allocation, index) => {
+                      const allocationAmount = selectedReport?.allocations?.find(
+                        (item) => item.category_key === allocation.category_key
+                      )?.amount;
 
-                <div className="panel-card">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900">Fund Allocation</h2>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {isAdmin
-                          ? 'Admins can edit the percentage split used for net profit allocation.'
-                          : 'Staff can review the allocation split configured by admins.'}
-                      </p>
-                    </div>
-                    <ScaleIcon className="h-6 w-6 text-slate-400" />
-                  </div>
-
-                  <div
-                    className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
-                      allocationPercentTotal === 100
-                        ? 'border-emerald-200 bg-emerald-50/80 text-emerald-700'
-                        : 'border-amber-200 bg-amber-50/80 text-amber-700'
-                    }`}
-                  >
-                    Total allocation rate: {formatPercent(allocationPercentTotal)}
-                  </div>
-
-                  <div className="mt-5 space-y-3">
-                    {allocationDrafts.map((allocation, index) => (
-                      <div key={allocation.id || allocation.category_key} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-                        <div className="flex flex-col gap-3">
+                      return (
+                        <div key={allocation.id || allocation.category_key} className="rounded-[16px] border border-slate-200 bg-slate-50/60 p-3">
                           <input
                             type="text"
                             value={allocation.label}
                             onChange={(event) => updateAllocationDraft(index, 'label', event.target.value)}
                             disabled={!isAdmin}
-                            className="field-control"
+                            className="field-control w-full"
                           />
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <div className="mt-2 grid grid-cols-[100px_1fr] gap-2">
                             <input
                               type="number"
                               value={allocation.percentage}
                               onChange={(event) => updateAllocationDraft(index, 'percentage', event.target.value)}
                               disabled={!isAdmin}
-                              className="field-control"
+                              className="field-control w-full"
                             />
-                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-900">
-                              {selectedReport?.allocations?.find((item) => item.category_key === allocation.category_key)?.amount
-                                ? formatCurrency(selectedReport.allocations.find((item) => item.category_key === allocation.category_key)?.amount)
-                                : formatCurrency(0)}
+                            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black text-slate-900">
+                              {formatCurrency(allocationAmount || 0)}
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="panel-card">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h2 className="text-lg font-black text-slate-900">Fund Allocation and Bank Monitoring</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Current balance = previous balance + interest + net income - expenses +/- others.
+                      </p>
+                    </div>
+                    <BanknotesIcon className="h-5 w-5 shrink-0 text-slate-400" />
                   </div>
 
-                  {isAdmin ? (
-                    <button
-                      type="button"
-                      onClick={handleSaveAllocations}
-                      disabled={savingAllocations}
-                      className="primary-action-button mt-5 w-full"
-                    >
-                      <ScaleIcon className="h-4 w-4" />
-                      {savingAllocations ? 'Saving...' : 'Save Allocations'}
-                    </button>
-                  ) : null}
-                </div>
+                  <div className="mt-5 overflow-x-auto rounded-[16px] border border-slate-200">
+                    <table className="min-w-[980px] w-full border-collapse text-left text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="sticky left-0 z-10 min-w-[220px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                            Particulars
+                          </th>
+                          {fundMonitoringFunds.map((fund) => (
+                            <th
+                              key={fund.category_key}
+                              className="min-w-[170px] border-b border-slate-200 px-4 py-3 text-right"
+                            >
+                              <div className="text-sm font-black text-slate-900">{fund.label}</div>
+                              <div className="mt-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                                {formatPercent(fund.percentage)}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {FUND_MONITORING_ROWS.map((row) => (
+                          <tr key={row.key}>
+                            <td className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-4 py-3 font-bold ${row.emphasis ? 'text-slate-950' : 'text-slate-600'}`}>
+                              {row.label}
+                            </td>
+                            {fundMonitoringFunds.map((fund) => (
+                              <td
+                                key={`${row.key}-${fund.category_key}`}
+                                className={`px-4 py-3 text-right ${row.emphasis ? 'font-black text-slate-950' : 'font-bold text-slate-700'}`}
+                              >
+                                {formatCurrency(fund[row.key])}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
               </div>
-            </>
-          ) : null}
-
-          <div className="panel-card">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-lg font-black text-slate-900">Search Past Reports</h2>
-                <p className="mt-1 text-sm text-slate-500">Search the monthly history and jump to the month you want to review.</p>
-              </div>
-              <label className="relative block w-full max-w-sm">
-                <MagnifyingGlassIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search month or school year"
-                  className="field-control pl-10"
-                />
-              </label>
-            </div>
-
-            <div className="mt-5 overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-4 py-3">Month</th>
-                    <th className="px-4 py-3">Sales</th>
-                    <th className="px-4 py-3">Expenses</th>
-                    <th className="px-4 py-3">Net Profit</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredReports.map((report) => (
-                    <tr key={report.id}>
-                      <td className="px-4 py-4">
-                        <div className="font-black text-slate-900">{report.month_label}</div>
-                        <div className="mt-1 text-xs font-semibold text-slate-500">{detail.school_year.name}</div>
-                      </td>
-                      <td className="px-4 py-4 font-bold text-slate-700">{formatCurrency(report.current_sales)}</td>
-                      <td className="px-4 py-4 font-bold text-slate-700">{formatCurrency(report.total_expenses)}</td>
-                      <td className="px-4 py-4 font-black text-slate-900">{formatCurrency(report.net_profit)}</td>
-                      <td className="px-4 py-4">
-                        <span
-                          className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ${
-                            report.expenses_exceed_sales
-                              ? 'bg-red-100 text-red-700'
-                              : 'bg-emerald-100 text-emerald-700'
-                          }`}
-                        >
-                          {report.expenses_exceed_sales ? 'Watchlist' : 'Healthy'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <button type="button" onClick={() => setSelectedReportId(report.id)} className="action-button">
-                          Open
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            ) : null}
           </div>
         </>
       ) : null}

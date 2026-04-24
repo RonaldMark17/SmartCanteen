@@ -5,7 +5,7 @@ import random
 
 from sqlalchemy.orm import Session
 
-from . import auth, models
+from . import auth, financial_reports, models
 from .time_utils import PH_TIMEZONE, get_ph_today
 
 
@@ -475,6 +475,7 @@ def _create_transactions(db: Session, products_by_name, cashier_user, staff_user
 
 
 def _clear_demo_tables(db: Session):
+    financial_reports.clear_financial_reporting_tables(db)
     db.query(models.TransactionItem).delete(synchronize_session=False)
     db.query(models.Transaction).delete(synchronize_session=False)
     db.query(models.AuditLog).delete(synchronize_session=False)
@@ -490,6 +491,13 @@ def seed_demo_canteen_database(db: Session, *, reset: bool = False):
     if reset:
         _clear_demo_tables(db)
     elif db.query(models.User).count() > 0:
+        financial_seed = financial_reports.seed_demo_financial_reporting(db, reset=False)
+        if financial_seed.get("created") or financial_seed.get("months_populated"):
+            db.commit()
+            return {
+                "message": financial_seed["message"],
+                "financial_reports": financial_seed,
+            }
         return {
             "message": "Already seeded - nothing changed.",
             "hint": "Use reset_demo=true to rebuild the canteen demo dataset.",
@@ -596,6 +604,7 @@ def seed_demo_canteen_database(db: Session, *, reset: bool = False):
         ),
     ])
 
+    financial_seed = financial_reports.seed_demo_financial_reporting(db, reset=False)
     db.commit()
 
     return {
@@ -606,6 +615,7 @@ def seed_demo_canteen_database(db: Session, *, reset: bool = False):
         "transaction_items": items_created,
         "weather_days": weather_rows,
         "school_event_days": event_rows,
+        "financial_reports": financial_seed,
         "credentials": {
             "admin": "admin / admin123",
             "cashier": "cashier / cashier123",
