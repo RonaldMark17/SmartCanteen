@@ -1,13 +1,45 @@
-const SHELL_CACHE = 'smartcanteen-shell-v10';
-const SHELL_ASSETS = ['/', '/index.html', '/favicon.svg', '/icons.svg'];
+const LOCAL_DEV_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const IS_LOCAL_DEV = LOCAL_DEV_HOSTS.has(self.location.hostname);
+const SHELL_CACHE = 'smartcanteen-shell-v11';
+const SHELL_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/favicon.svg',
+  '/pwa-icon-192.png',
+  '/pwa-icon-512.png',
+  '/apple-touch-icon.png',
+  '/icons.svg',
+];
 
 self.addEventListener('install', (event) => {
+  if (IS_LOCAL_DEV) {
+    self.skipWaiting();
+    return;
+  }
+
   event.waitUntil(
     caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS)).then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', (event) => {
+  if (IS_LOCAL_DEV) {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys
+              .filter((key) => key.startsWith('smartcanteen-'))
+              .map((key) => caches.delete(key))
+          )
+        )
+        .then(() => self.clients.claim())
+    );
+    return;
+  }
+
   event.waitUntil(
     caches
       .keys()
@@ -41,6 +73,14 @@ function isShellRequest(request) {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+
+  if (IS_LOCAL_DEV) {
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.origin === self.location.origin) {
+      event.respondWith(fetch(request));
+    }
+    return;
+  }
 
   if (request.method !== 'GET' || !isShellRequest(request)) {
     return;
@@ -89,8 +129,8 @@ self.addEventListener('message', (event) => {
     body: payload.body || '',
     tag: payload.tag || 'smartcanteen-alert',
     data: payload.data || {},
-    icon: '/favicon.svg',
-    badge: '/favicon.svg',
+    icon: '/pwa-icon-192.png',
+    badge: '/pwa-icon-192.png',
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
