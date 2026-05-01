@@ -152,8 +152,19 @@ class FinancialAllocationInput(BaseModel):
     category_key: str
     label: str
     percentage: float
+    opening_balance: float = 0.0
     sort_order: int = 0
 
 
 class FinancialAllocationsUpdate(BaseModel):
     allocations: List[FinancialAllocationInput]
+
+
+class FinancialFundMonitoringInput(BaseModel):
+    category_key: str
+    expenses: float = 0.0
+    others: float = 0.0
+
+
+class FinancialFundMonitoringUpdate(BaseModel):
+    entries: List[FinancialFundMonitoringInput]

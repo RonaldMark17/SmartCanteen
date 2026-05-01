@@ -30,6 +30,7 @@ import backend.models as models
 import backend.schemas as schemas
 import backend.auth as auth
 import backend.analytics_helpers as analytics_helpers
+import backend.financial_reports as financial_reports
 import backend.ml_predictor as ml_predictor
 from backend.demo_data import seed_demo_canteen_database
 from backend.database import engine, get_db, Base
@@ -374,8 +375,35 @@ def _ensure_analytics_indexes():
         print(f"Analytics index setup skipped: {exc}")
 
 
+def _ensure_financial_reporting_columns():
+    column_statements = [
+        ("opening_balance", "ALTER TABLE allocations ADD COLUMN opening_balance FLOAT DEFAULT 0.0"),
+    ]
+
+    try:
+        with engine.begin() as connection:
+            existing_columns = {
+                row["name"]
+                for row in connection.execute(text("PRAGMA table_info(allocations)")).mappings()
+            }
+            for column_name, statement in column_statements:
+                if column_name not in existing_columns:
+                    connection.execute(text(statement))
+    except Exception:
+        try:
+            with engine.begin() as connection:
+                for _column_name, statement in column_statements:
+                    try:
+                        connection.execute(text(statement))
+                    except Exception:
+                        pass
+        except Exception as exc:
+            print(f"Financial reporting column setup skipped: {exc}")
+
+
 _ensure_user_authenticator_columns()
 _ensure_analytics_indexes()
+_ensure_financial_reporting_columns()
 
 app = FastAPI(
     title="SmartCanteen AI",
@@ -413,6 +441,8 @@ app.add_middleware(
     CORSMiddleware,
     **cors_options,
 )
+
+app.include_router(financial_reports.router)
 
 # Serve the PWA frontend
 BACKEND_DIR = os.path.abspath(os.path.dirname(__file__))

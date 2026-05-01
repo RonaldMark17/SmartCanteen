@@ -75,10 +75,6 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
 
   if (IS_LOCAL_DEV) {
-    const url = new URL(request.url);
-    if (request.method === 'GET' && url.origin === self.location.origin) {
-      event.respondWith(fetch(request));
-    }
     return;
   }
 

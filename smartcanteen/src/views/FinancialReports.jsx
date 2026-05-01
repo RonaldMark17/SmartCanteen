@@ -3,10 +3,13 @@ import { API } from '../services/api';
 import {
   BanknotesIcon,
   CalendarDaysIcon,
+  CheckIcon,
   ExclamationTriangleIcon,
+  PencilSquareIcon,
   PlusIcon,
   PrinterIcon,
   ScaleIcon,
+  TrashIcon,
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 
@@ -164,28 +167,41 @@ function sumOperationExpenseDraft(expenseDraft) {
   );
 }
 
-function getPreviousFundBalance(detail, selectedReport, categoryKey) {
+function getPreviousFundBalance(detail, selectedReport, categoryKey, openingBalance = 0) {
   const selectedMonthIndex = Number(selectedReport?.month_index ?? -1);
 
-  return (detail?.reports || [])
+  return toMoney(openingBalance) + (detail?.reports || [])
     .filter((report) => Number(report.month_index ?? 0) < selectedMonthIndex)
     .reduce((total, report) => {
       const allocation = (report.allocations || []).find((item) => item.category_key === categoryKey);
-      return total + toMoney(allocation?.amount);
+      return (
+        total +
+        toMoney(allocation?.amount) -
+        toMoney(allocation?.fund_expenses) +
+        toMoney(allocation?.fund_others)
+      );
     }, 0);
 }
 
-function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, netProfit) {
+function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, fundExpenseDrafts, netProfit) {
   return (allocationDrafts || []).map((allocation) => {
     const savedAllocation = (selectedReport?.allocations || []).find(
       (item) => item.category_key === allocation.category_key
     );
     const percentage = toMoney(allocation.percentage ?? savedAllocation?.percentage);
-    const previousBalance = getPreviousFundBalance(detail, selectedReport, allocation.category_key);
+    const openingBalance = toMoney(allocation.opening_balance ?? savedAllocation?.opening_balance);
+    const previousBalance = getPreviousFundBalance(
+      detail,
+      selectedReport,
+      allocation.category_key,
+      openingBalance
+    );
     const interest = 0;
     const netIncome = (toMoney(netProfit) * percentage) / 100;
-    const expenses = 0;
-    const others = 0;
+    const expenses = toMoney(
+      fundExpenseDrafts?.[allocation.category_key] ?? savedAllocation?.fund_expenses
+    );
+    const others = toMoney(savedAllocation?.fund_others);
     const totalCurrentExpenses = expenses;
     const currentBalance = previousBalance + interest + netIncome - totalCurrentExpenses + others;
 
@@ -193,6 +209,7 @@ function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, netP
       category_key: allocation.category_key,
       label: allocation.label || savedAllocation?.label || 'Fund',
       percentage,
+      openingBalance,
       previousBalance,
       interest,
       netIncome,
@@ -206,15 +223,19 @@ function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, netP
 }
 
 const FUND_MONITORING_ROWS = [
-  { key: 'previousBalance', label: 'Balance in Previous Month' },
+  { key: 'previousBalance', label: 'Balance in Previous Month', editableForJuneOpeningBalance: true },
   { key: 'interest', label: 'Interest on the Bank' },
   { key: 'netIncome', label: 'Net Income for the Month' },
-  { key: 'expenses', label: 'Expenses for the Month' },
+  { key: 'expenses', label: 'Expenses for the Month', editableFundExpense: true },
   { key: 'others', label: 'Others' },
   { key: 'totalCurrentExpenses', label: 'Total Current Expenses' },
   { key: 'currentBalance', label: 'Current Balance', emphasis: true },
-  { key: 'cashOnBank', label: 'Cash on Bank', emphasis: true },
+  { key: 'cashOnBank', label: 'Cash on Bank', emphasis: true, displayValue: '-' },
 ];
+
+function formatFundMonitoringValue(row, fund) {
+  return row.displayValue ?? formatCurrency(fund[row.key]);
+}
 
 function buildPrintableHtml(schoolYearName, report, fundMonitoringFunds = []) {
   const expenseRows = report.expenses
@@ -223,18 +244,6 @@ function buildPrintableHtml(schoolYearName, report, fundMonitoringFunds = []) {
         <tr>
           <td>${expense.category}</td>
           <td style="text-align:right;">${formatCurrency(expense.amount)}</td>
-        </tr>
-      `
-    )
-    .join('');
-
-  const allocationRows = report.allocations
-    .map(
-      (allocation) => `
-        <tr>
-          <td>${allocation.label}</td>
-          <td style="text-align:right;">${formatPercent(allocation.percentage)}</td>
-          <td style="text-align:right;">${formatCurrency(allocation.amount)}</td>
         </tr>
       `
     )
@@ -249,7 +258,7 @@ function buildPrintableHtml(schoolYearName, report, fundMonitoringFunds = []) {
         <td>${row.label}</td>
         ${fundMonitoringFunds
           .map(
-            (fund) => `<td style="text-align:right;${row.emphasis ? ' font-weight:700;' : ''}">${formatCurrency(fund[row.key])}</td>`
+            (fund) => `<td style="text-align:right;${row.emphasis ? ' font-weight:700;' : ''}">${formatFundMonitoringValue(row, fund)}</td>`
           )
           .join('')}
       </tr>
@@ -289,14 +298,6 @@ function buildPrintableHtml(schoolYearName, report, fundMonitoringFunds = []) {
           <table>
             <thead><tr><th>Category</th><th>Amount</th></tr></thead>
             <tbody>${expenseRows}</tbody>
-          </table>
-        </div>
-
-        <div class="section">
-          <h2>Fund Allocation</h2>
-          <table>
-            <thead><tr><th>Fund</th><th>Rate</th><th>Amount</th></tr></thead>
-            <tbody>${allocationRows}</tbody>
           </table>
         </div>
 
@@ -363,20 +364,20 @@ export default function FinancialReports() {
     cost_of_sales: '',
   });
   const [expenseDraft, setExpenseDraft] = useState(() => createEmptyOperationExpenseDraft());
+  const [fundExpenseDrafts, setFundExpenseDrafts] = useState({});
   const [allocationDrafts, setAllocationDrafts] = useState([]);
   const [exportingWorkbook, setExportingWorkbook] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
-  const [savingAllocations, setSavingAllocations] = useState(false);
+  const [savingFundMonitoring, setSavingFundMonitoring] = useState(false);
+  const [fundMonitoringEditing, setFundMonitoringEditing] = useState(false);
   const [creatingSchoolYear, setCreatingSchoolYear] = useState(false);
+  const [deletingSchoolYear, setDeletingSchoolYear] = useState(false);
   const nextSchoolYearStartYear = getNextSchoolYearStartYear(schoolYears, schoolYearSuggestion.startYear);
   const nextSchoolYearLabel = `${nextSchoolYearStartYear}-${nextSchoolYearStartYear + 1}`;
 
   const selectedReport =
     detail?.reports?.find((report) => report.id === selectedReportId) || detail?.reports?.[0] || null;
-  const allocationPercentTotal = allocationDrafts.reduce(
-    (total, allocation) => total + toMoney(allocation.percentage),
-    0
-  );
+  const isJuneReport = Number(selectedReport?.month_index ?? -1) === 0;
   const draftOperationExpensesTotal = sumOperationExpenseDraft(expenseDraft);
   const draftGrossIncome = toMoney(reportDraft.current_sales) - toMoney(reportDraft.cost_of_sales);
   const draftNetProfit = draftGrossIncome - draftOperationExpensesTotal;
@@ -387,12 +388,17 @@ export default function FinancialReports() {
     detail,
     selectedReport,
     allocationDrafts,
+    fundExpenseDrafts,
     draftNetProfit
   );
 
   useEffect(() => {
     loadSchoolYears();
   }, []);
+
+  useEffect(() => {
+    setFundMonitoringEditing(false);
+  }, [selectedReportId]);
 
   useEffect(() => {
     if (!selectedReport) {
@@ -405,6 +411,14 @@ export default function FinancialReports() {
       cost_of_sales: toInputValue(selectedReport.default_inputs?.cost_of_sales),
     });
     setExpenseDraft(buildOperationExpenseDraft(selectedReport));
+    setFundExpenseDrafts(
+      Object.fromEntries(
+        (selectedReport.allocations || []).map((allocation) => [
+          allocation.category_key,
+          toInputValue(allocation.fund_expenses),
+        ])
+      )
+    );
   }, [selectedReportId, detail]);
 
   useEffect(() => {
@@ -414,6 +428,7 @@ export default function FinancialReports() {
         category_key: allocation.category_key,
         label: allocation.label,
         percentage: toInputValue(allocation.percentage),
+        opening_balance: toInputValue(allocation.opening_balance),
         sort_order: allocation.sort_order ?? index,
       }))
     );
@@ -423,13 +438,16 @@ export default function FinancialReports() {
     setSchoolYearsLoading(true);
     try {
       const schoolYearList = await API.getFinancialSchoolYears();
-      setSchoolYears(Array.isArray(schoolYearList) ? schoolYearList : []);
+      const normalizedSchoolYears = Array.isArray(schoolYearList) ? schoolYearList : [];
+      const findSchoolYearId = (schoolYearId) =>
+        normalizedSchoolYears.find((schoolYear) => Number(schoolYear.id) === Number(schoolYearId))?.id || null;
+      setSchoolYears(normalizedSchoolYears);
 
       const nextSchoolYearId =
-        preferredSchoolYearId ||
-        selectedSchoolYearId ||
-        schoolYearList?.find((schoolYear) => schoolYear.is_active)?.id ||
-        schoolYearList?.[0]?.id ||
+        findSchoolYearId(preferredSchoolYearId) ||
+        findSchoolYearId(selectedSchoolYearId) ||
+        normalizedSchoolYears.find((schoolYear) => schoolYear.is_active)?.id ||
+        normalizedSchoolYears[0]?.id ||
         null;
 
       setSelectedSchoolYearId(nextSchoolYearId);
@@ -470,6 +488,38 @@ export default function FinancialReports() {
     }
   }
 
+  async function handleDeleteSchoolYear() {
+    if (!selectedSchoolYearId || !isAdmin) {
+      return;
+    }
+
+    const selectedSchoolYearName =
+      detail?.school_year?.name ||
+      schoolYears.find((schoolYear) => Number(schoolYear.id) === Number(selectedSchoolYearId))?.name ||
+      'the selected school year';
+
+    const confirmed = window.confirm(
+      `Remove school year ${selectedSchoolYearName}? This will delete its monthly reports, expenses, fund monitoring entries, and allocations.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingSchoolYear(true);
+    try {
+      const response = await API.deleteFinancialSchoolYear(selectedSchoolYearId);
+      window.showToast?.(response?.message || `School year ${selectedSchoolYearName} removed.`, 'success');
+      setSelectedSchoolYearId(null);
+      setSelectedReportId(null);
+      setDetail(null);
+      await loadSchoolYears(response?.active_school_year_id || null);
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to remove the school year.', 'error');
+    } finally {
+      setDeletingSchoolYear(false);
+    }
+  }
+
   async function handleCreateSchoolYear() {
     setCreatingSchoolYear(true);
     try {
@@ -495,10 +545,10 @@ export default function FinancialReports() {
 
     setExportingWorkbook(true);
     try {
-      const file = await API.downloadFinancialSchoolYearWorkbook(selectedSchoolYearId);
+      const file = await API.downloadFinancialSchoolYearWorkbook(selectedSchoolYearId, selectedReportId);
       if (file?.blob) {
         downloadBlob(file.blob, file.filename);
-        window.showToast?.('Excel report exported with saved values.', 'success');
+        window.showToast?.(`Excel report exported at ${selectedReport?.month_label || 'the selected month'}.`, 'success');
       }
     } catch (error) {
       window.showToast?.(error.message || 'Unable to export the Excel report.', 'error');
@@ -533,6 +583,7 @@ export default function FinancialReports() {
     try {
       await API.updateFinancialReport(selectedReport.id, {
         beginning_cash_on_hand: toMoney(reportDraft.beginning_cash_on_hand),
+        current_sales: toMoney(reportDraft.current_sales),
         other_income: 0,
         purchases: 0,
         inventory_used: 0,
@@ -546,6 +597,14 @@ export default function FinancialReports() {
           sort_order: index,
         }))
       );
+      await API.updateFinancialFundMonitoring(
+        selectedReport.id,
+        allocationDrafts.map((allocation) => ({
+          category_key: allocation.category_key,
+          expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
+          others: 0,
+        }))
+      );
       window.showToast?.(`${selectedReport.month_label} saved.`, 'success');
       await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
     } catch (error) {
@@ -555,28 +614,42 @@ export default function FinancialReports() {
     }
   }
 
-  async function handleSaveAllocations() {
-    if (!detail?.school_year?.id || !isAdmin) {
+  async function handleSaveFundMonitoring() {
+    if (!selectedReport?.id) {
       return;
     }
 
-    setSavingAllocations(true);
+    setSavingFundMonitoring(true);
     try {
-      await API.updateFinancialAllocations(
-        detail.school_year.id,
-        allocationDrafts.map((allocation, index) => ({
+      if (isJuneReport && isAdmin && detail?.school_year?.id) {
+        await API.updateFinancialAllocations(
+          detail.school_year.id,
+          allocationDrafts.map((allocation, index) => ({
+            category_key: allocation.category_key,
+            label: allocation.label,
+            percentage: toMoney(allocation.percentage),
+            opening_balance: toMoney(allocation.opening_balance),
+            sort_order: allocation.sort_order ?? index,
+          }))
+        );
+      }
+
+      await API.updateFinancialFundMonitoring(
+        selectedReport.id,
+        allocationDrafts.map((allocation) => ({
           category_key: allocation.category_key,
-          label: allocation.label,
-          percentage: toMoney(allocation.percentage),
-          sort_order: allocation.sort_order ?? index,
+          expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
+          others: 0,
         }))
       );
-      window.showToast?.('Fund allocation percentages updated.', 'success');
-      await loadSchoolYearDetail(detail.school_year.id, selectedReportId);
+
+      window.showToast?.('Fund monitoring saved.', 'success');
+      setFundMonitoringEditing(false);
+      await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
     } catch (error) {
-      window.showToast?.(error.message || 'Unable to save allocations.', 'error');
+      window.showToast?.(error.message || 'Unable to save fund monitoring values.', 'error');
     } finally {
-      setSavingAllocations(false);
+      setSavingFundMonitoring(false);
     }
   }
 
@@ -591,6 +664,13 @@ export default function FinancialReports() {
     setExpenseDraft((currentDraft) => ({
       ...currentDraft,
       [field]: value,
+    }));
+  }
+
+  function updateFundExpenseDraft(categoryKey, value) {
+    setFundExpenseDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [categoryKey]: value,
     }));
   }
 
@@ -667,7 +747,7 @@ export default function FinancialReports() {
         </div>
 
         <div className="panel-card">
-          <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${isAdmin ? 'xl:grid-cols-[1fr_180px_170px_160px]' : 'xl:grid-cols-[1fr_170px_160px]'}`}>
+          <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${isAdmin ? 'xl:grid-cols-[minmax(0,1fr)_170px_160px_170px_150px]' : 'xl:grid-cols-[1fr_170px_160px]'}`}>
             <label className="flex min-w-0 flex-col gap-2">
               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">School Year</span>
               <select
@@ -712,6 +792,18 @@ export default function FinancialReports() {
               <PrinterIcon className="h-4 w-4" />
               Print Report
             </button>
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={handleDeleteSchoolYear}
+                disabled={deletingSchoolYear || detailLoading || !selectedSchoolYearId}
+                className="action-button h-11 w-full self-end whitespace-nowrap border-red-200 text-red-700 hover:border-red-300 hover:bg-red-50"
+                title="Remove selected school year"
+              >
+                <TrashIcon className="h-4 w-4" />
+                {deletingSchoolYear ? 'Removing...' : 'Remove Year'}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -808,7 +900,7 @@ export default function FinancialReports() {
                     <FormField
                       label="Current Sales"
                       value={reportDraft.current_sales}
-                      disabled
+                      onChange={(event) => updateReportDraft('current_sales', event.target.value)}
                     />
                     <FormField
                       label="Cost of Sales"
@@ -839,58 +931,6 @@ export default function FinancialReports() {
                 </section>
 
                 <section className="panel-card">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900">Fund Allocation</h2>
-                      <p className="mt-1 text-sm text-slate-500">Total rate: {formatPercent(allocationPercentTotal)}</p>
-                    </div>
-                    {isAdmin ? (
-                      <button
-                        type="button"
-                        onClick={handleSaveAllocations}
-                        disabled={savingAllocations}
-                        className="action-button"
-                      >
-                        <ScaleIcon className="h-4 w-4" />
-                        {savingAllocations ? 'Saving...' : 'Save Allocations'}
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {allocationDrafts.map((allocation, index) => {
-                      const allocationAmount = selectedReport?.allocations?.find(
-                        (item) => item.category_key === allocation.category_key
-                      )?.amount;
-
-                      return (
-                        <div key={allocation.id || allocation.category_key} className="rounded-[16px] border border-slate-200 bg-slate-50/60 p-3">
-                          <input
-                            type="text"
-                            value={allocation.label}
-                            onChange={(event) => updateAllocationDraft(index, 'label', event.target.value)}
-                            disabled={!isAdmin}
-                            className="field-control w-full"
-                          />
-                          <div className="mt-2 grid grid-cols-[100px_1fr] gap-2">
-                            <input
-                              type="number"
-                              value={allocation.percentage}
-                              onChange={(event) => updateAllocationDraft(index, 'percentage', event.target.value)}
-                              disabled={!isAdmin}
-                              className="field-control w-full"
-                            />
-                            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black text-slate-900">
-                              {formatCurrency(allocationAmount || 0)}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                <section className="panel-card">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <h2 className="text-lg font-black text-slate-900">Fund Allocation and Bank Monitoring</h2>
@@ -898,22 +938,43 @@ export default function FinancialReports() {
                         Current balance = previous balance + interest + net income - expenses +/- others.
                       </p>
                     </div>
-                    <BanknotesIcon className="h-5 w-5 shrink-0 text-slate-400" />
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFundMonitoringEditing(true)}
+                        disabled={fundMonitoringEditing || savingFundMonitoring}
+                        className="action-button"
+                      >
+                        <PencilSquareIcon className="h-4 w-4" />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveFundMonitoring}
+                        disabled={!fundMonitoringEditing || savingFundMonitoring}
+                        className="primary-action-button"
+                      >
+                        <CheckIcon className="h-4 w-4" />
+                        {savingFundMonitoring ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="mt-5 overflow-x-auto rounded-[16px] border border-slate-200">
-                    <table className="min-w-[980px] w-full border-collapse text-left text-sm">
+                  <div className="mt-5 overflow-hidden rounded-[16px] border border-slate-200 bg-white p-2 sm:p-3">
+                    <table className="w-full table-fixed border-collapse text-left text-[11px] sm:text-xs xl:text-sm">
                       <thead className="bg-slate-50">
                         <tr>
-                          <th className="sticky left-0 z-10 min-w-[220px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                          <th className="w-[18%] border-b border-r border-slate-200 bg-slate-50 px-3 py-4 text-[10px] font-black uppercase tracking-widest text-slate-500 sm:px-4">
                             Particulars
                           </th>
                           {fundMonitoringFunds.map((fund) => (
                             <th
                               key={fund.category_key}
-                              className="min-w-[170px] border-b border-slate-200 px-4 py-3 text-right"
+                              className="border-b border-slate-200 px-2.5 py-4 text-right align-top sm:px-3"
                             >
-                              <div className="text-sm font-black text-slate-900">{fund.label}</div>
+                              <div className="break-words text-[10px] font-black leading-4 text-slate-900 sm:text-xs xl:text-sm">
+                                {fund.label}
+                              </div>
                               <div className="mt-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
                                 {formatPercent(fund.percentage)}
                               </div>
@@ -924,17 +985,50 @@ export default function FinancialReports() {
                       <tbody className="divide-y divide-slate-100 bg-white">
                         {FUND_MONITORING_ROWS.map((row) => (
                           <tr key={row.key}>
-                            <td className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-4 py-3 font-bold ${row.emphasis ? 'text-slate-950' : 'text-slate-600'}`}>
+                            <td className={`border-r border-slate-200 bg-white px-3 py-4 font-bold leading-4 sm:px-4 ${row.emphasis ? 'text-slate-950' : 'text-slate-600'}`}>
                               {row.label}
                             </td>
-                            {fundMonitoringFunds.map((fund) => (
-                              <td
-                                key={`${row.key}-${fund.category_key}`}
-                                className={`px-4 py-3 text-right ${row.emphasis ? 'font-black text-slate-950' : 'font-bold text-slate-700'}`}
-                              >
-                                {formatCurrency(fund[row.key])}
-                              </td>
-                            ))}
+                            {fundMonitoringFunds.map((fund) => {
+                              const canEditJuneOpeningBalance =
+                                row.editableForJuneOpeningBalance && isJuneReport && isAdmin && fundMonitoringEditing;
+                              const canEditFundExpense = row.editableFundExpense && fundMonitoringEditing;
+
+                              return (
+                                <td
+                                  key={`${row.key}-${fund.category_key}`}
+                                  className={`break-words px-2.5 py-4 text-right leading-4 [overflow-wrap:anywhere] sm:px-3 ${row.emphasis ? 'font-black text-slate-950' : 'font-bold text-slate-700'}`}
+                                >
+                                  {canEditJuneOpeningBalance ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={allocationDrafts.find((allocation) => allocation.category_key === fund.category_key)?.opening_balance ?? '0'}
+                                      onChange={(event) => {
+                                        const allocationIndex = allocationDrafts.findIndex(
+                                          (allocation) => allocation.category_key === fund.category_key
+                                        );
+                                        if (allocationIndex >= 0) {
+                                          updateAllocationDraft(allocationIndex, 'opening_balance', event.target.value);
+                                        }
+                                      }}
+                                      className="field-control h-9 w-full min-w-0 px-2 text-right text-[11px] sm:text-xs"
+                                    />
+                                  ) : canEditFundExpense ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundExpenseDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundExpenseDraft(fund.category_key, event.target.value)}
+                                      className="field-control h-9 w-full min-w-0 px-2 text-right text-[11px] sm:text-xs"
+                                    />
+                                  ) : (
+                                    formatFundMonitoringValue(row, fund)
+                                  )}
+                                </td>
+                              );
+                            })}
                           </tr>
                         ))}
                       </tbody>

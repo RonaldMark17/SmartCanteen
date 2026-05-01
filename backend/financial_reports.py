@@ -63,6 +63,7 @@ EXPENSE_CELL_BY_CATEGORY = {
     "purchase from the looses of tools": "F26",
     "other expenses": "F27",
 }
+FUND_MONITORING_COLUMNS = ("B", "C", "D", "E", "F", "G")
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DEMO_BEGINNING_CASH_ON_HAND = 11834.59
 DEMO_MONTHLY_REPORT_ROWS = [
@@ -234,6 +235,7 @@ def _load_school_year(db: Session, school_year_id: int) -> Optional[models.Schoo
         db.query(models.SchoolYear)
         .options(
             joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.SchoolYear.allocations),
         )
         .filter(models.SchoolYear.id == school_year_id)
@@ -328,6 +330,7 @@ def _school_year_has_report_values(school_year: models.SchoolYear) -> bool:
 
 def clear_financial_reporting_tables(db: Session) -> None:
     db.query(models.Expense).delete(synchronize_session=False)
+    db.query(models.FundMonitoringEntry).delete(synchronize_session=False)
     db.query(models.Allocation).delete(synchronize_session=False)
     db.query(models.MonthlyReport).delete(synchronize_session=False)
     db.query(models.SchoolYear).delete(synchronize_session=False)
@@ -351,6 +354,7 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
         db.query(models.SchoolYear)
         .options(
             joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.SchoolYear.allocations),
         )
         .filter(models.SchoolYear.name == school_year_name)
@@ -360,6 +364,7 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
         db.query(models.SchoolYear)
         .options(
             joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.SchoolYear.allocations),
         )
         .filter(models.SchoolYear.is_active.is_(True))
@@ -475,15 +480,31 @@ def _serialize_expense(expense: models.Expense) -> dict:
     }
 
 
-def _serialize_allocation(allocation: models.Allocation, net_profit: float = 0.0) -> dict:
+def _serialize_allocation(
+    allocation: models.Allocation,
+    net_profit: float = 0.0,
+    *,
+    fund_expenses: float = 0.0,
+    fund_others: float = 0.0,
+) -> dict:
     percentage = float(allocation.percentage or 0.0)
     return {
         "id": allocation.id,
         "category_key": allocation.category_key,
         "label": allocation.label,
         "percentage": round(percentage, 2),
+        "opening_balance": _round_money(getattr(allocation, "opening_balance", 0.0)),
         "sort_order": int(allocation.sort_order or 0),
         "amount": _round_money(net_profit * percentage / 100.0),
+        "fund_expenses": _round_money(fund_expenses),
+        "fund_others": _round_money(fund_others),
+    }
+
+
+def _fund_entry_map(report: models.MonthlyReport) -> dict[str, models.FundMonitoringEntry]:
+    return {
+        str(entry.category_key or "").strip(): entry
+        for entry in getattr(report, "fund_entries", []) or []
     }
 
 
@@ -514,9 +535,13 @@ def _serialize_report(
     expenses = sorted(report.expenses, key=lambda item: (item.sort_order, item.id))
     serialized_expenses = [_serialize_expense(expense) for expense in expenses]
     beginning_cash = _round_money(report.beginning_cash_on_hand)
-    current_sales = _round_money(
-        report.current_sales if current_sales_override is None else current_sales_override
+    saved_current_sales = _round_money(report.current_sales)
+    analytics_current_sales = (
+        None if current_sales_override is None else _round_money(current_sales_override)
     )
+    current_sales = saved_current_sales
+    if current_sales <= 0 and analytics_current_sales is not None:
+        current_sales = analytics_current_sales
     other_income = _round_money(report.other_income)
     purchases = _round_money(report.purchases)
     inventory_used = _round_money(report.inventory_used)
@@ -528,8 +553,19 @@ def _serialize_report(
     net_profit = _round_money(gross_income + other_income - total_operating_expenses)
     ending_cash = _round_money(beginning_cash + net_profit)
     total_expenses = _round_money(cost_of_sales + total_operating_expenses)
+    fund_entries_by_key = _fund_entry_map(report)
     allocations_breakdown = [
-        _serialize_allocation(allocation, net_profit) for allocation in sorted(
+        _serialize_allocation(
+            allocation,
+            net_profit,
+            fund_expenses=fund_entries_by_key.get(str(allocation.category_key or "").strip()).expenses
+            if fund_entries_by_key.get(str(allocation.category_key or "").strip())
+            else 0.0,
+            fund_others=fund_entries_by_key.get(str(allocation.category_key or "").strip()).others
+            if fund_entries_by_key.get(str(allocation.category_key or "").strip())
+            else 0.0,
+        )
+        for allocation in sorted(
             allocations, key=lambda item: (item.sort_order, item.id)
         )
     ]
@@ -545,8 +581,10 @@ def _serialize_report(
         "month_label": f"{report.month_name} {report.calendar_year}",
         "beginning_cash_on_hand": beginning_cash,
         "current_sales": current_sales,
-        "analytics_current_sales": current_sales if current_sales_override is not None else None,
-        "current_sales_source": "analytics" if current_sales_override is not None else "saved",
+        "analytics_current_sales": analytics_current_sales,
+        "current_sales_source": (
+            "saved" if saved_current_sales > 0 or analytics_current_sales is None else "analytics"
+        ),
         "other_income": other_income,
         "purchases": purchases,
         "inventory_used": inventory_used,
@@ -884,48 +922,170 @@ def _populate_report_worksheet(
     report: models.MonthlyReport,
     *,
     current_sales_override: Optional[float] = None,
-) -> None:
-    worksheet["A13"] = f"For the Month of {report.month_name} {report.calendar_year}"
-    worksheet["C15"] = _round_money(report.beginning_cash_on_hand)
-    worksheet["F16"] = _round_money(
-        report.current_sales if current_sales_override is None else current_sales_override
+    beginning_cash_override: Optional[float] = None,
+) -> dict:
+    saved_current_sales = _round_money(report.current_sales)
+    analytics_current_sales = (
+        None if current_sales_override is None else _round_money(current_sales_override)
     )
-    worksheet["F17"] = _round_money(
+    current_sales = saved_current_sales
+    if current_sales <= 0 and analytics_current_sales is not None:
+        current_sales = analytics_current_sales
+    beginning_cash = _round_money(
+        report.beginning_cash_on_hand
+        if beginning_cash_override is None
+        else beginning_cash_override
+    )
+    cost_of_sales = _round_money(
         _round_money(report.purchases)
         + _round_money(report.inventory_used)
         + _round_money(report.product_cost)
     )
 
+    worksheet["A13"] = f"For the Month of {report.month_name} {report.calendar_year}"
+    worksheet["C15"] = beginning_cash
+    worksheet["F16"] = current_sales
+    worksheet["F17"] = cost_of_sales
+    worksheet["F18"] = _round_money(current_sales - cost_of_sales)
+
     for cell_address in EXPENSE_CELL_BY_CATEGORY.values():
         worksheet[cell_address] = 0.0
 
+    total_operating_expenses = 0.0
     for expense in sorted(report.expenses, key=lambda item: (item.sort_order, item.id)):
         category = str(expense.category or "").strip().lower()
         cell_address = EXPENSE_CELL_BY_CATEGORY.get(category)
         if cell_address:
-            worksheet[cell_address] = _round_money(expense.amount)
+            amount = _round_money(expense.amount)
+            worksheet[cell_address] = amount
+            total_operating_expenses += amount
+
+    total_operating_expenses = _round_money(total_operating_expenses)
+    additional_income = _round_money(report.other_income)
+    net_profit = _round_money(current_sales - cost_of_sales - total_operating_expenses + additional_income)
+    ending_cash = _round_money(beginning_cash + net_profit)
 
     worksheet["G32"] = 0.0
     worksheet["G33"] = 0.0
-    worksheet["G34"] = _round_money(report.other_income)
-    worksheet["F28"] = "=SUM(F21:G27)"
+    worksheet["G34"] = additional_income
+    worksheet["F28"] = total_operating_expenses
+    worksheet["F35"] = additional_income
+    worksheet["F36"] = net_profit
+
+    return {
+        "beginning_cash": beginning_cash,
+        "current_sales": current_sales,
+        "cost_of_sales": cost_of_sales,
+        "total_operating_expenses": total_operating_expenses,
+        "additional_income": additional_income,
+        "net_profit": net_profit,
+        "ending_cash": ending_cash,
+    }
 
 
-def _build_school_year_workbook_export(db: Session, school_year: models.SchoolYear) -> str:
+def _populate_fund_monitoring_worksheet(
+    worksheet,
+    allocations: list[models.Allocation],
+    *,
+    net_profit: float,
+    previous_balances: dict[str, float],
+    fund_entries_by_key: dict[str, models.FundMonitoringEntry],
+) -> dict[str, float]:
+    next_balances = dict(previous_balances)
+
+    for column_letter, allocation in zip(FUND_MONITORING_COLUMNS, allocations):
+        category_key = str(allocation.category_key or "").strip()
+        percentage = round(float(allocation.percentage or 0.0), 2)
+        previous_balance = _round_money(previous_balances.get(category_key, 0.0))
+        interest = 0.0
+        net_income = _round_money(_round_money(net_profit) * percentage / 100.0)
+        fund_entry = fund_entries_by_key.get(category_key)
+        expenses = _round_money(fund_entry.expenses if fund_entry else 0.0)
+        others = _round_money(fund_entry.others if fund_entry else 0.0)
+        total_current_expenses = _round_money(expenses)
+        current_balance = _round_money(
+            previous_balance + interest + net_income - total_current_expenses + others
+        )
+
+        worksheet[f"{column_letter}38"] = f"{str(allocation.label or '').upper()}\n{percentage:.2f}%"
+        worksheet[f"{column_letter}39"] = previous_balance
+        worksheet[f"{column_letter}40"] = interest
+        worksheet[f"{column_letter}41"] = net_income
+        worksheet[f"{column_letter}42"] = expenses
+        worksheet[f"{column_letter}43"] = others
+        worksheet[f"{column_letter}44"] = total_current_expenses
+        worksheet[f"{column_letter}45"] = current_balance
+        worksheet[f"{column_letter}46"] = "-"
+
+        next_balances[category_key] = current_balance
+
+    for column_letter in FUND_MONITORING_COLUMNS[len(allocations):]:
+        for row_number in range(39, 47):
+            worksheet[f"{column_letter}{row_number}"] = "-" if row_number == 46 else 0.0
+
+    worksheet["H45"] = _round_money(
+        sum(next_balances.get(str(allocation.category_key or "").strip(), 0.0) for allocation in allocations)
+    )
+    return next_balances
+
+
+def _build_school_year_workbook_export(
+    db: Session,
+    school_year: models.SchoolYear,
+    *,
+    selected_report_id: Optional[int] = None,
+) -> str:
     template_path = _template_path()
     if not os.path.isfile(template_path):
         raise HTTPException(status_code=404, detail="Report template file not found")
 
+    active_sheet_name = None
+    if selected_report_id is not None:
+        selected_report = next(
+            (report for report in school_year.monthly_reports if report.id == selected_report_id),
+            None,
+        )
+        if not selected_report:
+            raise HTTPException(status_code=404, detail="Selected monthly report not found")
+        active_sheet_name = selected_report.month_name
+
     workbook = load_workbook(template_path)
     _prepare_workbook_recalculation(workbook)
 
+    allocations = sorted(school_year.allocations, key=lambda item: (item.sort_order, item.id))[
+        :len(FUND_MONITORING_COLUMNS)
+    ]
+    previous_ending_cash = None
+    previous_fund_balances: dict[str, float] = {
+        str(allocation.category_key or "").strip(): _round_money(
+            getattr(allocation, "opening_balance", 0.0)
+        )
+        for allocation in allocations
+    }
     for report in sorted(school_year.monthly_reports, key=lambda item: item.month_index):
         if report.month_name in workbook.sheetnames:
-            _populate_report_worksheet(
-                workbook[report.month_name],
+            worksheet = workbook[report.month_name]
+            result = _populate_report_worksheet(
+                worksheet,
                 report,
                 current_sales_override=_get_report_transaction_sales(db, report),
+                beginning_cash_override=previous_ending_cash,
             )
+            previous_fund_balances = _populate_fund_monitoring_worksheet(
+                worksheet,
+                allocations,
+                net_profit=result["net_profit"],
+                previous_balances=previous_fund_balances,
+                fund_entries_by_key=_fund_entry_map(report),
+            )
+            previous_ending_cash = result["ending_cash"]
+
+    if active_sheet_name and active_sheet_name in workbook.sheetnames:
+        for worksheet in workbook.worksheets:
+            worksheet.sheet_view.tabSelected = False
+        active_worksheet = workbook[active_sheet_name]
+        workbook.active = active_worksheet
+        active_worksheet.sheet_view.tabSelected = True
 
     export_file = tempfile.NamedTemporaryFile(
         delete=False,
@@ -955,6 +1115,7 @@ def list_school_years(
         db.query(models.SchoolYear)
         .options(
             joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.SchoolYear.allocations),
         )
         .order_by(models.SchoolYear.start_year.desc(), models.SchoolYear.id.desc())
@@ -1013,6 +1174,52 @@ def create_school_year(
     return _serialize_school_year_detail(db, _ensure_and_reload_school_year(db, school_year.id))
 
 
+@router.delete("/api/financial-reports/school-years/{school_year_id}")
+def delete_school_year(
+    school_year_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    school_year = _load_school_year(db, school_year_id)
+    if not school_year:
+        raise HTTPException(status_code=404, detail="School year not found")
+
+    deleted_name = school_year.name
+    db.delete(school_year)
+    db.flush()
+
+    active_school_year = (
+        db.query(models.SchoolYear)
+        .filter(models.SchoolYear.is_active.is_(True))
+        .order_by(models.SchoolYear.start_year.desc(), models.SchoolYear.id.desc())
+        .first()
+    )
+    if not active_school_year:
+        active_school_year = (
+            db.query(models.SchoolYear)
+            .order_by(models.SchoolYear.start_year.desc(), models.SchoolYear.id.desc())
+            .first()
+        )
+        if active_school_year:
+            active_school_year.is_active = True
+
+    _audit_log(
+        db,
+        user_id=current.id,
+        action="FINANCIAL_REPORT_SCHOOL_YEAR_DELETED",
+        details=f"Deleted school year {deleted_name}",
+        request=request,
+    )
+    db.commit()
+
+    return {
+        "message": f"School year {deleted_name} removed.",
+        "deleted_id": school_year_id,
+        "active_school_year_id": active_school_year.id if active_school_year else None,
+    }
+
+
 @router.get("/api/financial-reports/school-years/{school_year_id}")
 def get_school_year_detail(
     school_year_id: int,
@@ -1035,6 +1242,7 @@ def update_report(
         db.query(models.MonthlyReport)
         .options(
             joinedload(models.MonthlyReport.expenses),
+            joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.MonthlyReport.school_year).joinedload(models.SchoolYear.allocations),
         )
         .filter(models.MonthlyReport.id == report_id)
@@ -1063,6 +1271,7 @@ def update_report(
         db.query(models.MonthlyReport)
         .options(
             joinedload(models.MonthlyReport.expenses),
+            joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.MonthlyReport.school_year).joinedload(models.SchoolYear.allocations),
         )
         .filter(models.MonthlyReport.id == report_id)
@@ -1091,6 +1300,7 @@ def replace_report_expenses(
         db.query(models.MonthlyReport)
         .options(
             joinedload(models.MonthlyReport.expenses),
+            joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.MonthlyReport.school_year).joinedload(models.SchoolYear.allocations),
         )
         .filter(models.MonthlyReport.id == report_id)
@@ -1122,6 +1332,7 @@ def replace_report_expenses(
         db.query(models.MonthlyReport)
         .options(
             joinedload(models.MonthlyReport.expenses),
+            joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.MonthlyReport.school_year).joinedload(models.SchoolYear.allocations),
         )
         .filter(models.MonthlyReport.id == report_id)
@@ -1141,6 +1352,80 @@ def replace_report_expenses(
         db.query(models.MonthlyReport)
         .options(
             joinedload(models.MonthlyReport.expenses),
+            joinedload(models.MonthlyReport.fund_entries),
+            joinedload(models.MonthlyReport.school_year).joinedload(models.SchoolYear.allocations),
+        )
+        .filter(models.MonthlyReport.id == report_id)
+        .first()
+    )
+    allocations = sorted(report.school_year.allocations, key=lambda item: (item.sort_order, item.id))
+    return {
+        "report": _serialize_report(
+            report,
+            allocations,
+            current_sales_override=_get_report_transaction_sales(db, report),
+        )
+    }
+
+
+@router.put("/api/financial-reports/reports/{report_id}/fund-monitoring")
+def replace_report_fund_monitoring(
+    report_id: int,
+    payload: schemas.FinancialFundMonitoringUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(require_financial_report_user),
+):
+    report = (
+        db.query(models.MonthlyReport)
+        .options(
+            joinedload(models.MonthlyReport.expenses),
+            joinedload(models.MonthlyReport.fund_entries),
+            joinedload(models.MonthlyReport.school_year).joinedload(models.SchoolYear.allocations),
+        )
+        .filter(models.MonthlyReport.id == report_id)
+        .first()
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="Monthly report not found")
+
+    for entry in list(report.fund_entries):
+        db.delete(entry)
+    db.flush()
+
+    valid_category_keys = {
+        str(allocation.category_key or "").strip()
+        for allocation in report.school_year.allocations
+    }
+
+    for item in payload.entries:
+        category_key = str(item.category_key or "").strip()
+        if not category_key or category_key not in valid_category_keys:
+            continue
+
+        db.add(
+            models.FundMonitoringEntry(
+                report_id=report.id,
+                category_key=category_key,
+                expenses=_round_money(item.expenses),
+                others=_round_money(item.others),
+            )
+        )
+
+    _audit_log(
+        db,
+        user_id=current.id,
+        action="FINANCIAL_REPORT_FUND_MONITORING_UPDATED",
+        details=f"Updated fund monitoring for {report.month_name} {report.calendar_year} in {report.school_year.name}",
+        request=request,
+    )
+    db.commit()
+
+    report = (
+        db.query(models.MonthlyReport)
+        .options(
+            joinedload(models.MonthlyReport.expenses),
+            joinedload(models.MonthlyReport.fund_entries),
             joinedload(models.MonthlyReport.school_year).joinedload(models.SchoolYear.allocations),
         )
         .filter(models.MonthlyReport.id == report_id)
@@ -1181,6 +1466,7 @@ def replace_allocations(
                 category_key=category_key,
                 label=label,
                 percentage=round(float(item.percentage or 0.0), 2),
+                opening_balance=_round_money(item.opening_balance),
                 sort_order=int(item.sort_order if item.sort_order is not None else sort_order),
             )
         )
@@ -1205,11 +1491,16 @@ def replace_allocations(
 @router.get("/api/financial-reports/school-years/{school_year_id}/export")
 def export_school_year_workbook(
     school_year_id: int,
+    report_id: Optional[int] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(require_financial_report_user),
 ):
     school_year = _ensure_and_reload_school_year(db, school_year_id)
-    export_path = _build_school_year_workbook_export(db, school_year)
+    export_path = _build_school_year_workbook_export(
+        db,
+        school_year,
+        selected_report_id=report_id,
+    )
 
     return FileResponse(
         export_path,

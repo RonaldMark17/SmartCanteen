@@ -1065,15 +1065,20 @@ export const API = {
   getAuditLogs: () => request('GET', '/audit-logs'),
   getFinancialSchoolYears: () => request('GET', '/financial-reports/school-years'),
   createFinancialSchoolYear: (data) => request('POST', '/financial-reports/school-years', data),
+  deleteFinancialSchoolYear: (schoolYearId) => request('DELETE', `/financial-reports/school-years/${schoolYearId}`),
   getFinancialSchoolYearDetail: (schoolYearId) => request('GET', `/financial-reports/school-years/${schoolYearId}`),
   updateFinancialReport: (reportId, data) => request('PUT', `/financial-reports/reports/${reportId}`, data),
   updateFinancialReportExpenses: (reportId, expenses) =>
     request('PUT', `/financial-reports/reports/${reportId}/expenses`, { expenses }),
+  updateFinancialFundMonitoring: (reportId, entries) =>
+    request('PUT', `/financial-reports/reports/${reportId}/fund-monitoring`, { entries }),
   updateFinancialAllocations: (schoolYearId, allocations) =>
     request('PUT', `/financial-reports/school-years/${schoolYearId}/allocations`, { allocations }),
   downloadFinancialReportTemplate: () => requestFile('/financial-reports/template'),
-  downloadFinancialSchoolYearWorkbook: (schoolYearId) =>
-    requestFile(`/financial-reports/school-years/${schoolYearId}/export`),
+  downloadFinancialSchoolYearWorkbook: (schoolYearId, reportId = null) =>
+    requestFile(
+      `/financial-reports/school-years/${schoolYearId}/export${toQuery({ report_id: reportId })}`
+    ),
   backupFinancialDatabase: () => request('POST', '/financial-reports/backup'),
   seed: () => request('POST', '/seed'),
   health: () => request('GET', '/health'),

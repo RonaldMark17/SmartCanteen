@@ -224,6 +224,12 @@ class MonthlyReport(Base):
         cascade="all, delete-orphan",
         order_by="Expense.sort_order",
     )
+    fund_entries = relationship(
+        "FundMonitoringEntry",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        order_by="FundMonitoringEntry.category_key",
+    )
 
 
 class Expense(Base):
@@ -251,8 +257,26 @@ class Allocation(Base):
     category_key   = Column(String, nullable=False)
     label          = Column(String, nullable=False)
     percentage     = Column(Float, default=0.0)
+    opening_balance = Column(Float, default=0.0)
     sort_order     = Column(Integer, default=0)
     created_at     = Column(DateTime, default=utc_now_naive)
     updated_at     = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     school_year = relationship("SchoolYear", back_populates="allocations")
+
+
+class FundMonitoringEntry(Base):
+    __tablename__ = "fund_monitoring_entries"
+    __table_args__ = (
+        UniqueConstraint("report_id", "category_key", name="uq_fund_monitoring_report_category"),
+    )
+
+    id           = Column(Integer, primary_key=True, index=True)
+    report_id    = Column(Integer, ForeignKey("monthly_reports.id"), nullable=False, index=True)
+    category_key = Column(String, nullable=False)
+    expenses     = Column(Float, default=0.0)
+    others       = Column(Float, default=0.0)
+    created_at   = Column(DateTime, default=utc_now_naive)
+    updated_at   = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    report = relationship("MonthlyReport", back_populates="fund_entries")
