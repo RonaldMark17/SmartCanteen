@@ -860,7 +860,7 @@ export default function FinancialReports() {
                   </div>
                 ) : null}
 
-                <section className="panel-card">
+                <section className="panel-card min-w-0">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h2 className="text-lg font-black text-slate-900">{selectedReport.month_label}</h2>
@@ -938,12 +938,12 @@ export default function FinancialReports() {
                         Current balance = previous balance + interest + net income - expenses +/- others.
                       </p>
                     </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto">
                       <button
                         type="button"
                         onClick={() => setFundMonitoringEditing(true)}
                         disabled={fundMonitoringEditing || savingFundMonitoring}
-                        className="action-button"
+                        className="action-button w-full sm:w-auto"
                       >
                         <PencilSquareIcon className="h-4 w-4" />
                         Edit
@@ -952,7 +952,7 @@ export default function FinancialReports() {
                         type="button"
                         onClick={handleSaveFundMonitoring}
                         disabled={!fundMonitoringEditing || savingFundMonitoring}
-                        className="primary-action-button"
+                        className="primary-action-button w-full sm:w-auto"
                       >
                         <CheckIcon className="h-4 w-4" />
                         {savingFundMonitoring ? 'Saving...' : 'Save'}
@@ -960,7 +960,76 @@ export default function FinancialReports() {
                     </div>
                   </div>
 
-                  <div className="mt-5 overflow-hidden rounded-[16px] border border-slate-200 bg-white p-2 sm:p-3">
+                  <div className="mt-5 space-y-3 xl:hidden">
+                    {fundMonitoringFunds.map((fund) => {
+                      const allocationIndex = allocationDrafts.findIndex(
+                        (allocation) => allocation.category_key === fund.category_key
+                      );
+
+                      return (
+                        <div
+                          key={`mobile-${fund.category_key}`}
+                          className="w-full min-w-0 rounded-[16px] border border-slate-200 bg-white p-4 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                            <div className="min-w-0">
+                              <div className="break-words text-sm font-black leading-5 text-slate-950">
+                                {fund.label}
+                              </div>
+                              <div className="mt-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                                {formatPercent(fund.percentage)}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="divide-y divide-slate-100">
+                            {FUND_MONITORING_ROWS.map((row) => {
+                              const canEditJuneOpeningBalance =
+                                row.editableForJuneOpeningBalance &&
+                                isJuneReport &&
+                                isAdmin &&
+                                fundMonitoringEditing &&
+                                allocationIndex >= 0;
+                              const canEditFundExpense = row.editableFundExpense && fundMonitoringEditing;
+
+                              return (
+                                <div key={`${row.key}-mobile-${fund.category_key}`} className="py-3">
+                                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                                    {row.label}
+                                  </div>
+                                  {canEditJuneOpeningBalance ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={allocationDrafts[allocationIndex]?.opening_balance ?? '0'}
+                                      onChange={(event) => updateAllocationDraft(allocationIndex, 'opening_balance', event.target.value)}
+                                      className="field-control mt-2 h-11 w-full text-right text-base"
+                                    />
+                                  ) : canEditFundExpense ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundExpenseDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundExpenseDraft(fund.category_key, event.target.value)}
+                                      className="field-control mt-2 h-11 w-full text-right text-base"
+                                    />
+                                  ) : (
+                                    <div className={`mt-1 break-words text-right text-base [overflow-wrap:anywhere] ${row.emphasis ? 'font-black text-slate-950' : 'font-bold text-slate-700'}`}>
+                                      {formatFundMonitoringValue(row, fund)}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-5 hidden overflow-hidden rounded-[16px] border border-slate-200 bg-white p-2 sm:p-3 xl:block">
                     <table className="w-full table-fixed border-collapse text-left text-[11px] sm:text-xs xl:text-sm">
                       <thead className="bg-slate-50">
                         <tr>
