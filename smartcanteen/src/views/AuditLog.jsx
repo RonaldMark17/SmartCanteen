@@ -8,10 +8,8 @@ import {
   ClockIcon,
   ComputerDesktopIcon,
   FunnelIcon,
-  KeyIcon,
   MagnifyingGlassIcon,
   ShieldCheckIcon,
-  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 
 const PH_TIMEZONE = 'Asia/Manila';
@@ -109,15 +107,6 @@ function getAuditSearchText(log) {
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
-function getInitials(user) {
-  const name = String(user?.full_name || user?.username || 'SC').trim();
-  return name
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join('') || 'SC';
-}
-
 function MetricCard({ title, value, detail, icon, tone = 'slate' }) {
   const MetricIcon = icon;
   const toneClass = {
@@ -196,12 +185,8 @@ function PageControls({
 
 export default function AuditLog() {
   const [logs, setLogs] = useState([]);
-  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [usersLoading, setUsersLoading] = useState(true);
   const [error, setError] = useState('');
-  const [usersError, setUsersError] = useState('');
-  const [resettingUserId, setResettingUserId] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
@@ -228,66 +213,21 @@ export default function AuditLog() {
     }
   }, []);
 
-  const loadUsers = useCallback(async ({ showLoading = false } = {}) => {
-    if (showLoading) {
-      setUsersLoading(true);
-    }
-
-    setUsersError('');
-    try {
-      const data = await API.getAdminUsers();
-      setUsers(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('User recovery error:', err);
-      setUsersError(err.message || 'User recovery status could not be loaded.');
-    } finally {
-      if (showLoading) {
-        setUsersLoading(false);
-      }
-    }
-  }, []);
-
   const refreshAll = () => {
     loadLogs({ showLoading: true });
-    loadUsers({ showLoading: true });
-  };
-
-  const resetAuthenticator = async (user) => {
-    const username = user?.username || 'this user';
-    const confirmed = window.confirm(
-      `Reset authenticator for ${username}? They will need to set up a new authenticator app at next login.`
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setResettingUserId(user.id);
-    setUsersError('');
-    try {
-      await API.resetUserAuthenticator(user.id, { revoke_remembered_devices: true });
-      window.showToast?.(`Authenticator reset for ${username}.`, 'success');
-      await Promise.all([loadUsers(), loadLogs()]);
-    } catch (err) {
-      setUsersError(err.message || 'Authenticator reset failed.');
-    } finally {
-      setResettingUserId(null);
-    }
   };
 
   useEffect(() => {
     loadLogs({ showLoading: true });
-    loadUsers({ showLoading: true });
 
     const refreshId = window.setInterval(() => {
       loadLogs();
-      loadUsers();
     }, AUDIT_REFRESH_INTERVAL_MS);
 
     return () => {
       window.clearInterval(refreshId);
     };
-  }, [loadLogs, loadUsers]);
+  }, [loadLogs]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -323,8 +263,7 @@ export default function AuditLog() {
   const pageStartCount = filteredLogs.length === 0 ? 0 : pageStartIndex + 1;
   const pageEndCount = Math.min(pageStartIndex + paginatedLogs.length, filteredLogs.length);
   const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
-  const mfaEnabledCount = users.filter((user) => Boolean(user.authenticator_mfa_enabled)).length;
-  const lowRecoveryCount = users.filter((user) => Number(user.recovery_codes_remaining || 0) <= 1).length;
+  const actionTypeCount = Math.max(0, actionOptions.length - 1);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -346,7 +285,7 @@ export default function AuditLog() {
           </div>
           <h1 className="view-title mt-3">Audit Log</h1>
           <p className="view-subtitle max-w-3xl">
-            System actions, authenticator recovery, and access events in Philippine time.
+            System actions and access events in Philippine time.
           </p>
         </div>
 
@@ -356,7 +295,7 @@ export default function AuditLog() {
             onClick={refreshAll}
             className="action-button"
           >
-            <ArrowPathIcon className={`h-4 w-4 ${loading || usersLoading ? 'animate-spin' : ''}`} />
+            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
 
@@ -375,18 +314,11 @@ export default function AuditLog() {
         </div>
       </div>
 
-      {(error || usersError) && (
+      {error && (
         <div className="space-y-3">
-          {error && (
-            <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-              {error}
-            </div>
-          )}
-          {usersError && (
-            <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-              {usersError}
-            </div>
-          )}
+          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {error}
+          </div>
         </div>
       )}
 
@@ -399,23 +331,22 @@ export default function AuditLog() {
           tone="sky"
         />
         <MetricCard
-          title="Protected Users"
-          value={`${formatCount(mfaEnabledCount)}/${formatCount(users.length)}`}
-          detail={usersLoading ? 'Checking MFA' : 'Authenticator enabled'}
-          icon={UserGroupIcon}
-          tone="emerald"
+          title="Shown"
+          value={formatCount(filteredLogs.length)}
+          detail={filtersActive ? 'Matching filters' : 'Visible activities'}
+          icon={FunnelIcon}
+          tone="slate"
         />
         <MetricCard
-          title="Recovery Risk"
-          value={formatCount(lowRecoveryCount)}
-          detail="Users with 0-1 backup codes"
-          icon={KeyIcon}
-          tone={lowRecoveryCount > 0 ? 'amber' : 'slate'}
+          title="Action Types"
+          value={formatCount(actionTypeCount)}
+          detail="Unique recorded actions"
+          icon={ComputerDesktopIcon}
+          tone="emerald"
         />
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_26rem]">
-        <section className="data-card flex min-h-0 flex-col">
+      <section className="data-card flex min-h-0 flex-1 flex-col">
           <div className="flex shrink-0 flex-col gap-4 border-b border-slate-100 bg-white px-5 py-4">
             <div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -566,110 +497,7 @@ export default function AuditLog() {
               />
             </div>
           )}
-        </section>
-
-        <section className="data-card flex min-h-0 flex-col xl:max-h-full">
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 bg-white px-5 py-4">
-            <div>
-              <h2 className="text-[22px] font-extrabold tracking-tight text-slate-900">Authenticator Recovery</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Reset MFA and review backup-code coverage.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => loadUsers({ showLoading: true })}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Refresh users"
-              disabled={usersLoading}
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${usersLoading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-
-          <div className="custom-scrollbar min-h-0 flex-1 overflow-auto">
-            {usersLoading ? (
-              <div className="divide-y divide-slate-100">
-                {Array.from({ length: 5 }, (_, index) => (
-                  <div key={`user-recovery-skeleton-${index}`} className="p-4">
-                    <div className="flex items-center gap-3">
-                      <Skeleton className="h-10 w-10 rounded-full" />
-                      <SkeletonText lines={['h-4 w-32', 'h-3 w-24']} className="flex-1" />
-                    </div>
-                    <Skeleton className="mt-4 h-10 rounded-xl" />
-                  </div>
-                ))}
-              </div>
-            ) : users.length === 0 ? (
-              <div className="px-5 py-12 text-center text-sm text-slate-500">
-                No users found.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {users.map((user) => {
-                  const hasAuthenticator = Boolean(user.authenticator_mfa_enabled);
-                  const recoveryCodes = Number(user.recovery_codes_remaining || 0);
-                  const isResetting = resettingUserId === user.id;
-
-                  return (
-                    <div key={user.id} className="p-4">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-black text-white">
-                          {getInitials(user)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-black text-slate-900">
-                            {user.full_name || user.username}
-                          </div>
-                          <div className="mt-1 truncate font-mono text-xs font-bold text-slate-400">
-                            @{user.username}
-                          </div>
-                        </div>
-                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${
-                          hasAuthenticator
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-amber-50 text-amber-700'
-                        }`}>
-                          {hasAuthenticator ? 'MFA on' : 'Setup'}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                        <div className="rounded-xl bg-slate-50 px-3 py-2">
-                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                            Recovery
-                          </div>
-                          <div className={`mt-1 font-black ${recoveryCodes <= 1 ? 'text-amber-700' : 'text-slate-900'}`}>
-                            {formatCount(recoveryCodes)} codes
-                          </div>
-                        </div>
-                        <div className="rounded-xl bg-slate-50 px-3 py-2">
-                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                            Remembered
-                          </div>
-                          <div className="mt-1 font-black text-slate-900">
-                            {formatCount(user.remembered_devices_active)} devices
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => resetAuthenticator(user)}
-                        disabled={!hasAuthenticator || isResetting}
-                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-black text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <ShieldCheckIcon className="h-4 w-4" />
-                        {isResetting ? 'Resetting...' : 'Reset Authenticator'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
+      </section>
     </div>
   );
 }

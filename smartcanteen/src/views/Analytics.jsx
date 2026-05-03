@@ -61,15 +61,15 @@ const EMPTY_HEATMAP = Array.from(
 
 const TOP_PRODUCT_COLORS = [
   '#0f766e',
-  '#0284c7',
-  '#d946ef',
-  '#f59e0b',
-  '#ef4444',
-  '#6366f1',
-  '#14b8a6',
-  '#84cc16',
-  '#f97316',
+  '#25636d',
   '#64748b',
+  '#ca8a04',
+  '#dc2626',
+  '#475569',
+  '#14b8a6',
+  '#65a30d',
+  '#c2410c',
+  '#94a3b8',
 ];
 
 const HEATMAP_INTENSITY_CLASSES = [

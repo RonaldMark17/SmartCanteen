@@ -886,6 +886,90 @@ def _build_authenticator_user_hint(user: models.User, enabled: bool) -> dict:
     }
 
 
+USER_ROLES = {"admin", "staff", "cashier"}
+
+
+def _normalize_username(value: str) -> str:
+    username = str(value or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if len(username) > 64:
+        raise HTTPException(status_code=400, detail="Username must be 64 characters or fewer")
+    if not re.match(r"^[A-Za-z0-9._-]+$", username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username can only contain letters, numbers, dots, underscores, and hyphens",
+        )
+    return username
+
+
+def _normalize_full_name(value: Optional[str]) -> Optional[str]:
+    full_name = str(value or "").strip()
+    return full_name or None
+
+
+def _validate_user_role(role: str) -> str:
+    normalized_role = str(role or "").strip().lower()
+    if normalized_role not in USER_ROLES:
+        raise HTTPException(status_code=400, detail="Role must be admin, staff, or cashier")
+    return normalized_role
+
+
+def _validate_user_password(password: str) -> str:
+    raw_password = str(password or "")
+    if len(raw_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    return raw_password
+
+
+def _find_user_by_username(db: Session, username: str, exclude_user_id: Optional[int] = None):
+    query = db.query(models.User).filter(func.lower(models.User.username) == username.lower())
+    if exclude_user_id is not None:
+        query = query.filter(models.User.id != exclude_user_id)
+    return query.first()
+
+
+def _active_admin_count(db: Session, exclude_user_id: Optional[int] = None) -> int:
+    query = db.query(models.User).filter(
+        models.User.role == "admin",
+        models.User.is_active == True,
+    )
+    if exclude_user_id is not None:
+        query = query.filter(models.User.id != exclude_user_id)
+    return query.count()
+
+
+def _ensure_admin_can_be_changed(
+    db: Session,
+    user: models.User,
+    *,
+    next_role: Optional[str] = None,
+    next_is_active: Optional[bool] = None,
+):
+    role_after_update = next_role if next_role is not None else user.role
+    active_after_update = user.is_active if next_is_active is None else bool(next_is_active)
+    removes_active_admin = user.role == "admin" and user.is_active and (
+        role_after_update != "admin" or not active_after_update
+    )
+
+    if removes_active_admin and _active_admin_count(db, exclude_user_id=user.id) == 0:
+        raise HTTPException(status_code=400, detail="At least one active admin account is required")
+
+
+def _serialize_admin_user(db: Session, user: models.User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "role": user.role,
+        "is_active": user.is_active,
+        "authenticator_mfa_enabled": bool(user.authenticator_enabled and user.authenticator_secret),
+        "recovery_codes_remaining": _count_recovery_codes(db, user),
+        "remembered_devices_active": _count_active_trusted_devices(db, user),
+        "created_at": user.created_at,
+    }
+
+
 def _begin_authenticator_setup(user: models.User):
     secret = _generate_authenticator_secret()
     mfa_token, _token_id = auth.create_mfa_token(
@@ -1063,14 +1147,17 @@ def register(
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
-    if db.query(models.User).filter(models.User.username == data.username).first():
+    username = _normalize_username(data.username)
+    if _find_user_by_username(db, username):
         raise HTTPException(status_code=400, detail="Username already exists")
 
+    password = _validate_user_password(data.password)
+    role = _validate_user_role(data.role)
     user = models.User(
-        username=data.username,
-        full_name=data.full_name,
-        password_hash=auth.get_password_hash(data.password),
-        role=data.role,
+        username=username,
+        full_name=_normalize_full_name(data.full_name),
+        password_hash=auth.get_password_hash(password),
+        role=role,
     )
     db.add(user)
     db.commit()
@@ -1079,7 +1166,7 @@ def register(
     _add_audit_log(
         db,
         user_id=current.id, action="USER_CREATED",
-        details=f"Created user: {data.username} (role={data.role})",
+        details=f"Created user: {username} (role={role})",
         request=req,
     )
     db.commit()
@@ -1128,20 +1215,137 @@ def list_admin_users(
     _: models.User = Depends(auth.require_admin),
 ):
     users = db.query(models.User).order_by(models.User.username).all()
-    return [
-        {
-            "id": user.id,
-            "username": user.username,
-            "full_name": user.full_name,
-            "role": user.role,
-            "is_active": user.is_active,
-            "authenticator_mfa_enabled": bool(user.authenticator_enabled and user.authenticator_secret),
-            "recovery_codes_remaining": _count_recovery_codes(db, user),
-            "remembered_devices_active": _count_active_trusted_devices(db, user),
-            "created_at": user.created_at,
-        }
-        for user in users
-    ]
+    return [_serialize_admin_user(db, user) for user in users]
+
+
+@app.post("/api/admin/users", response_model=schemas.UserResponse, tags=["Admin"])
+def admin_create_user(
+    data: schemas.UserCreate,
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    username = _normalize_username(data.username)
+    if _find_user_by_username(db, username):
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    password = _validate_user_password(data.password)
+    role = _validate_user_role(data.role)
+    user = models.User(
+        username=username,
+        full_name=_normalize_full_name(data.full_name),
+        password_hash=auth.get_password_hash(password),
+        role=role,
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="USER_CREATED",
+        details=f"Created user: {username} (role={role})",
+        request=req,
+    )
+    db.commit()
+    db.refresh(user)
+    return _serialize_admin_user(db, user)
+
+
+@app.put("/api/admin/users/{user_id}", response_model=schemas.UserResponse, tags=["Admin"])
+def admin_update_user(
+    user_id: int,
+    data: schemas.UserUpdate,
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    changes = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else data.dict(exclude_unset=True)
+    next_role = _validate_user_role(changes["role"]) if "role" in changes and changes["role"] is not None else None
+    next_is_active = bool(changes["is_active"]) if "is_active" in changes and changes["is_active"] is not None else None
+
+    if user.id == current.id and (next_role and next_role != "admin" or next_is_active is False):
+        raise HTTPException(status_code=400, detail="You cannot remove admin access from your own account")
+
+    _ensure_admin_can_be_changed(db, user, next_role=next_role, next_is_active=next_is_active)
+
+    audit_changes = []
+    if "username" in changes and changes["username"] is not None:
+        username = _normalize_username(changes["username"])
+        if _find_user_by_username(db, username, exclude_user_id=user.id):
+            raise HTTPException(status_code=400, detail="Username already exists")
+        if username != user.username:
+            audit_changes.append(f"username {user.username}->{username}")
+            user.username = username
+
+    if "full_name" in changes:
+        full_name = _normalize_full_name(changes["full_name"])
+        if full_name != user.full_name:
+            audit_changes.append("full name updated")
+            user.full_name = full_name
+
+    if next_role is not None and next_role != user.role:
+        audit_changes.append(f"role {user.role}->{next_role}")
+        user.role = next_role
+
+    if next_is_active is not None and next_is_active != user.is_active:
+        audit_changes.append(f"active {user.is_active}->{next_is_active}")
+        user.is_active = next_is_active
+
+    if "password" in changes and changes["password"]:
+        password = _validate_user_password(changes["password"])
+        user.password_hash = auth.get_password_hash(password)
+        _reset_user_authenticator(db, user, revoke_remembered_devices=True)
+        audit_changes.append("password updated and authenticator reset")
+
+    if audit_changes:
+        _add_audit_log(
+            db,
+            user_id=current.id,
+            action="USER_UPDATED",
+            details=f"Updated user {user.username}: {', '.join(audit_changes)}",
+            request=req,
+        )
+
+    db.commit()
+    db.refresh(user)
+    return _serialize_admin_user(db, user)
+
+
+@app.delete("/api/admin/users/{user_id}", response_model=schemas.UserResponse, tags=["Admin"])
+def admin_delete_user(
+    user_id: int,
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.id == current.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    _ensure_admin_can_be_changed(db, user, next_is_active=False)
+
+    if user.is_active:
+        user.is_active = False
+        _reset_user_authenticator(db, user, revoke_remembered_devices=True)
+        _add_audit_log(
+            db,
+            user_id=current.id,
+            action="USER_DEACTIVATED",
+            details=f"Deactivated user: {user.username}",
+            request=req,
+        )
+        db.commit()
+        db.refresh(user)
+
+    return _serialize_admin_user(db, user)
 
 
 @app.post("/api/admin/users/{user_id}/authenticator/reset", tags=["Admin"])

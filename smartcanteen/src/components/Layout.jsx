@@ -12,13 +12,13 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
-  CloudArrowUpIcon,
   CubeIcon,
   ExclamationTriangleIcon,
   HomeIcon,
   MoonIcon,
   ShieldCheckIcon,
   SparklesIcon,
+  UserGroupIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from './DismissibleAlert';
@@ -397,6 +397,9 @@ function getNavDescription(path) {
   if (path === '/audit') {
     return 'Sensitive admin actions and logs';
   }
+  if (path === '/accounts') {
+    return 'Create and manage user access';
+  }
 
   return 'Workspace module';
 }
@@ -443,6 +446,7 @@ export default function Layout({ children, onLogout }) {
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
     { name: 'AI Predictions', path: '/predictions', icon: SparklesIcon },
     { name: 'Audit Log', path: '/audit', icon: ShieldCheckIcon },
+    { name: 'Manage Accounts', path: '/accounts', icon: UserGroupIcon },
   ];
 
   const visibleNavItems = navItems.filter((item) =>
@@ -473,17 +477,12 @@ export default function Layout({ children, onLogout }) {
   const highDemandReminderCount = highDemandItems.length;
   const unreadLowStockAlertCount = unreadLowStockAlertKeys.size;
   const unreadHighDemandReminderCount = unreadHighDemandReminderKeys.size;
-  const totalAlertCount = lowStockAlertCount + highDemandReminderCount;
   const defaultRoute = getDefaultRoute(user.role);
   const displayName = user.full_name || user.username || 'SmartCanteen user';
   const userInitials = getUserInitials(displayName);
   const formattedDate = formatWorkspaceDate(currentTime);
   const formattedTime = formatWorkspaceTime(currentTime);
   const workspaceStatus = isSynced ? 'Online and ready' : 'Offline cache active';
-  const alertSummary =
-    totalAlertCount > 0
-      ? `${totalAlertCount} active alert${totalAlertCount > 1 ? 's' : ''}`
-      : 'No active alerts';
   useEffect(() => {
     lowStockItemsRef.current = lowStockItems;
   }, [lowStockItems]);
@@ -1179,7 +1178,7 @@ export default function Layout({ children, onLogout }) {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="app-shell flex h-screen overflow-hidden bg-slate-50">
       <nav
         className={`z-30 hidden shrink-0 flex-col border-r shadow-2xl transition-[width] duration-300 lg:flex ${sidebarShellClass} ${
           sidebarCollapsed ? 'w-24' : 'w-80'
@@ -1338,13 +1337,13 @@ export default function Layout({ children, onLogout }) {
                     type="button"
                     aria-label="Close notifications"
                     onClick={() => setNotificationsOpen(false)}
-                    className="fixed inset-0 z-40 cursor-default bg-slate-900/10"
+                    className="fixed inset-0 z-40 cursor-default bg-transparent"
                   />
-                  <div className="notification-popover fixed inset-x-4 top-20 z-50 max-h-[78vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl md:absolute md:inset-x-auto md:right-0 md:top-14 md:w-[27rem]">
-                    <div className="notification-panel-head border-b border-slate-100 px-5 py-4">
+                  <div className="notification-popover fixed inset-x-3 top-16 z-50 max-h-[calc(100dvh-5rem)] overflow-hidden rounded-xl border border-slate-200 bg-white md:absolute md:inset-x-auto md:right-0 md:top-12 md:w-[22.5rem]">
+                    <div className="notification-panel-head border-b border-slate-100 px-4 py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="text-sm font-black text-slate-900">Notifications</div>
+                          <div className="text-sm font-semibold text-slate-900">Notifications</div>
                           <div className="mt-1 text-xs text-slate-500">
                             {lowStockAlertCount > 0
                               ? `${unreadLowStockAlertCount} unread of ${lowStockAlertCount} low stock notification${lowStockAlertCount > 1 ? 's' : ''}`
@@ -1352,7 +1351,7 @@ export default function Layout({ children, onLogout }) {
                           </div>
                         </div>
                         <div
-                          className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                          className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${
                             alertPermission === 'granted'
                               ? 'bg-emerald-50 text-emerald-700'
                               : alertPermission === 'unsupported'
@@ -1363,12 +1362,12 @@ export default function Layout({ children, onLogout }) {
                           {getPermissionLabel(alertPermission)}
                         </div>
                       </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         {unreadLowStockAlertCount > 0 && (
                           <button
                             type="button"
                             onClick={markLowStockNotificationsRead}
-                            className="notification-action rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white transition hover:bg-black"
+                            className="notification-action rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-900"
                           >
                             Read all
                           </button>
@@ -1377,7 +1376,7 @@ export default function Layout({ children, onLogout }) {
                           <button
                             type="button"
                             onClick={handleEnableAlerts}
-                            className="notification-action rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                            className="notification-action rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                           >
                             Enable phone alerts
                           </button>
@@ -1385,7 +1384,7 @@ export default function Layout({ children, onLogout }) {
                         <button
                           type="button"
                           onClick={() => loadAlertData({ notifyOnChange: false })}
-                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
                           <ArrowPathIcon className={`h-4 w-4 ${alertsLoading ? 'animate-spin' : ''}`} />
                           Refresh
@@ -1396,15 +1395,15 @@ export default function Layout({ children, onLogout }) {
                             setNotificationsOpen(false);
                             navigate('/inventory');
                           }}
-                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
-                          Open inventory
+                          Inventory
                           <ChevronRightIcon className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="max-h-[52vh] space-y-4 overflow-y-auto p-4 custom-scrollbar">
+                    <div className="max-h-[44vh] space-y-2.5 overflow-y-auto p-3 custom-scrollbar">
                       {alertsLoading && lowStockAlertCount === 0 ? (
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                           Loading low stock notifications...
@@ -1415,8 +1414,8 @@ export default function Layout({ children, onLogout }) {
                           <div className="mt-1 text-xs text-slate-500">{formatCheckTime(lastAlertCheck)}</div>
                         </div>
                       ) : (
-                          <div className="space-y-3">
-                            <div className="px-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                          <div className="space-y-2.5">
+                            <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                               Low Stock
                             </div>
                             {lowStockItems.length === 0 ? (
@@ -1430,9 +1429,9 @@ export default function Layout({ children, onLogout }) {
                                 return (
                                 <div
                                   key={item.id}
-                                  className={`notification-alert-card relative w-full rounded-2xl border p-4 transition ${
+                                  className={`notification-alert-card relative w-full rounded-xl border p-3 transition ${
                                     isUnread
-                                      ? 'notification-alert-card-danger border-red-200 bg-red-50/80 shadow-sm ring-2 ring-red-100 hover:border-red-300 hover:bg-red-100/80'
+                                      ? 'notification-alert-card-danger border-red-200 bg-white hover:border-red-300'
                                       : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                                   }`}
                                 >
@@ -1440,7 +1439,7 @@ export default function Layout({ children, onLogout }) {
                                     type="button"
                                     onClick={() => dismissLowStockAlert(item)}
                                     aria-label={`Dismiss ${item.name} low stock alert`}
-                                    className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-red-500 transition hover:bg-red-500/10 hover:text-red-700"
+                                    className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                                   >
                                     <XMarkIcon className="h-4 w-4" />
                                   </button>
@@ -1453,36 +1452,36 @@ export default function Layout({ children, onLogout }) {
                                     <div className="min-w-0">
                                       <div className="flex items-center gap-2">
                                         <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-red-500" />
-                                        <div className="truncate text-sm font-black text-slate-900">{item.name}</div>
+                                        <div className="truncate text-sm font-semibold text-slate-900">{item.name}</div>
                                       </div>
                                       <div className="mt-1 text-xs text-slate-500">{item.category || 'General'}</div>
                                     </div>
                                     <div className="flex shrink-0 flex-col items-end gap-1">
                                       {isUnread && (
-                                        <span className="rounded-full bg-red-600 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white">
+                                        <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-red-600">
                                           Unread
                                         </span>
                                       )}
-                                      <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
-                                        isUnread ? 'bg-white text-red-600' : 'bg-slate-100 text-slate-500'
+                                      <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                                        isUnread ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'
                                       }`}>
                                         Low
                                       </span>
                                     </div>
                                   </div>
 
-                                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                                    <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
-                                      <div className="font-bold uppercase tracking-widest text-slate-400">Current</div>
-                                      <div className="mt-1 text-sm font-black text-slate-900">{item.stock}</div>
+                                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                    <div className="notification-alert-metric rounded-lg bg-slate-50 px-3 py-2">
+                                      <div className="font-medium uppercase tracking-wider text-slate-400">Current</div>
+                                      <div className="mt-1 text-sm font-semibold text-slate-900">{item.stock}</div>
                                     </div>
-                                    <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
-                                      <div className="font-bold uppercase tracking-widest text-slate-400">Minimum</div>
-                                      <div className="mt-1 text-sm font-black text-slate-900">{item.min_stock}</div>
+                                    <div className="notification-alert-metric rounded-lg bg-slate-50 px-3 py-2">
+                                      <div className="font-medium uppercase tracking-wider text-slate-400">Minimum</div>
+                                      <div className="mt-1 text-sm font-semibold text-slate-900">{item.min_stock}</div>
                                     </div>
                                   </div>
-                                  <div className="mt-3 flex items-center justify-end gap-1 text-xs font-black uppercase tracking-widest text-red-700">
-                                    Open inventory
+                                  <div className="mt-3 flex items-center justify-end gap-1 text-xs font-semibold uppercase tracking-wider text-red-600">
+                                    Open
                                     <ChevronRightIcon className="h-4 w-4" />
                                   </div>
                                   </button>
@@ -1494,7 +1493,7 @@ export default function Layout({ children, onLogout }) {
                       )}
                     </div>
 
-                    <div className="notification-footer border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+                    <div className="notification-footer border-t border-slate-100 px-4 py-2.5 text-xs text-slate-500">
                       {formatCheckTime(lastAlertCheck)}
                     </div>
                   </div>
@@ -1525,13 +1524,13 @@ export default function Layout({ children, onLogout }) {
                     type="button"
                     aria-label="Close reminders"
                     onClick={() => setRemindersOpen(false)}
-                    className="fixed inset-0 z-40 cursor-default bg-slate-900/10"
+                    className="fixed inset-0 z-40 cursor-default bg-transparent"
                   />
-                  <div className="notification-popover fixed inset-x-4 top-20 z-50 max-h-[78vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl md:absolute md:inset-x-auto md:right-0 md:top-14 md:w-[27rem]">
-                    <div className="notification-panel-head border-b border-slate-100 px-5 py-4">
+                  <div className="notification-popover fixed inset-x-3 top-16 z-50 max-h-[calc(100dvh-5rem)] overflow-hidden rounded-xl border border-slate-200 bg-white md:absolute md:inset-x-auto md:right-0 md:top-12 md:w-[22.5rem]">
+                    <div className="notification-panel-head border-b border-slate-100 px-4 py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="text-sm font-black text-slate-900">Reminders</div>
+                          <div className="text-sm font-semibold text-slate-900">Reminders</div>
                           <div className="mt-1 text-xs text-slate-500">
                             {highDemandReminderCount > 0
                               ? `${unreadHighDemandReminderCount} unread of ${highDemandReminderCount} high demand reminder${highDemandReminderCount > 1 ? 's' : ''} for tomorrow`
@@ -1539,7 +1538,7 @@ export default function Layout({ children, onLogout }) {
                           </div>
                         </div>
                         <div
-                          className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                          className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${
                             alertPermission === 'granted'
                               ? 'bg-emerald-50 text-emerald-700'
                               : alertPermission === 'unsupported'
@@ -1550,12 +1549,12 @@ export default function Layout({ children, onLogout }) {
                           {getPermissionLabel(alertPermission)}
                         </div>
                       </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         {unreadHighDemandReminderCount > 0 && (
                           <button
                             type="button"
                             onClick={markHighDemandRemindersRead}
-                            className="notification-action rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white transition hover:bg-black"
+                            className="notification-action rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-900"
                           >
                             Read all
                           </button>
@@ -1564,7 +1563,7 @@ export default function Layout({ children, onLogout }) {
                           <button
                             type="button"
                             onClick={handleEnableAlerts}
-                            className="notification-action rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                            className="notification-action rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                           >
                             Enable phone alerts
                           </button>
@@ -1572,7 +1571,7 @@ export default function Layout({ children, onLogout }) {
                         <button
                           type="button"
                           onClick={() => loadAlertData({ notifyOnChange: false })}
-                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
                           <ArrowPathIcon className={`h-4 w-4 ${alertsLoading ? 'animate-spin' : ''}`} />
                           Refresh
@@ -1583,15 +1582,15 @@ export default function Layout({ children, onLogout }) {
                             setRemindersOpen(false);
                             navigate('/predictions');
                           }}
-                          className="notification-action inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                          className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
-                          Open predictions
+                          Predictions
                           <ChevronRightIcon className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="max-h-[52vh] space-y-4 overflow-y-auto p-4 custom-scrollbar">
+                    <div className="max-h-[44vh] space-y-2.5 overflow-y-auto p-3 custom-scrollbar">
                       {alertsLoading && highDemandReminderCount === 0 ? (
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                           Loading high demand reminders...
@@ -1602,11 +1601,11 @@ export default function Layout({ children, onLogout }) {
                           <div className="mt-1 text-xs text-slate-500">{formatCheckTime(lastAlertCheck)}</div>
                         </div>
                       ) : (
-                        <div className="space-y-3">
-                          <div className="px-1 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                        <div className="space-y-2.5">
+                          <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                             High Demand Tomorrow
                           </div>
-                          <div className="notification-info-strip rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                          <div className="notification-info-strip rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
                             {getHighDemandAlertMeaning()}
                           </div>
                           {highDemandItems.map((item) => {
@@ -1615,9 +1614,9 @@ export default function Layout({ children, onLogout }) {
                             return (
                             <div
                               key={item.product_id}
-                              className={`notification-alert-card relative w-full rounded-2xl border p-4 transition ${
+                              className={`notification-alert-card relative w-full rounded-xl border p-3 transition ${
                                 isUnread
-                                  ? 'notification-alert-card-info border-sky-200 bg-sky-50/80 shadow-sm ring-2 ring-sky-100 hover:border-sky-300 hover:bg-sky-100/80'
+                                  ? 'notification-alert-card-info border-sky-200 bg-white hover:border-sky-300'
                                   : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                               }`}
                             >
@@ -1625,7 +1624,7 @@ export default function Layout({ children, onLogout }) {
                                 type="button"
                                 onClick={() => dismissHighDemandAlert(item)}
                                 aria-label={`Dismiss ${item.product_name} high demand reminder`}
-                                className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-sky-500 transition hover:bg-sky-500/10 hover:text-sky-700"
+                                className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-sky-50 hover:text-sky-600"
                               >
                                 <XMarkIcon className="h-4 w-4" />
                               </button>
@@ -1638,7 +1637,7 @@ export default function Layout({ children, onLogout }) {
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2">
                                       <ArrowTrendingUpIcon className="h-4 w-4 shrink-0 text-sky-600" />
-                                      <div className="truncate text-sm font-black text-slate-900">
+                                      <div className="truncate text-sm font-semibold text-slate-900">
                                         {item.product_name}
                                       </div>
                                     </div>
@@ -1646,38 +1645,38 @@ export default function Layout({ children, onLogout }) {
                                   </div>
                                   <div className="flex shrink-0 flex-col items-end gap-1">
                                     {isUnread && (
-                                      <span className="rounded-full bg-sky-600 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white">
+                                      <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-sky-700">
                                         Unread
                                       </span>
                                     )}
-                                    <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
-                                      isUnread ? 'bg-white text-sky-700' : 'bg-slate-100 text-slate-500'
+                                    <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                                      isUnread ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-500'
                                     }`}>
                                       High demand
                                     </span>
                                   </div>
                                 </div>
 
-                                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                                  <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
-                                    <div className="font-bold uppercase tracking-widest text-slate-400">Tomorrow</div>
-                                    <div className="mt-1 text-sm font-black text-slate-900">{item.predicted_quantity}</div>
+                                <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                                  <div className="notification-alert-metric rounded-lg bg-slate-50 px-2.5 py-2">
+                                    <div className="font-medium uppercase tracking-wider text-slate-400">Tomorrow</div>
+                                    <div className="mt-1 text-sm font-semibold text-slate-900">{item.predicted_quantity}</div>
                                   </div>
-                                  <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
-                                    <div className="font-bold uppercase tracking-widest text-slate-400">Average</div>
-                                    <div className="mt-1 text-sm font-black text-slate-900">{item.historical_average.toFixed(1)}</div>
+                                  <div className="notification-alert-metric rounded-lg bg-slate-50 px-2.5 py-2">
+                                    <div className="font-medium uppercase tracking-wider text-slate-400">Average</div>
+                                    <div className="mt-1 text-sm font-semibold text-slate-900">{item.historical_average.toFixed(1)}</div>
                                   </div>
-                                  <div className="notification-alert-metric rounded-xl bg-white px-3 py-2">
-                                    <div className="font-bold uppercase tracking-widest text-slate-400">Stock gap</div>
-                                    <div className="mt-1 text-sm font-black text-slate-900">{item.stock_gap}</div>
+                                  <div className="notification-alert-metric rounded-lg bg-slate-50 px-2.5 py-2">
+                                    <div className="font-medium uppercase tracking-wider text-slate-400">Stock gap</div>
+                                    <div className="mt-1 text-sm font-semibold text-slate-900">{item.stock_gap}</div>
                                   </div>
                                 </div>
-                                <div className="notification-alert-metric mt-3 rounded-xl bg-white px-3 py-2 text-xs text-slate-600">
-                                  <span className="font-black uppercase tracking-widest text-slate-400">Why this reminder</span>
+                                <div className="notification-alert-metric mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                  <span className="font-medium uppercase tracking-wider text-slate-400">Why this reminder</span>
                                   <div className="mt-1 text-sm text-slate-700">{getHighDemandReason(item)}</div>
                                 </div>
-                                <div className="mt-3 flex items-center justify-end gap-1 text-xs font-black uppercase tracking-widest text-sky-700">
-                                  Open predictions
+                                <div className="mt-3 flex items-center justify-end gap-1 text-xs font-semibold uppercase tracking-wider text-sky-700">
+                                  Open
                                   <ChevronRightIcon className="h-4 w-4" />
                                 </div>
                               </button>
@@ -1688,7 +1687,7 @@ export default function Layout({ children, onLogout }) {
                       )}
                     </div>
 
-                    <div className="notification-footer border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+                    <div className="notification-footer border-t border-slate-100 px-4 py-2.5 text-xs text-slate-500">
                       {formatCheckTime(lastAlertCheck)}
                     </div>
                   </div>
@@ -2059,32 +2058,6 @@ export default function Layout({ children, onLogout }) {
               >
                 <XMarkIcon className="h-6 w-6" />
               </button>
-            </div>
-
-            <div className="px-5 pb-4">
-              <div
-                className={`rounded-2xl border p-3 ${
-                  darkMode ? 'border-white/10 bg-white/[0.04]' : 'border-slate-200 bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className={`truncate text-sm font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-                      {workspaceStatus}
-                    </div>
-                    <div className={`mt-1 truncate text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                      {alertSummary}
-                    </div>
-                  </div>
-                  <CloudArrowUpIcon
-                    className={`h-5 w-5 shrink-0 ${
-                      isSynced
-                        ? darkMode ? 'text-emerald-300' : 'text-emerald-500'
-                        : darkMode ? 'text-amber-300' : 'text-amber-500'
-                    }`}
-                  />
-                </div>
-              </div>
             </div>
 
             <div className="custom-scrollbar flex-1 space-y-1 overflow-y-auto px-4 pb-4">

@@ -1017,6 +1017,9 @@ export const API = {
   register: (data) => request('POST', '/auth/register', data),
   regenerateRecoveryCodes: () => request('POST', '/auth/recovery-codes/regenerate'),
   getAdminUsers: () => request('GET', '/admin/users'),
+  createAdminUser: (data) => request('POST', '/admin/users', data),
+  updateAdminUser: (userId, data) => request('PUT', `/admin/users/${userId}`, data),
+  deleteAdminUser: (userId) => request('DELETE', `/admin/users/${userId}`),
   resetUserAuthenticator: (userId, data = {}) =>
     request('POST', `/admin/users/${userId}/authenticator/reset`, {
       revoke_remembered_devices: data.revoke_remembered_devices !== false,

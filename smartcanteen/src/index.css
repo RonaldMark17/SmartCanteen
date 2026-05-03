@@ -2,14 +2,14 @@
 
 /* 1. Define custom colors for Tailwind v4 directly in CSS */
 @theme {
-  --color-primary: #d946ef;
-  --color-primary-dark: #c026d3;
-  --color-primary-light: #f0abfc;
+  --color-primary: #0f766e;
+  --color-primary-dark: #0d5f59;
+  --color-primary-light: #99f6e4;
 }
 
 /* 2. Your base styles */
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply bg-slate-50 text-slate-700 antialiased;
 }
 
 html.dark {
@@ -22,11 +22,11 @@ html.dark body {
 
 @layer components {
   .view-shell {
-    @apply flex h-full min-h-0 flex-col gap-4 overflow-y-auto bg-slate-50/40 pb-6 pr-2;
+    @apply flex h-full min-h-0 flex-col gap-4 overflow-y-auto bg-transparent pb-6 pr-2;
   }
 
   .view-shell-static {
-    @apply flex h-full min-h-0 flex-col gap-4 bg-slate-50/40;
+    @apply flex h-full min-h-0 flex-col gap-4 bg-transparent;
   }
 
   .view-header {
@@ -34,80 +34,80 @@ html.dark body {
   }
 
   .view-eyebrow {
-    @apply inline-flex items-center gap-2 rounded-full border border-violet-100 bg-violet-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.22em] text-violet-700 shadow-sm;
+    @apply inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-slate-500;
   }
 
   .view-title {
-    @apply text-3xl font-black tracking-tight text-slate-950;
+    @apply text-2xl font-semibold tracking-normal text-slate-900;
   }
 
   .view-subtitle {
-    @apply mt-1 text-sm font-medium leading-6 text-slate-500;
+    @apply mt-1 text-sm font-normal leading-6 text-slate-500;
   }
 
   .panel-card {
-    @apply rounded-[20px] bg-white p-4 shadow-sm ring-1 ring-slate-100 sm:p-5;
+    @apply rounded-lg border border-slate-200 bg-white p-4 sm:p-5;
   }
 
   .data-card {
-    @apply overflow-hidden rounded-[20px] bg-white shadow-sm ring-1 ring-slate-100;
+    @apply overflow-hidden rounded-lg border border-slate-200 bg-white;
   }
 
   .action-button {
-    @apply inline-flex items-center justify-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .primary-action-button {
-    @apply inline-flex items-center justify-center gap-2 rounded-[14px] bg-primary px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-primary/20 transition hover:-translate-y-0.5 hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .control-surface {
-    @apply rounded-[20px] bg-white p-4 shadow-sm ring-1 ring-slate-100;
+    @apply rounded-lg border border-slate-200 bg-white p-4;
   }
 
   .field-control {
-    @apply rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-700 outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10;
+    @apply rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal text-slate-700 outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10;
   }
 
   .ui-uniform h1.text-2xl,
   .ui-uniform h1.text-3xl {
-    @apply text-3xl font-black tracking-tight text-slate-950;
+    @apply text-2xl font-semibold tracking-normal text-slate-900;
   }
 
   .ui-uniform h2.text-lg,
   .ui-uniform h3.text-lg {
-    @apply text-[22px] font-extrabold tracking-tight text-slate-900;
+    @apply text-lg font-semibold tracking-normal text-slate-800;
   }
 
   .ui-uniform .rounded-xl.border.border-slate-200.bg-white,
   .ui-uniform .rounded-2xl.border.border-slate-200.bg-white,
   .ui-uniform .rounded-\[24px\].border.border-slate-200.bg-white {
-    @apply rounded-[20px] border-transparent shadow-sm ring-1 ring-slate-100;
+    @apply rounded-lg border-slate-200 shadow-none ring-0;
   }
 
   .ui-uniform section.rounded-2xl.border.border-slate-200.bg-white,
   .ui-uniform div.rounded-2xl.border.border-slate-200.bg-white.p-5,
   .ui-uniform div.rounded-2xl.border.border-slate-200.bg-white.p-6 {
-    @apply rounded-[20px] border-transparent shadow-sm ring-1 ring-slate-100;
+    @apply rounded-lg border-slate-200 shadow-none ring-0;
   }
 
   .ui-uniform button.rounded-xl.border.border-slate-200.bg-white,
   .ui-uniform a.rounded-xl.border.border-slate-200.bg-white,
   .ui-uniform button.rounded-2xl.border.border-slate-200.bg-white,
   .ui-uniform a.rounded-2xl.border.border-slate-200.bg-white {
-    @apply rounded-[14px] transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 hover:shadow-md;
+    @apply rounded-lg transition hover:border-slate-300 hover:bg-slate-50 hover:shadow-none;
   }
 
   .ui-uniform input.rounded-lg.border.border-slate-200,
   .ui-uniform input.rounded-xl.border.border-slate-200,
   .ui-uniform select.rounded-lg.border.border-slate-200,
   .ui-uniform select.rounded-xl.border.border-slate-200 {
-    @apply rounded-2xl bg-slate-50 focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10;
+    @apply rounded-lg bg-white focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10;
   }
 
   .ui-uniform thead.bg-slate-50,
   .ui-uniform thead.border-b.border-slate-200.bg-slate-50 {
-    @apply text-[11px] font-black uppercase tracking-widest text-slate-500;
+    @apply text-[11px] font-medium uppercase tracking-wider text-slate-500;
   }
 
   .ui-uniform tbody.divide-y.divide-slate-100 > tr {
@@ -115,7 +115,7 @@ html.dark body {
   }
 
   .ui-uniform tbody.divide-y.divide-slate-100 > tr:hover {
-    @apply bg-violet-50/40;
+    @apply bg-slate-50;
   }
 }
 
@@ -862,4 +862,296 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
 
 html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #9aa7aa;
+}
+
+/* Minimalist visual pass */
+:root {
+  --sc-page: #f8fafc;
+  --sc-surface: #ffffff;
+  --sc-surface-soft: #f6f8fb;
+  --sc-border-soft: #e2e8f0;
+  --sc-text: #334155;
+  --sc-heading: #1f2937;
+  --sc-muted: #64748b;
+  --sc-primary: #0f766e;
+  --sc-primary-strong: #0d5f59;
+  --sc-primary-soft: #eefdfa;
+}
+
+.app-shell {
+  background: var(--sc-page);
+  color: var(--sc-text);
+}
+
+.app-shell main.ui-uniform,
+.app-shell .ui-uniform,
+.app-shell .view-shell,
+.app-shell .view-shell-static {
+  background: var(--sc-page);
+  color: var(--sc-text);
+}
+
+.app-shell header {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: var(--sc-border-soft);
+  box-shadow: none;
+}
+
+.app-shell > nav,
+.app-shell .profile-popover,
+.app-shell .notification-popover,
+.app-shell .panel-card,
+.app-shell .data-card,
+.app-shell .control-surface {
+  border-color: var(--sc-border-soft);
+  box-shadow: none;
+}
+
+.app-shell .font-black,
+.app-shell .font-extrabold {
+  font-weight: 600;
+}
+
+.app-shell .font-bold {
+  font-weight: 600;
+}
+
+.app-shell .font-semibold {
+  font-weight: 500;
+}
+
+.app-shell .text-3xl {
+  font-size: 1.5rem;
+  line-height: 2rem;
+}
+
+.app-shell .text-2xl {
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+}
+
+.app-shell .text-xl {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+
+.app-shell .tracking-tight {
+  letter-spacing: 0;
+}
+
+.app-shell .tracking-widest,
+.app-shell [class*="tracking-["] {
+  letter-spacing: 0.06em;
+}
+
+.app-shell [class*="shadow"] {
+  box-shadow: none !important;
+}
+
+.app-shell .bg-gradient-to-br,
+.app-shell .bg-gradient-to-r {
+  background-image: none !important;
+}
+
+.app-shell .rounded-2xl,
+.app-shell .rounded-\[18px\],
+.app-shell .rounded-\[20px\],
+.app-shell .rounded-\[24px\],
+.app-shell .rounded-\[28px\],
+.app-shell .rounded-t-\[28px\] {
+  border-radius: 0.75rem;
+}
+
+.app-shell .rounded-xl,
+.app-shell .rounded-\[14px\] {
+  border-radius: 0.625rem;
+}
+
+.app-shell .bg-primary,
+.app-shell .bg-fuchsia-500 {
+  background: var(--sc-primary);
+}
+
+.app-shell .hover\:bg-primary-dark:hover,
+.app-shell .hover\:bg-fuchsia-400:hover {
+  background: var(--sc-primary-strong);
+}
+
+.app-shell .text-primary,
+.app-shell .text-primary\/80,
+.app-shell .text-fuchsia-300,
+.app-shell .text-fuchsia-600,
+.app-shell .text-fuchsia-700,
+.app-shell .text-fuchsia-800,
+.app-shell .text-fuchsia-900,
+.app-shell .text-violet-300,
+.app-shell .text-violet-600,
+.app-shell .text-violet-700 {
+  color: var(--sc-primary);
+}
+
+.app-shell .border-primary,
+.app-shell .border-primary\/20,
+.app-shell .border-fuchsia-100,
+.app-shell .border-fuchsia-200,
+.app-shell .border-violet-100,
+.app-shell .border-violet-200 {
+  border-color: rgba(15, 118, 110, 0.24);
+}
+
+.app-shell .bg-primary\/5,
+.app-shell .bg-primary\/10,
+.app-shell .bg-fuchsia-50,
+.app-shell .bg-fuchsia-100,
+.app-shell .bg-fuchsia-200,
+.app-shell .bg-fuchsia-300,
+.app-shell .bg-fuchsia-50\/70,
+.app-shell .bg-violet-50,
+.app-shell .bg-violet-50\/40,
+.app-shell .bg-violet-50\/70 {
+  background: var(--sc-primary-soft);
+  color: var(--sc-primary);
+}
+
+.app-shell .bg-slate-900 {
+  background: #334155;
+}
+
+.app-shell .hover\:bg-black:hover,
+.app-shell .hover\:bg-slate-800:hover {
+  background: #263445;
+}
+
+.app-shell tbody tr,
+.app-shell button,
+.app-shell a {
+  transition-duration: 150ms;
+}
+
+.app-shell button:hover,
+.app-shell a:hover {
+  transform: none !important;
+}
+
+.app-shell .field-control,
+.app-shell input,
+.app-shell select,
+.app-shell textarea {
+  font-weight: 400;
+}
+
+.app-shell .notification-popover {
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.1) !important;
+}
+
+.app-shell .notification-alert-card-danger {
+  border-left: 3px solid #ef4444;
+}
+
+.app-shell .notification-alert-card-info {
+  border-left: 3px solid #0ea5e9;
+}
+
+.login-view {
+  background: var(--sc-page) !important;
+  color: var(--sc-text);
+}
+
+.login-view .font-black,
+.login-view .font-extrabold {
+  font-weight: 600;
+}
+
+.login-view .font-bold {
+  font-weight: 600;
+}
+
+.login-view button[type="submit"] {
+  background: var(--sc-primary) !important;
+  background-image: none !important;
+  color: #ffffff !important;
+}
+
+.login-view input {
+  font-weight: 400;
+}
+
+.login-view input::placeholder {
+  color: #94a3b8;
+}
+
+.login-view .tracking-widest,
+.login-view [class*="tracking-["] {
+  letter-spacing: 0.06em;
+}
+
+html.dark .app-shell {
+  --sc-page: #111827;
+  --sc-surface: #18212f;
+  --sc-surface-soft: #1f2937;
+  --sc-border-soft: #2f3a4a;
+  --sc-text: #cbd5e1;
+  --sc-heading: #e5e7eb;
+  --sc-muted: #94a3b8;
+  --sc-primary: #5eead4;
+  --sc-primary-strong: #2dd4bf;
+  --sc-primary-soft: rgba(45, 212, 191, 0.1);
+  background: var(--sc-page);
+  color: var(--sc-text);
+}
+
+html.dark .app-shell main.ui-uniform,
+html.dark .app-shell .ui-uniform,
+html.dark .app-shell .view-shell,
+html.dark .app-shell .view-shell-static {
+  background: var(--sc-page);
+  color: var(--sc-text);
+}
+
+html.dark .app-shell header,
+html.dark .app-shell > nav,
+html.dark .app-shell .panel-card,
+html.dark .app-shell .data-card,
+html.dark .app-shell .control-surface,
+html.dark .app-shell .notification-popover,
+html.dark .app-shell .profile-popover,
+html.dark .app-shell .bg-white,
+html.dark .app-shell .bg-white\/95,
+html.dark .app-shell .bg-white\/90,
+html.dark .app-shell .bg-white\/80,
+html.dark .app-shell .bg-white\/70 {
+  background: var(--sc-surface);
+  border-color: var(--sc-border-soft);
+  color: var(--sc-text);
+  box-shadow: none;
+}
+
+html.dark .app-shell .bg-slate-50,
+html.dark .app-shell .bg-slate-50\/40,
+html.dark .app-shell .bg-slate-50\/50,
+html.dark .app-shell .bg-slate-50\/60,
+html.dark .app-shell .bg-slate-50\/70,
+html.dark .app-shell .bg-slate-50\/80,
+html.dark .app-shell .bg-slate-50\/90,
+html.dark .app-shell .bg-slate-100 {
+  background: var(--sc-surface-soft);
+  color: var(--sc-text);
+}
+
+html.dark .app-shell .text-slate-950,
+html.dark .app-shell .text-slate-900,
+html.dark .app-shell .text-slate-800,
+html.dark .app-shell .view-title {
+  color: var(--sc-heading);
+}
+
+html.dark .app-shell .text-slate-700,
+html.dark .app-shell .text-slate-600,
+html.dark .app-shell .text-slate-500,
+html.dark .app-shell .view-subtitle {
+  color: var(--sc-text);
+}
+
+html.dark .app-shell .text-slate-400 {
+  color: var(--sc-muted);
 }

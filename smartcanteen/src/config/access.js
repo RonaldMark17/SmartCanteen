@@ -45,6 +45,11 @@ export const APP_ROUTE_ACCESS = [
     path: '/audit',
     allowedRoles: ['admin'],
   },
+  {
+    key: 'accounts',
+    path: '/accounts',
+    allowedRoles: ['admin'],
+  },
 ];
 
 export function getDefaultRoute(role) {

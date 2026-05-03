@@ -3067,17 +3067,17 @@ export default function Predictions() {
         {
           label: 'Projected Revenue',
           data: schoolWeekSalesOutlook.map((item) => item.predicted_sales),
-          borderColor: '#2563eb',
+          borderColor: '#0f766e',
           backgroundColor(context) {
             const { chart } = context;
             const { ctx, chartArea } = chart;
             if (!chartArea) {
-              return 'rgba(37, 99, 235, 0.14)';
+              return 'rgba(15, 118, 110, 0.12)';
             }
             const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-            gradient.addColorStop(0, 'rgba(37, 99, 235, 0.34)');
-            gradient.addColorStop(0.55, 'rgba(124, 58, 237, 0.12)');
-            gradient.addColorStop(1, 'rgba(37, 99, 235, 0.015)');
+            gradient.addColorStop(0, 'rgba(15, 118, 110, 0.24)');
+            gradient.addColorStop(0.55, 'rgba(20, 184, 166, 0.08)');
+            gradient.addColorStop(1, 'rgba(15, 118, 110, 0.015)');
             return gradient;
           },
           fill: true,
@@ -3086,7 +3086,7 @@ export default function Predictions() {
           pointRadius: 4.5,
           pointHoverRadius: 8,
           pointBackgroundColor: '#ffffff',
-          pointBorderColor: '#2563eb',
+          pointBorderColor: '#0f766e',
           pointBorderWidth: 2.5,
         },
         {
@@ -3118,7 +3118,7 @@ export default function Predictions() {
             boxWidth: 10,
             boxHeight: 10,
             color: '#475569',
-            font: { weight: '700' },
+            font: { weight: '500' },
             usePointStyle: true,
           },
         },
@@ -3132,8 +3132,8 @@ export default function Predictions() {
           displayColors: false,
           titleColor: '#f8fafc',
           bodyColor: '#e2e8f0',
-          titleFont: { weight: '800' },
-          bodyFont: { weight: '700' },
+          titleFont: { weight: '600' },
+          bodyFont: { weight: '500' },
           callbacks: {
             title(context) {
               const item = schoolWeekSalesOutlook[context?.[0]?.dataIndex];
@@ -3164,7 +3164,7 @@ export default function Predictions() {
       scales: {
         x: {
           grid: { display: false },
-          ticks: { color: '#64748b', font: { weight: '700' } },
+          ticks: { color: '#64748b', font: { weight: '500' } },
         },
         y: {
           border: { display: false },

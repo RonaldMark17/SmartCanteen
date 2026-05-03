@@ -11,6 +11,7 @@ import FinancialReports from './views/FinancialReports';
 import Predictions from './views/Predictions';
 import AuditLog from './views/AuditLog';
 import TransactionHistory from './views/TransactionHistory';
+import ManageAccounts from './views/ManageAccounts';
 import {
   APP_ROUTE_ACCESS,
   getDefaultRoute,
@@ -75,6 +76,7 @@ export default function App() {
     transactions: <TransactionHistory />,
     predictions: <Predictions />,
     audit: <AuditLog />,
+    accounts: <ManageAccounts />,
   };
 
   return (

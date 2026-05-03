@@ -9,9 +9,9 @@ export default {
       colors: {
         // This defines the "primary" color used in your buttons and charts
         primary: {
-          DEFAULT: '#d946ef', // Tailwind's fuchsia-500
-          dark: '#c026d3',    // Tailwind's fuchsia-600
-          light: '#f0abfc',   // Tailwind's fuchsia-300
+          DEFAULT: '#0f766e',
+          dark: '#0d5f59',
+          light: '#99f6e4',
         }
       },
       fontFamily: {

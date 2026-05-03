@@ -4,7 +4,6 @@ import { API } from '../services/api';
 import { safeLocalStorageSetItem, safeLocalStorageSetJson } from '../services/storage';
 import DismissibleAlert from '../components/DismissibleAlert';
 import {
-  ArrowTrendingUpIcon,
   BuildingStorefrontIcon,
   CheckCircleIcon,
   EyeIcon,
@@ -477,209 +476,132 @@ export default function Login({ onLogin }) {
   };
 
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-slate-950 px-3 py-3 text-slate-100 sm:px-5 sm:py-4">
-      <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.08)_1px,transparent_1px)] [background-size:44px_44px]" />
-      <div className="pointer-events-none absolute inset-x-0 top-1/2 h-72 -translate-y-1/2 bg-[radial-gradient(ellipse_at_center,rgba(196,61,246,0.18),transparent_62%)]" />
-      <div className="relative mx-auto flex h-full max-w-6xl items-center justify-center">
-        <div className="grid max-h-full w-full overflow-hidden rounded-[28px] border border-slate-800 bg-slate-900 shadow-[0_28px_100px_rgba(0,0,0,0.52)] max-sm:h-full max-sm:rounded-[24px] max-sm:bg-slate-950/70 max-sm:shadow-[0_20px_70px_rgba(0,0,0,0.42)] lg:grid-cols-[20rem_minmax(0,1fr)]">
-          <aside className="hidden min-h-0 flex-col border-r border-slate-800 bg-slate-950 p-5 lg:flex">
+    <div className="login-view min-h-[100dvh] overflow-y-auto bg-slate-50 px-4 py-6 text-slate-700 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-5xl items-center">
+        <div className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white lg:grid-cols-[22rem_minmax(0,1fr)]">
+          <aside className="hidden border-r border-slate-200 bg-slate-50 p-7 lg:flex lg:flex-col">
             <div className="flex items-center gap-3">
-              <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-sm font-black text-white shadow-lg shadow-primary/40 ring-4 ring-primary/10">
-                <span className="absolute inset-0 rounded-2xl bg-white/10 animate-pulse" />
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary text-base font-semibold text-white">
                 S
               </div>
               <div className="min-w-0">
-                <div className="truncate text-xl font-black text-white">SmartCanteen</div>
-                <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300">
+                <div className="truncate text-xl font-semibold text-slate-950">SmartCanteen</div>
+                <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
                   Operations Workspace
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 rounded-[18px] border border-slate-800 bg-slate-900/70 p-4">
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-200">
+            <div className="mt-10">
+              <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-xs font-medium text-primary">
                 <ShieldCheckIcon className="h-4 w-4" />
                 Protected access
               </div>
-              <h1 className="mt-3 text-2xl font-black leading-8 text-white">
-                Secure access for daily service.
+              <h1 className="mt-4 max-w-xs text-2xl font-semibold leading-8 text-slate-950">
+                Secure access for daily canteen service.
               </h1>
-              <p className="mt-2 text-sm leading-6 text-slate-400 [@media(max-height:720px)]:hidden">
-                Role-aware workspaces keep cashier, stock, forecasting, and audit tasks organized.
+              <p className="mt-3 text-sm leading-6 text-slate-500">
+                Open only the workspace your role needs, with authenticator checks for account safety.
               </p>
             </div>
 
-            <div className="mt-4 rounded-[18px] border border-slate-800 bg-slate-900/70 p-4 [@media(max-height:720px)]:hidden">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
-                    Today Preview
-                  </div>
-                  <div className="mt-1 text-sm font-black text-slate-100">Service dashboard</div>
-                </div>
-                <div className="rounded-full bg-emerald-400/10 p-2 text-emerald-300">
-                  <ArrowTrendingUpIcon className="h-5 w-5" />
-                </div>
-              </div>
-              <div className="mt-4 flex h-24 items-end gap-2 rounded-[14px] border border-slate-800 bg-slate-950/70 px-3 py-3">
-                {[38, 54, 46, 72, 58, 88, 66].map((height, index) => (
-                  <div
-                    key={height}
-                    className={`w-full rounded-t-md ${
-                      index === 5 ? 'bg-primary shadow-[0_0_18px_rgba(196,61,246,0.34)]' : 'bg-slate-700'
-                    }`}
-                    style={{ height: `${height}%` }}
-                  />
-                ))}
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-[12px] bg-slate-950/70 px-2 py-1.5">
-                  <div className="text-sm font-black text-white">85%</div>
-                  <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Model</div>
-                </div>
-                <div className="rounded-[12px] bg-slate-950/70 px-2 py-1.5">
-                  <div className="text-sm font-black text-white">4</div>
-                  <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Alerts</div>
-                </div>
-                <div className="rounded-[12px] bg-slate-950/70 px-2 py-1.5">
-                  <div className="text-sm font-black text-white">Live</div>
-                  <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Sync</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-2 [@media(max-height:720px)]:hidden">
-              <div className="rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2">
-                <div className="text-lg font-black text-white">3</div>
-                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Roles</div>
-              </div>
-              <div className="rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2">
-                <div className="text-lg font-black text-white">24/7</div>
-                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Audit</div>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2">
+            <div className="mt-8 space-y-3">
               {workspaceDetails.map((item) => (
-                <div
-                  key={item.label}
-                  className="rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2"
-                >
-                  <div className="flex items-center gap-2 text-xs font-black text-slate-200">
-                    <CheckCircleIcon className="h-4 w-4 shrink-0 text-emerald-400" />
+                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                    <CheckCircleIcon className="h-4 w-4 shrink-0 text-primary" />
                     {item.label}
                   </div>
-                  <div className="mt-1 pl-6 text-[11px] font-medium leading-5 text-slate-500 [@media(max-height:790px)]:hidden">
+                  <div className="mt-1 pl-6 text-xs leading-5 text-slate-500">
                     {item.description}
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-4 rounded-[18px] border border-slate-800 bg-slate-900/70 p-4 [@media(max-height:780px)]:hidden">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                    Service Snapshot
+            <div className="mt-auto grid grid-cols-3 gap-2 pt-8">
+              {accessDetails.map((item) => (
+                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
+                    {item.label}
                   </div>
-                  <div className="mt-1 text-2xl font-black text-white">PHP 12,540</div>
-                  <div className="mt-1 text-xs font-bold text-emerald-300">+8% vs yesterday</div>
+                  <div className="mt-1 truncate text-xs font-medium text-slate-700">
+                    {item.value}
+                  </div>
                 </div>
-                <div className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-200">
-                  Online
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] font-bold text-slate-400">
-                <div className="rounded-[12px] bg-slate-950/70 px-2.5 py-2">
-                  <div className="text-slate-500">System Status</div>
-                  <div className="mt-0.5 text-slate-200">Online</div>
-                </div>
-                <div className="rounded-[12px] bg-slate-950/70 px-2.5 py-2">
-                  <div className="text-slate-500">Last Sync</div>
-                  <div className="mt-0.5 text-slate-200">2 mins ago</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-auto pt-3 text-[11px] font-bold text-slate-600 [@media(max-height:720px)]:hidden">
-              SmartCanteen - Secure Staff Access
+              ))}
             </div>
           </aside>
 
-          <section className="flex min-h-0 items-center justify-center bg-slate-900/95 px-4 py-4 max-sm:h-full max-sm:bg-transparent max-sm:px-2 max-sm:py-2 sm:px-8 sm:py-5 lg:px-10">
-            <div className="max-h-full w-full max-w-md overflow-y-auto rounded-[24px] border border-slate-800 bg-slate-950/70 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.28)] max-sm:flex max-sm:h-full max-sm:flex-col max-sm:justify-center max-sm:border-slate-800/90 max-sm:bg-slate-950/80 max-sm:p-4 sm:p-5">
-              <div className="mb-4 flex items-center gap-3 lg:hidden">
-                <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary text-base font-black text-white shadow-lg shadow-primary/40 ring-4 ring-primary/10 sm:h-10 sm:w-10 sm:text-sm">
-                  <span className="absolute inset-0 rounded-2xl bg-white/10 animate-pulse" />
+          <section className="flex items-center justify-center px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
+            <div className="w-full max-w-md">
+              <div className="mb-8 flex items-center gap-3 lg:hidden">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-semibold text-white">
                   S
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-xl font-black text-white sm:text-lg">SmartCanteen</div>
-                  <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-violet-300">
+                  <div className="truncate text-xl font-semibold text-slate-950">SmartCanteen</div>
+                  <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
                     Operations Workspace
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium uppercase tracking-wider text-slate-500">
                     <BuildingStorefrontIcon className="h-4 w-4" />
                     {portalLabel}
                   </div>
-                  <h2 className="mt-3 text-2xl font-black leading-8 text-slate-100 sm:text-3xl sm:leading-9">
-                    Welcome back to SmartCanteen
+                  <h2 className="mt-5 text-2xl font-semibold leading-8 text-slate-950">
+                    Welcome back
                   </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-400 [@media(max-height:650px)]:hidden">
-                    Ready for today&apos;s service?
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    Sign in to continue to SmartCanteen.
                   </p>
                 </div>
-                <div className="hidden rounded-[14px] border border-slate-800 bg-slate-900 p-2 text-violet-200 sm:block">
+                <div className="hidden rounded-xl border border-slate-200 bg-slate-50 p-2 text-primary sm:block">
                   <ShieldCheckIcon className="h-5 w-5" />
                 </div>
               </div>
 
-              <div className="mt-3 space-y-2">
-                <div className="grid grid-cols-2 gap-2 [@media(max-height:680px)]:hidden">
-                  <div className="flex items-center justify-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1.5 text-[10px] font-black text-emerald-200 sm:justify-start sm:px-3 sm:text-[11px]">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.12)]" />
-                    Secure
-                  </div>
-                  <div className="flex items-center justify-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[10px] font-black text-slate-300 sm:justify-start sm:px-3 sm:text-[11px]">
-                    <LockClosedIcon className="h-4 w-4 text-violet-300" />
-                    Encrypted
-                  </div>
+              <div className="mt-6 grid grid-cols-2 gap-2">
+                <div className="flex items-center gap-2 rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-xs font-medium text-primary">
+                  <span className="h-2 w-2 rounded-full bg-primary" />
+                  Secure
                 </div>
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
+                  <LockClosedIcon className="h-4 w-4 text-slate-400" />
+                  Encrypted
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-3">
                 {lockoutState.isLocked && (
-                  <div className="rounded-[14px] border border-amber-400/30 bg-amber-500/10 px-4 py-2.5 text-sm leading-6 text-amber-100">
-                    <div className="font-black">Too many failed attempts</div>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+                    <div className="font-semibold">Too many failed attempts</div>
                     <div className="mt-1">
                       This account is temporarily locked. Try again in {lockoutRemainingLabel}.
                     </div>
                   </div>
                 )}
                 {error && !isAuthenticatorStep && pendingRecoveryCodes.length === 0 && (
-                  <DismissibleAlert
-                    resetKey={error}
-                    tone="red"
-                    title="Sign-in issue"
-                    className="rounded-[14px] border-red-400/30 bg-red-950/40 text-red-100"
-                  >
+                  <DismissibleAlert resetKey={error} tone="red" title="Sign-in issue" className="rounded-xl">
                     {error}
                   </DismissibleAlert>
                 )}
               </div>
 
-              <form onSubmit={handleSubmit} className="mt-4 space-y-4 sm:space-y-3.5">
+              <form onSubmit={handleSubmit} className="mt-6 space-y-4">
                 <label className="block">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
                     Username
                   </span>
                   <input
                     type="text"
                     required
                     placeholder="Enter your username"
-                    className="mt-1.5 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3.5 text-base font-medium text-slate-100 outline-none transition duration-200 placeholder:text-slate-600 focus:border-fuchsia-400 focus:bg-slate-950 focus:ring-2 focus:ring-fuchsia-400/25 focus:shadow-[0_0_0_4px_rgba(168,85,247,0.18),0_14px_30px_rgba(0,0,0,0.28)] disabled:cursor-not-allowed disabled:opacity-60 sm:py-3 sm:text-sm"
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
                     value={username}
                     onChange={handleUsernameChange}
                     disabled={loading || isAuthenticatorStep}
@@ -688,7 +610,7 @@ export default function Login({ onLogin }) {
                 </label>
 
                 <label className="block">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
                     Password
                   </span>
                   <div className="relative mt-1.5">
@@ -696,7 +618,7 @@ export default function Login({ onLogin }) {
                       type={showPassword ? 'text' : 'password'}
                       required
                       placeholder="Enter your password"
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3.5 pr-14 text-base font-medium text-slate-100 outline-none transition duration-200 placeholder:text-slate-600 focus:border-fuchsia-400 focus:bg-slate-950 focus:ring-2 focus:ring-fuchsia-400/25 focus:shadow-[0_0_0_4px_rgba(168,85,247,0.18),0_14px_30px_rgba(0,0,0,0.28)] disabled:cursor-not-allowed disabled:opacity-60 sm:py-3 sm:text-sm"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-12 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       disabled={loading || isAuthenticatorStep}
@@ -705,30 +627,28 @@ export default function Login({ onLogin }) {
                     <button
                       type="button"
                       onClick={() => setShowPassword((prev) => !prev)}
-                      className="absolute inset-y-0 right-2 inline-flex h-full w-12 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
+                      className="absolute inset-y-0 right-2 inline-flex h-full w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
-                      {showPassword ? <EyeSlashIcon className="h-7 w-7" /> : <EyeIcon className="h-7 w-7" />}
+                      {showPassword ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
                     </button>
                   </div>
                 </label>
 
-                <div className="flex items-center justify-between gap-3 text-xs">
-                  <label className="flex items-center gap-2 font-bold text-slate-400">
-                    <input
-                      type="checkbox"
-                      checked={rememberUsername}
-                      onChange={(event) => setRememberUsername(event.target.checked)}
-                      className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-primary focus:ring-2 focus:ring-primary/30"
-                    />
-                    Remember me for 30 days
-                  </label>
-                </div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={rememberUsername}
+                    onChange={(event) => setRememberUsername(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-2 focus:ring-primary/20"
+                  />
+                  Remember me for 30 days
+                </label>
 
-                <div className="hidden items-start gap-2 rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2.5 sm:flex [@media(max-height:650px)]:hidden">
-                  <ShieldCheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
-                  <div className="text-xs leading-5 text-slate-400">
-                    <span className="font-black text-slate-100">MFA required:</span> Use a 6-digit code from your authenticator app.
+                <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                  <ShieldCheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                  <div className="text-xs leading-5 text-slate-500">
+                    <span className="font-semibold text-slate-800">MFA required:</span> Use a 6-digit code from your authenticator app.
                   </div>
                 </div>
 
@@ -741,7 +661,7 @@ export default function Login({ onLogin }) {
                     !password ||
                     (isAuthenticatorStep && !canSubmitAuthenticatorCode)
                   }
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#f35cff,#a855f7,#6d28d9)] px-4 py-[1.125rem] text-base font-black text-white shadow-[0_18px_42px_rgba(168,85,247,0.48)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_24px_58px_rgba(168,85,247,0.58)] active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-[0_18px_42px_rgba(168,85,247,0.48)] sm:py-4 sm:text-sm"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {lockoutState.isLocked ? (
                     `Try again in ${lockoutRemainingLabel}`
@@ -760,22 +680,7 @@ export default function Login({ onLogin }) {
                 </button>
               </form>
 
-              <div className="mt-4 hidden gap-2 md:grid md:grid-cols-3 [@media(max-height:780px)]:hidden">
-                {accessDetails.map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-[14px] border border-slate-800 bg-slate-900/70 px-3 py-2"
-                  >
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
-                      {item.label}
-                    </div>
-                    <div className="mt-1 text-xs font-bold leading-5 text-slate-200">
-                      {item.value}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 text-center text-[11px] font-bold text-slate-600 [@media(max-height:650px)]:hidden">
+              <div className="mt-6 text-center text-xs font-medium text-slate-500">
                 SmartCanteen - Secure Staff Access
               </div>
             </div>
@@ -784,30 +689,30 @@ export default function Login({ onLogin }) {
       </div>
 
       {isAuthenticatorStep && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/78 px-4 py-5 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 px-4 py-5 backdrop-blur-sm">
           <div
-            className="w-full max-w-[28rem] overflow-hidden rounded-[24px] border border-emerald-300/20 bg-slate-950 text-slate-100 shadow-[0_28px_90px_rgba(0,0,0,0.6)]"
+            className="w-full max-w-[28rem] overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm"
             role="dialog"
             aria-modal="true"
             aria-labelledby="authenticator-modal-title"
           >
-            <div className="border-b border-slate-800 bg-slate-900/80 px-5 py-4">
+            <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-200">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-primary">
                     <ShieldCheckIcon className="h-4 w-4" />
                     Authenticator app
                   </div>
-                  <h3 id="authenticator-modal-title" className="mt-3 text-xl font-black leading-7 text-white">
+                  <h3 id="authenticator-modal-title" className="mt-3 text-xl font-semibold leading-7 text-slate-950">
                     {isAuthenticatorSetup ? 'Set up verification' : 'Enter verification code'}
                   </h3>
-                  <p className="mt-1 text-sm leading-6 text-slate-400">
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
                     {isAuthenticatorSetup
                       ? 'Add SmartCanteen to your authenticator app, then enter the 6-digit code.'
                       : 'Open your authenticator app and enter the current 6-digit code.'}
                   </p>
                 </div>
-                <div className="rounded-[14px] border border-emerald-400/20 bg-emerald-400/10 p-2 text-emerald-200">
+                <div className="rounded-xl border border-slate-200 bg-white p-2 text-primary">
                   <LockClosedIcon className="h-5 w-5" />
                 </div>
               </div>
@@ -819,7 +724,7 @@ export default function Login({ onLogin }) {
                   resetKey={`${error}-${authenticatorCode}`}
                   tone="red"
                   title={isAuthenticatorSetup ? 'Authenticator setup issue' : 'Verification issue'}
-                  className="mb-4 border-red-400/30 bg-red-950/50 text-red-100"
+                  className="mb-4 rounded-xl"
                 >
                   {error}
                 </DismissibleAlert>
@@ -837,17 +742,17 @@ export default function Login({ onLogin }) {
                     </div>
                   )}
                   <div className="min-w-0">
-                    <div className="text-xs leading-5 text-slate-400">
+                    <div className="text-xs leading-5 text-slate-500">
                       Scan the QR code or enter this setup key in Google Authenticator,
                       Microsoft Authenticator, Authy, or another TOTP app.
                     </div>
-                    <div className="mt-2 break-all rounded-2xl border border-emerald-300/20 bg-slate-900 px-3 py-2 font-mono text-sm font-black tracking-widest text-white">
+                    <div className="mt-2 break-all rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-semibold tracking-wider text-slate-800">
                       {authenticatorChallenge?.authenticator?.secret_formatted}
                     </div>
                     <button
                       type="button"
                       onClick={copySetupKey}
-                      className="mt-2 rounded-xl border border-emerald-300/20 px-3 py-1.5 text-xs font-black text-emerald-100 transition hover:bg-emerald-300/10"
+                      className="mt-2 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
                     >
                       {secretCopied ? 'Copied' : 'Copy key'}
                     </button>
@@ -856,7 +761,7 @@ export default function Login({ onLogin }) {
               )}
 
               <label className="block">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+                <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
                   6-digit code or recovery code
                 </span>
                 <input
@@ -865,7 +770,7 @@ export default function Login({ onLogin }) {
                   inputMode={isAuthenticatorSetup ? 'numeric' : 'text'}
                   required
                   placeholder={isAuthenticatorSetup ? '000000' : '000000 or code'}
-                  className="mt-2 w-full rounded-2xl border border-emerald-300/25 bg-slate-900 px-4 py-4 text-center font-mono text-2xl font-black tracking-[0.32em] text-white outline-none transition duration-200 placeholder:text-slate-700 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20 disabled:cursor-not-allowed disabled:opacity-60 sm:text-3xl"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-4 text-center font-mono text-2xl font-semibold tracking-[0.24em] text-slate-900 outline-none transition placeholder:text-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
                   value={authenticatorCode}
                   onChange={(event) =>
                     setAuthenticatorCode(normalizeAuthenticatorCode(event.target.value, {
@@ -887,18 +792,18 @@ export default function Login({ onLogin }) {
                   type="button"
                   onClick={resetAuthenticatorStep}
                   disabled={loading}
-                  className="rounded-2xl border border-slate-700 px-4 py-3 text-sm font-black text-slate-300 transition hover:border-slate-500 hover:bg-slate-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Use a different account
                 </button>
                 <button
                   type="submit"
                   disabled={loading || !canSubmitAuthenticatorCode}
-                  className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 shadow-[0_16px_34px_rgba(16,185,129,0.28)] transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? (
                     <>
-                      <span className="h-4 w-4 rounded-full border-2 border-slate-950/30 border-t-slate-950 animate-spin" />
+                      <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
                       Verifying...
                     </>
                   ) : isAuthenticatorSetup ? (
@@ -914,22 +819,22 @@ export default function Login({ onLogin }) {
       )}
 
       {pendingRecoveryCodes.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-5 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 px-4 py-5 backdrop-blur-sm">
           <div
-            className="w-full max-w-[32rem] overflow-hidden rounded-[24px] border border-fuchsia-300/20 bg-slate-950 text-slate-100 shadow-[0_28px_90px_rgba(0,0,0,0.62)]"
+            className="w-full max-w-[32rem] overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm"
             role="dialog"
             aria-modal="true"
             aria-labelledby="recovery-codes-title"
           >
-            <div className="border-b border-slate-800 bg-slate-900/80 px-5 py-4">
-              <div className="inline-flex items-center gap-2 rounded-full border border-fuchsia-300/20 bg-fuchsia-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-fuchsia-100">
+            <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-primary">
                 <ShieldCheckIcon className="h-4 w-4" />
                 Backup access
               </div>
-              <h3 id="recovery-codes-title" className="mt-3 text-xl font-black leading-7 text-white">
+              <h3 id="recovery-codes-title" className="mt-3 text-xl font-semibold leading-7 text-slate-950">
                 Save your recovery codes
               </h3>
-              <p className="mt-1 text-sm leading-6 text-slate-400">
+              <p className="mt-1 text-sm leading-6 text-slate-500">
                 Each code works once if the authenticator app is deleted or unavailable.
               </p>
             </div>
@@ -939,14 +844,14 @@ export default function Login({ onLogin }) {
                 {pendingRecoveryCodes.map((code) => (
                   <div
                     key={code}
-                    className="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-2.5 text-center font-mono text-sm font-black tracking-widest text-white"
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-center font-mono text-sm font-semibold tracking-wider text-slate-800"
                   >
                     {code}
                   </div>
                 ))}
               </div>
 
-              <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-100">
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
                 Store these in a password manager or another secure place. They will not be shown again.
               </div>
 
@@ -954,14 +859,14 @@ export default function Login({ onLogin }) {
                 <button
                   type="button"
                   onClick={copyRecoveryCodes}
-                  className="rounded-2xl border border-slate-700 px-4 py-3 text-sm font-black text-slate-300 transition hover:border-slate-500 hover:bg-slate-900 hover:text-white"
+                  className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
                 >
                   {recoveryCodesCopied ? 'Copied' : 'Copy codes'}
                 </button>
                 <button
                   type="button"
                   onClick={confirmRecoveryCodesSaved}
-                  className="rounded-2xl bg-fuchsia-500 px-5 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(217,70,239,0.28)] transition hover:bg-fuchsia-400 active:scale-[0.99]"
+                  className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99]"
                 >
                   I saved these codes
                 </button>

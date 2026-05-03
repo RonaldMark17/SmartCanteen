@@ -14,12 +14,10 @@ import {
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
-  BanknotesIcon,
   ChartPieIcon,
   CheckCircleIcon,
   ClipboardDocumentCheckIcon,
   ClockIcon,
-  CreditCardIcon,
   CurrencyDollarIcon,
   CubeIcon,
   ExclamationTriangleIcon,
@@ -61,14 +59,6 @@ function formatCurrency(value) {
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString('en-PH');
-}
-
-function formatPercent(value, total) {
-  if (!total) {
-    return '0%';
-  }
-
-  return `${Math.round((Number(value || 0) / Number(total || 1)) * 100)}%`;
 }
 
 function escapeCsvValue(value) {
@@ -167,34 +157,6 @@ function normalizeCategorySplit(value) {
         .filter((item) => item.value > 0)
         .slice(0, 4)
     : [];
-}
-
-function normalizePaymentSummary(value) {
-  const fallback = [
-    { key: 'cash', label: 'Cash', count: 0, revenue: 0 },
-    { key: 'gcash', label: 'GCash', count: 0, revenue: 0 },
-  ];
-
-  if (!Array.isArray(value)) {
-    return fallback;
-  }
-
-  const byKey = new Map(
-    value.map((item) => {
-      const key = item?.key === 'gcash' ? 'gcash' : 'cash';
-      return [
-        key,
-        {
-          key,
-          label: key === 'gcash' ? 'GCash' : 'Cash',
-          count: Number(item?.count || 0),
-          revenue: Number(item?.revenue || 0),
-        },
-      ];
-    })
-  );
-
-  return fallback.map((item) => byKey.get(item.key) || item);
 }
 
 function normalizeTopProducts(value) {
@@ -583,10 +545,6 @@ export default function Dashboard() {
     dailySales: [],
     hourlySales: [],
     categorySplit: [],
-    paymentSummary: [
-      { key: 'cash', label: 'Cash', count: 0, revenue: 0 },
-      { key: 'gcash', label: 'GCash', count: 0, revenue: 0 },
-    ],
     topProducts: [],
     predictions: [],
     metrics: DEFAULT_METRICS,
@@ -666,14 +624,12 @@ export default function Dashboard() {
           dailyResult,
           categoryResult,
           topProductsResult,
-          paymentResult,
           recentTransactionsResult,
           hourlyResult,
         ] = await Promise.allSettled([
           API.getDailySales(queryOptions),
           API.getCategorySales(queryOptions),
           API.getTopProducts(queryOptions),
-          API.getPaymentSummary(queryOptions),
           API.getTransactions(startDate, endDate, { limit: 5 }),
           hourlyRequest,
         ]);
@@ -695,10 +651,6 @@ export default function Dashboard() {
             topProductsResult.status === 'fulfilled'
               ? normalizeTopProducts(topProductsResult.value)
               : [],
-          paymentSummary:
-            paymentResult.status === 'fulfilled'
-              ? normalizePaymentSummary(paymentResult.value)
-              : normalizePaymentSummary([]),
           transactions:
             recentTransactionsResult.status === 'fulfilled' && Array.isArray(recentTransactionsResult.value)
               ? recentTransactionsResult.value
@@ -713,7 +665,6 @@ export default function Dashboard() {
           dailyResult.status === 'rejected' ? dailyResult.reason?.message || 'Daily sales failed.' : null,
           categoryResult.status === 'rejected' ? categoryResult.reason?.message || 'Category sales failed.' : null,
           topProductsResult.status === 'rejected' ? topProductsResult.reason?.message || 'Top products failed.' : null,
-          paymentResult.status === 'rejected' ? paymentResult.reason?.message || 'Payment summary failed.' : null,
           recentTransactionsResult.status === 'rejected'
             ? recentTransactionsResult.reason?.message || 'Recent transactions failed.'
             : null,
@@ -738,7 +689,6 @@ export default function Dashboard() {
           hourlySales: [],
           categorySplit: [],
           topProducts: [],
-          paymentSummary: normalizePaymentSummary([]),
         }));
       } finally {
         if (!cancelled) {
@@ -785,8 +735,6 @@ export default function Dashboard() {
   );
   const averageOrderValue =
     periodTransactionCount > 0 ? periodRevenue / periodTransactionCount : 0;
-  const paymentSummary = data.paymentSummary;
-  const paymentTotal = paymentSummary.reduce((sum, item) => sum + item.revenue, 0);
   const topProducts = data.topProducts;
   const topProduct = topProducts[0] || null;
   const peakTrendPoint = getPeakTrendPoint(trend);
@@ -820,15 +768,6 @@ export default function Dashboard() {
       [getPeakMetricTitle(period), peakTrendPoint ? peakTrendPoint.label : 'N/A'],
       ['Top Category', topCategory ? topCategory.category : 'N/A'],
       ['Top Product', topProduct ? topProduct.name : 'N/A'],
-      [],
-      ['Payment Mix'],
-      ['Method', 'Orders', 'Revenue', 'Share'],
-      ...paymentSummary.map((entry) => [
-        entry.label,
-        entry.count,
-        formatCurrency(entry.revenue),
-        formatPercent(entry.revenue, paymentTotal),
-      ]),
       [],
       ['Sales by Category'],
       ['Category', 'Revenue'],
@@ -881,7 +820,7 @@ export default function Dashboard() {
       {
         label: 'Revenue (PHP)',
         data: trend.values,
-        backgroundColor: 'rgba(217, 70, 239, 0.8)',
+        backgroundColor: 'rgba(15, 118, 110, 0.72)',
         borderRadius: 6,
       },
     ],
@@ -892,7 +831,7 @@ export default function Dashboard() {
     datasets: [
       {
         data: categorySplit.map((entry) => entry.value),
-        backgroundColor: ['#d946ef', '#6366f1', '#f59e0b', '#14b8a6'],
+        backgroundColor: ['#0f766e', '#25636d', '#ca8a04', '#64748b'],
         borderWidth: 0,
         hoverOffset: 4,
       },
@@ -1037,24 +976,13 @@ export default function Dashboard() {
           alert={summary?.low_stock_count > 0}
           onClick={() => navigate('/inventory')}
         />
-        <div
+        <StatCard
+          title="AI Model Accuracy"
+          value={metrics?.accuracy || '0.00%'}
+          icon={SparklesIcon}
+          color="teal"
           onClick={() => navigate('/predictions')}
-          className="group relative flex cursor-pointer flex-col justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 to-indigo-900 p-5 text-white shadow-lg transition-all hover:scale-[1.02] hover:shadow-xl hover:ring-2 hover:ring-primary/50"
-        >
-          <div className="z-10 flex items-start justify-between">
-            <div>
-              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                AI Model Accuracy
-                <ArrowTopRightOnSquareIcon className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
-              </p>
-              <p className="mt-1 text-2xl font-black tracking-tight">{metrics?.accuracy || '0.00%'}</p>
-            </div>
-            <div className="rounded-xl bg-white/10 p-2 backdrop-blur-md">
-              <SparklesIcon className="h-6 w-6 text-fuchsia-300" />
-            </div>
-          </div>
-          <SparklesIcon className="absolute -bottom-4 -right-4 h-24 w-24 text-white/5 transition-transform duration-500 group-hover:rotate-12" />
-        </div>
+        />
       </div>
 
       <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1181,65 +1109,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid shrink-0 grid-cols-1 gap-5 xl:grid-cols-3">
-        <section className="panel-card">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
-                Payment Mix
-              </h3>
-              <p className="mt-1 text-sm text-slate-500">Cash and GCash activity for this period.</p>
-            </div>
-            <BanknotesIcon className="h-6 w-6 text-emerald-500" />
-          </div>
-
-          <div className="mt-5 space-y-4">
-            {paymentSummary.map((entry) => {
-              const PaymentIcon = entry.key === 'gcash' ? CreditCardIcon : BanknotesIcon;
-              const share = paymentTotal > 0 ? (entry.revenue / paymentTotal) * 100 : 0;
-
-              return (
-                <button
-                  key={entry.key}
-                  type="button"
-                  onClick={() => navigate('/transactions')}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-left transition hover:border-primary/30 hover:bg-white"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="rounded-xl bg-white p-2 text-slate-600 shadow-sm">
-                        <PaymentIcon className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-black text-slate-900">{entry.label}</div>
-                        <div className="mt-0.5 text-xs font-semibold text-slate-500">
-                          {formatNumber(entry.count)} order{entry.count === 1 ? '' : 's'}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-black text-slate-900">
-                        {formatCurrency(entry.revenue)}
-                      </div>
-                      <div className="mt-0.5 text-xs font-bold text-slate-400">
-                        {formatPercent(entry.revenue, paymentTotal)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
-                    <div
-                      className={`h-full rounded-full ${
-                        entry.key === 'gcash' ? 'bg-blue-500' : 'bg-emerald-500'
-                      }`}
-                      style={{ width: `${share}%` }}
-                    />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
+      <div className="grid shrink-0 grid-cols-1 gap-5 lg:grid-cols-2">
         <section className="panel-card">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -1460,6 +1330,7 @@ function StatCard({ title, value, icon, color, alert = false, onClick }) {
     emerald: { iconBg: 'bg-emerald-500/10', iconText: 'text-emerald-500', orb: 'bg-emerald-500' },
     blue: { iconBg: 'bg-blue-500/10', iconText: 'text-blue-500', orb: 'bg-blue-500' },
     red: { iconBg: 'bg-red-500/10', iconText: 'text-red-500', orb: 'bg-red-500' },
+    teal: { iconBg: 'bg-teal-50', iconText: 'text-primary', orb: 'bg-primary' },
   };
 
   const palette = colorClasses[color] || colorClasses.blue;
@@ -1469,7 +1340,7 @@ function StatCard({ title, value, icon, color, alert = false, onClick }) {
     <div
       onClick={onClick}
       className={`group relative flex cursor-pointer flex-col justify-center overflow-hidden rounded-[20px] border bg-white p-4 shadow-sm transition-all hover:-translate-y-1 hover:shadow-md sm:p-5 ${
-        alert ? 'border-red-400 ring-4 ring-red-50' : 'border-slate-200'
+        alert ? 'border-red-300 bg-red-50/30 ring-1 ring-red-100' : 'border-slate-200'
       }`}
     >
       <div className="z-10 flex items-start justify-between">
