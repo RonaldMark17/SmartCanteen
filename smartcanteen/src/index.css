@@ -608,19 +608,19 @@ html.dark body {
 
   html.dark .pos-product-card:hover {
     background: #141d2e;
-    border-color: rgba(244, 122, 255, 0.42);
+    border-color: rgba(94, 234, 212, 0.32);
   }
 
   html.dark .pos-product-card.border-primary,
   html.dark .pos-product-card.bg-primary\/5 {
-    background: rgba(176, 0, 212, 0.09);
-    border-color: rgba(244, 122, 255, 0.48);
-    --tw-ring-color: rgba(244, 122, 255, 0.2);
+    background: rgba(20, 184, 166, 0.12);
+    border-color: rgba(94, 234, 212, 0.4);
+    --tw-ring-color: rgba(94, 234, 212, 0.14);
   }
 
   html.dark .pos-product-icon {
-    background: rgba(176, 0, 212, 0.08);
-    color: #f47aff;
+    background: rgba(94, 234, 212, 0.1);
+    color: #5eead4;
   }
 
   html.dark .pos-stock-chip {
@@ -631,6 +631,16 @@ html.dark body {
   html.dark .pos-stock-chip.bg-red-100 {
     background: rgba(92, 25, 39, 0.55);
     color: var(--sc-dark-pink);
+  }
+
+  html.dark .pos-selected-qty {
+    background: #5eead4;
+    color: #083344;
+  }
+
+  html.dark .pos-selected-chip {
+    background: rgba(94, 234, 212, 0.12);
+    color: #5eead4;
   }
 
   html.dark .pos-qty-stepper {
@@ -646,8 +656,8 @@ html.dark body {
   }
 
   html.dark .pos-qty-button:not(:disabled):hover {
-    border-color: rgba(244, 122, 255, 0.36);
-    color: #f47aff;
+    border-color: rgba(94, 234, 212, 0.32);
+    color: #5eead4;
     background: #151f33;
   }
 
@@ -662,8 +672,8 @@ html.dark body {
 
   html.dark .pos-qty-input:focus {
     background: #101827;
-    border-color: rgba(244, 122, 255, 0.34);
-    box-shadow: 0 0 0 2px rgba(244, 122, 255, 0.12);
+    border-color: rgba(94, 234, 212, 0.32);
+    box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.12);
   }
 
   html.dark .ui-uniform button.text-sky-600,

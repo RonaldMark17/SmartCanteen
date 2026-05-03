@@ -364,7 +364,7 @@ export default function POS() {
       </div>
 
       <div className="custom-scrollbar flex-1 overflow-y-auto pb-4">
-        <div className="flex min-h-[75vh] flex-col gap-4">
+        <div className="flex min-h-0 flex-col gap-4">
           <div className="control-surface shrink-0 space-y-3">
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
@@ -401,7 +401,7 @@ export default function POS() {
             </div>
           </div>
 
-          <div className="pos-product-grid custom-scrollbar grid grid-cols-2 content-start gap-3 pr-0 md:flex-1 md:grid-cols-3 md:overflow-y-auto md:pr-2 lg:grid-cols-4">
+          <div className="pos-product-grid custom-scrollbar grid grid-cols-2 content-start gap-3 pb-4 pr-0 md:min-h-0 md:flex-1 md:grid-cols-3 md:overflow-y-auto md:pr-2 lg:grid-cols-4">
             {paginatedProducts.map((product) => {
               const selectedQty = cartQtyByProductId[product.id] || 0;
               const isSelected = selectedQty > 0;
@@ -409,7 +409,7 @@ export default function POS() {
               return (
                 <div
                   key={product.id}
-                  className={`pos-product-card relative flex flex-col items-center rounded-[18px] border p-3 text-center shadow-sm transition-all sm:rounded-[20px] sm:p-4 ${
+                  className={`pos-product-card relative flex flex-col items-center rounded-xl border p-3 text-center shadow-sm transition-all sm:p-3 ${
                     product.stock === 0
                       ? 'border-slate-200 bg-white opacity-50 grayscale'
                       : isSelected
@@ -426,29 +426,29 @@ export default function POS() {
                     }`}
                   >
                   {isSelected && (
-                    <div className="absolute right-3 top-3 inline-flex min-w-[2.2rem] items-center justify-center rounded-full bg-primary px-2 py-1 text-[11px] font-black text-white shadow-sm">
+                    <div className="pos-selected-qty absolute right-3 top-3 inline-flex min-w-[2.2rem] items-center justify-center rounded-full bg-primary px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
                       {selectedQty}
                     </div>
                   )}
 
                   <div
-                    className={`pos-product-icon mb-2 rounded-2xl p-2.5 sm:p-3 ${
+                    className={`pos-product-icon mb-2 rounded-xl p-2.5 ${
                       isSelected ? 'bg-primary/10 text-primary' : 'text-primary/80'
                     }`}
                   >
                     {(() => {
                       const ProductIcon = categoryIcon(product.category);
-                      return <ProductIcon className="h-8 w-8 sm:h-9 sm:w-9" />;
+                      return <ProductIcon className="h-7 w-7 sm:h-8 sm:w-8" />;
                     })()}
                   </div>
 
                   <div
-                    className="mb-1 w-full truncate px-1 text-[13px] font-semibold leading-tight text-slate-800 sm:text-sm"
+                    className="mb-1 w-full truncate px-1 text-[13px] font-semibold leading-tight text-slate-800"
                     title={product.name}
                   >
                     {product.name}
                   </div>
-                  <div className="text-sm font-black text-primary sm:text-base">{formatCurrency(product.price)}</div>
+                  <div className="text-sm font-semibold text-primary">{formatCurrency(product.price)}</div>
 
                   <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
                     <div
@@ -462,19 +462,19 @@ export default function POS() {
                     </div>
 
                     {isSelected && (
-                      <div className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] text-primary">
+                      <div className="pos-selected-chip rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
                         Qty {selectedQty}
                       </div>
                     )}
                   </div>
                   </button>
 
-                  <div className="pos-qty-stepper mt-3 flex w-full items-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-1.5 sm:gap-2">
+                  <div className="pos-qty-stepper mt-3 flex w-full items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
                     <button
                       type="button"
                       onClick={() => updateQty(product.id, selectedQty - 1)}
                       disabled={selectedQty === 0}
-                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500 sm:h-10 sm:w-10"
+                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500"
                       aria-label={`Decrease ${product.name} quantity`}
                     >
                       <MinusSmallIcon className="h-5 w-5" />
@@ -493,7 +493,7 @@ export default function POS() {
                         onChange={(event) => handleQuantityInputChange(product.id, event.target.value)}
                         onKeyDown={preventInvalidQuantityKey}
                         aria-label={`Set ${product.name} quantity`}
-                        className="pos-qty-input mx-auto block h-6 w-10 rounded-lg border border-transparent bg-transparent text-center text-base font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15 sm:h-7 sm:w-14 sm:text-lg"
+                        className="pos-qty-input mx-auto block h-6 w-10 rounded-lg border border-transparent bg-transparent text-center text-base font-semibold text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15 sm:w-12"
                       />
                     </div>
 
@@ -501,7 +501,7 @@ export default function POS() {
                       type="button"
                       onClick={() => addToCart(product)}
                       disabled={product.stock === 0 || selectedQty >= product.stock}
-                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500 sm:h-10 sm:w-10"
+                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500"
                       aria-label={`Increase ${product.name} quantity`}
                     >
                       <PlusSmallIcon className="h-5 w-5" />
