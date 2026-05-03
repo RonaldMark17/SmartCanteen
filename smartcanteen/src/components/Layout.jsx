@@ -1127,7 +1127,7 @@ export default function Layout({ children, onLogout }) {
   const sidebarLogoutClass = darkMode
     ? 'text-slate-400 hover:border-red-400/20 hover:bg-red-500/10 hover:text-red-300'
     : 'text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600';
-  const mobileSidebarShellClass = darkMode ? 'bg-slate-950 text-slate-300' : 'bg-white text-slate-600';
+  const mobileSidebarShellClass = 'border-r border-slate-200 bg-white text-slate-700';
 
   const getSidebarNavLinkClass = (active) => {
     if (active) {
@@ -1159,22 +1159,18 @@ export default function Layout({ children, onLogout }) {
 
   const getMobileNavLinkClass = (active) => {
     if (active) {
-      return darkMode
-        ? 'border-white/10 bg-primary text-white shadow-lg shadow-primary/20'
-        : 'border-primary bg-primary text-white shadow-lg shadow-primary/20';
+      return 'border-teal-200 bg-teal-50 text-slate-950';
     }
 
-    return darkMode
-      ? 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
-      : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
+    return 'border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
   };
 
   const getMobileNavDescriptionClass = (active) => {
     if (active) {
-      return 'text-white/80';
+      return 'text-primary';
     }
 
-    return darkMode ? 'text-slate-500' : 'text-slate-400';
+    return 'text-slate-500';
   };
 
   return (
@@ -2034,33 +2030,29 @@ export default function Layout({ children, onLogout }) {
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <nav className={`fixed inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col shadow-2xl animate-in slide-in-from-left duration-300 ${mobileSidebarShellClass}`}>
-            <div className="flex items-center justify-between p-5">
-              <div className="flex items-center gap-2">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary font-black text-white shadow-lg shadow-primary/30">
+          <nav className={`fixed inset-y-0 left-0 flex w-[min(21rem,88vw)] flex-col shadow-xl animate-in slide-in-from-left duration-300 ${mobileSidebarShellClass}`}>
+            <div className="flex items-center justify-between px-4 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-semibold text-white">
                   S
                 </div>
-                <div>
-                  <h2 className={`text-lg font-black tracking-tight ${sidebarBrandTitleClass}`}>SmartCanteen</h2>
-                  <p className={`text-[10px] font-bold uppercase tracking-[0.22em] ${sidebarBrandMetaClass}`}>
+                <div className="min-w-0">
+                  <h2 className="truncate text-lg font-semibold text-slate-950">SmartCanteen</h2>
+                  <p className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wider text-primary">
                     {user.role || 'staff'} workspace
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className={`inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${
-                  darkMode
-                    ? 'text-slate-500 hover:bg-white/10 hover:text-white'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-                }`}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Close navigation menu"
               >
-                <XMarkIcon className="h-6 w-6" />
+                <XMarkIcon className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="custom-scrollbar flex-1 space-y-1 overflow-y-auto px-4 pb-4">
+            <div className="custom-scrollbar flex-1 space-y-1.5 overflow-y-auto px-3 pb-4">
               {visibleNavItems.map((item) => {
                 const active = isActive(item.path);
 
@@ -2069,12 +2061,12 @@ export default function Layout({ children, onLogout }) {
                     key={item.name}
                     to={item.path}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3.5 transition-all ${getMobileNavLinkClass(active)}`}
+                    className={`flex items-center gap-3 rounded-lg border px-3.5 py-3 transition-all ${getMobileNavLinkClass(active)}`}
                   >
-                    <item.icon className="h-5 w-5 shrink-0" />
+                    <item.icon className={`h-5 w-5 shrink-0 ${active ? 'text-primary' : 'text-slate-400'}`} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-black">{item.name}</span>
-                      <span className={`mt-0.5 block truncate text-[11px] font-semibold ${getMobileNavDescriptionClass(active)}`}>
+                      <span className="block truncate text-sm font-semibold">{item.name}</span>
+                      <span className={`mt-0.5 block truncate text-xs leading-4 ${getMobileNavDescriptionClass(active)}`}>
                         {getNavDescription(item.path)}
                       </span>
                     </span>
@@ -2084,14 +2076,10 @@ export default function Layout({ children, onLogout }) {
 
             </div>
 
-            <div className={`border-t p-4 ${darkMode ? 'border-slate-800/80' : 'border-slate-200'}`}>
+            <div className="border-t border-slate-200 p-3">
               <button
                 onClick={requestLogout}
-                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold transition ${
-                  darkMode
-                    ? 'text-slate-400 hover:bg-red-500/10 hover:text-red-300'
-                    : 'text-slate-500 hover:bg-red-50 hover:text-red-600'
-                }`}
+                className="flex w-full items-center gap-3 rounded-lg px-3.5 py-3 text-sm font-semibold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
               >
                 <ArrowRightOnRectangleIcon className="h-5 w-5" /> Logout
               </button>

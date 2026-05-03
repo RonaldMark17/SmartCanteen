@@ -10,3 +10,24 @@ INFO:     connection open
 INFO:     connection closed
 INFO:     ('127.0.0.1', 55322) - "WebSocket /api/realtime/alerts" [accepted]
 INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 56931) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 50197) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 52802) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 63352) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 65525) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 63148) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 59159) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
