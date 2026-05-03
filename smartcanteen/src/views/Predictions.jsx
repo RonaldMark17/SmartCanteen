@@ -2350,14 +2350,14 @@ function TomorrowSalesOutlookInputs({
 
   return (
     <div className="mt-4">
-      <div className="mb-3 flex flex-col gap-3 rounded-[20px] bg-slate-50 px-4 py-3 ring-1 ring-slate-100 lg:flex-row lg:items-center lg:justify-between">
-        <p className="max-w-3xl text-sm leading-6 text-slate-600">
+      <div className="prediction-control-strip mb-3 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <p className="prediction-control-copy max-w-3xl text-sm leading-6 text-slate-600">
           Auto-filled from transactions, inventory, weather, school-day context, and forecasted product demand.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm">
+          <div className="prediction-model-chip flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
             <span className="whitespace-nowrap text-slate-500">AI Model</span>
-            <span className="rounded-xl border border-blue-100 bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">
+            <span className="prediction-model-name rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
               {selectedAlgorithm || DEFAULT_ALGORITHM}
             </span>
           </div>
@@ -2365,7 +2365,7 @@ function TomorrowSalesOutlookInputs({
             type="button"
             onClick={onUpdatePlan}
             disabled={loading}
-            className="inline-flex items-center justify-center gap-2 rounded-[14px] bg-slate-900 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="prediction-primary-action inline-flex items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'Updating...' : 'Update Plan'}
@@ -2373,10 +2373,10 @@ function TomorrowSalesOutlookInputs({
           <button
             type="button"
             onClick={toggleManualMode}
-            className={`inline-flex items-center justify-center rounded-xl px-3 py-2 text-xs font-black transition ${
+            className={`prediction-secondary-action inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold transition ${
               manualMode
-                ? 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:bg-emerald-100'
-                : 'border border-slate-200 bg-white text-slate-700 hover:-translate-y-0.5 hover:bg-slate-100'
+                ? 'is-active border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
             }`}
           >
             {manualMode ? 'Use App Data' : 'Edit Inputs'}
@@ -2384,19 +2384,19 @@ function TomorrowSalesOutlookInputs({
           <button
             type="button"
             onClick={resetToAppData}
-            className="inline-flex items-center justify-center rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-100"
+            className="prediction-secondary-action inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
           >
             Reset
           </button>
           <span
-            className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-black uppercase tracking-widest ${
+            className={`prediction-mode-chip inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${
               manualMode ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
             }`}
           >
             {manualMode ? 'Manual Override' : 'App Data + Staff Inputs'}
           </span>
           <span
-            className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-black uppercase tracking-widest ${predictionMeta.chip}`}
+            className={`prediction-state-chip inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${predictionMeta.chip}`}
           >
             <ChartBarIcon className="h-4 w-4" />
             {predictionMeta.label}

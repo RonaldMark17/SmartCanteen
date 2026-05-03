@@ -1052,6 +1052,29 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   border-left: 3px solid #0ea5e9;
 }
 
+.app-shell .prediction-control-strip {
+  box-shadow: none;
+}
+
+.app-shell .prediction-primary-action {
+  box-shadow: none;
+}
+
+.app-shell .pos-complete-button {
+  background: #0f766e !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.app-shell .pos-complete-button:not(:disabled):hover {
+  background: #0d5f59 !important;
+}
+
+.app-shell .pos-complete-button:disabled {
+  background: #64748b !important;
+  color: #e2e8f0 !important;
+}
+
 .login-view {
   background: var(--sc-page) !important;
   color: var(--sc-text);
@@ -1154,4 +1177,71 @@ html.dark .app-shell .view-subtitle {
 
 html.dark .app-shell .text-slate-400 {
   color: var(--sc-muted);
+}
+
+html.dark .app-shell .prediction-control-strip {
+  background: #18212f;
+  border-color: #334155;
+}
+
+html.dark .app-shell .prediction-control-copy {
+  color: #cbd5e1;
+}
+
+html.dark .app-shell .prediction-model-chip,
+html.dark .app-shell .prediction-secondary-action {
+  background: #111827;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+html.dark .app-shell .prediction-model-name {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(96, 165, 250, 0.25);
+  color: #93c5fd;
+}
+
+html.dark .app-shell .prediction-primary-action {
+  background: #334155;
+  color: #ffffff;
+}
+
+html.dark .app-shell .prediction-primary-action:not(:disabled):hover {
+  background: #475569;
+}
+
+html.dark .app-shell .prediction-secondary-action.is-active {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(52, 211, 153, 0.25);
+  color: #86efac;
+}
+
+html.dark .app-shell .prediction-mode-chip.bg-emerald-100 {
+  background: rgba(16, 185, 129, 0.14);
+  color: #86efac;
+}
+
+html.dark .app-shell .prediction-mode-chip.bg-amber-100 {
+  background: rgba(245, 158, 11, 0.14);
+  color: #fcd34d;
+}
+
+html.dark .app-shell .prediction-state-chip.bg-emerald-100 {
+  background: rgba(16, 185, 129, 0.14);
+  color: #86efac;
+}
+
+html.dark .app-shell .prediction-state-chip.bg-sky-100 {
+  background: rgba(14, 165, 233, 0.14);
+  color: #7dd3fc;
+}
+
+html.dark .app-shell .prediction-state-chip.bg-amber-100 {
+  background: rgba(245, 158, 11, 0.14);
+  color: #fcd34d;
+}
+
+html.dark .app-shell .prediction-state-chip.bg-slate-200 {
+  background: #e2e8f0;
+  color: #334155;
 }

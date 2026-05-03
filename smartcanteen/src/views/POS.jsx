@@ -917,9 +917,9 @@ export default function POS() {
                       type="button"
                       onClick={handleCheckout}
                       disabled={isCheckoutDisabled}
-                      className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-4 text-sm font-black text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
+                      className="pos-complete-button flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
                     >
-                      <CheckCircleIcon className="h-6 w-6" />
+                      <CheckCircleIcon className="h-5 w-5" />
                       Complete Transaction
                     </button>
 
@@ -1175,9 +1175,9 @@ export default function POS() {
                       type="button"
                       onClick={handleCheckout}
                       disabled={isCheckoutDisabled}
-                      className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-4 text-sm font-black text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
+                      className="pos-complete-button flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
                     >
-                      <CheckCircleIcon className="h-6 w-6" />
+                      <CheckCircleIcon className="h-5 w-5" />
                       Complete Transaction
                     </button>
 
