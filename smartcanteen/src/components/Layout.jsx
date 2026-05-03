@@ -22,6 +22,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from './DismissibleAlert';
+import BrandLogo from './BrandLogo';
 import { API } from '../services/api';
 import {
   formatPhilippineDate,
@@ -1127,7 +1128,9 @@ export default function Layout({ children, onLogout }) {
   const sidebarLogoutClass = darkMode
     ? 'text-slate-400 hover:border-red-400/20 hover:bg-red-500/10 hover:text-red-300'
     : 'text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600';
-  const mobileSidebarShellClass = 'border-r border-slate-200 bg-white text-slate-700';
+  const mobileSidebarShellClass = darkMode
+    ? 'border-r border-slate-800 bg-slate-950 text-slate-200 shadow-slate-950/40'
+    : 'border-r border-slate-200 bg-white text-slate-700';
 
   const getSidebarNavLinkClass = (active) => {
     if (active) {
@@ -1159,18 +1162,22 @@ export default function Layout({ children, onLogout }) {
 
   const getMobileNavLinkClass = (active) => {
     if (active) {
-      return 'border-teal-200 bg-teal-50 text-slate-950';
+      return darkMode
+        ? 'border-teal-300/30 bg-teal-400/10 text-slate-50'
+        : 'border-teal-200 bg-teal-50 text-slate-950';
     }
 
-    return 'border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
+    return darkMode
+      ? 'border-transparent text-slate-300 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+      : 'border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
   };
 
   const getMobileNavDescriptionClass = (active) => {
     if (active) {
-      return 'text-primary';
+      return darkMode ? 'text-teal-200' : 'text-primary';
     }
 
-    return 'text-slate-500';
+    return darkMode ? 'text-slate-400' : 'text-slate-500';
   };
 
   return (
@@ -1186,9 +1193,7 @@ export default function Layout({ children, onLogout }) {
             className={`flex items-center rounded-2xl transition ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}
             title={sidebarCollapsed ? 'SmartCanteen' : undefined}
           >
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-base font-black text-white shadow-lg shadow-primary/30">
-              S
-            </div>
+            <BrandLogo className="h-11 w-11 rounded-2xl" />
             {!sidebarCollapsed && (
               <div className="min-w-0">
                 <h2 className={`truncate text-lg font-black tracking-tight ${sidebarBrandTitleClass}`}>
@@ -2030,29 +2035,27 @@ export default function Layout({ children, onLogout }) {
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <nav className={`fixed inset-y-0 left-0 flex w-[min(21rem,88vw)] flex-col shadow-xl animate-in slide-in-from-left duration-300 ${mobileSidebarShellClass}`}>
+          <nav className={`mobile-sidebar fixed inset-y-0 left-0 flex w-full flex-col shadow-xl animate-in slide-in-from-left duration-300 sm:w-80 ${mobileSidebarShellClass}`}>
             <div className="flex items-center justify-between px-4 py-4">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-semibold text-white">
-                  S
-                </div>
+                <BrandLogo className="h-10 w-10" />
                 <div className="min-w-0">
-                  <h2 className="truncate text-lg font-semibold text-slate-950">SmartCanteen</h2>
-                  <p className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wider text-primary">
+                  <h2 className="mobile-sidebar-brand truncate text-lg font-semibold text-slate-950">SmartCanteen</h2>
+                  <p className="mobile-sidebar-role mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wider text-primary">
                     {user.role || 'staff'} workspace
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                className="mobile-sidebar-close inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Close navigation menu"
               >
                 <XMarkIcon className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="custom-scrollbar flex-1 space-y-1.5 overflow-y-auto px-3 pb-4">
+            <div className="mobile-sidebar-nav custom-scrollbar flex-1 space-y-1.5 overflow-y-auto px-3 pb-4">
               {visibleNavItems.map((item) => {
                 const active = isActive(item.path);
 
@@ -2061,12 +2064,12 @@ export default function Layout({ children, onLogout }) {
                     key={item.name}
                     to={item.path}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={`flex items-center gap-3 rounded-lg border px-3.5 py-3 transition-all ${getMobileNavLinkClass(active)}`}
+                    className={`mobile-sidebar-link ${active ? 'mobile-sidebar-link-active' : ''} flex items-center gap-3 rounded-lg border px-3.5 py-3 transition-all ${getMobileNavLinkClass(active)}`}
                   >
-                    <item.icon className={`h-5 w-5 shrink-0 ${active ? 'text-primary' : 'text-slate-400'}`} />
+                    <item.icon className={`mobile-sidebar-icon h-5 w-5 shrink-0 ${active ? 'text-primary' : 'text-slate-400'}`} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">{item.name}</span>
-                      <span className={`mt-0.5 block truncate text-xs leading-4 ${getMobileNavDescriptionClass(active)}`}>
+                      <span className="mobile-sidebar-title block truncate text-sm font-semibold">{item.name}</span>
+                      <span className={`mobile-sidebar-desc mt-0.5 block truncate text-xs leading-4 ${getMobileNavDescriptionClass(active)}`}>
                         {getNavDescription(item.path)}
                       </span>
                     </span>
@@ -2076,10 +2079,10 @@ export default function Layout({ children, onLogout }) {
 
             </div>
 
-            <div className="border-t border-slate-200 p-3">
+            <div className="mobile-sidebar-footer border-t border-slate-200 p-3">
               <button
                 onClick={requestLogout}
-                className="flex w-full items-center gap-3 rounded-lg px-3.5 py-3 text-sm font-semibold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                className="mobile-sidebar-logout flex w-full items-center gap-3 rounded-lg px-3.5 py-3 text-sm font-semibold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
               >
                 <ArrowRightOnRectangleIcon className="h-5 w-5" /> Logout
               </button>

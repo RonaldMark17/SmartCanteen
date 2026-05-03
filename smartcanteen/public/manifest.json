@@ -1,16 +1,22 @@
 {
   "id": "/",
-  "name": "SmartCanteen AI",
+  "name": "SmartCanteen",
   "short_name": "SmartCanteen",
-  "description": "AI-powered canteen POS, inventory, financial reporting, and demand planning workspace.",
+  "description": "Canteen POS, inventory, financial reporting, and demand planning workspace.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f8fafc",
-  "theme_color": "#d946ef",
+  "theme_color": "#0f766e",
   "orientation": "any",
   "categories": ["business", "food", "productivity"],
   "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
     {
       "src": "/pwa-icon-192.png",
       "sizes": "192x192",

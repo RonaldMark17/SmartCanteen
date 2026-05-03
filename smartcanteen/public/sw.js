@@ -1,6 +1,6 @@
 const LOCAL_DEV_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const IS_LOCAL_DEV = LOCAL_DEV_HOSTS.has(self.location.hostname);
-const SHELL_CACHE = 'smartcanteen-shell-v11';
+const SHELL_CACHE = 'smartcanteen-shell-v12';
 const SHELL_ASSETS = [
   '/',
   '/index.html',

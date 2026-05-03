@@ -1189,6 +1189,91 @@ html.dark .app-shell .text-slate-400 {
   color: var(--sc-muted);
 }
 
+.brand-logo-mark {
+  background: #0f766e !important;
+  color: #ffffff !important;
+  box-shadow: 0 10px 22px rgba(15, 118, 110, 0.18);
+}
+
+.brand-logo-icon {
+  height: 70%;
+  width: 70%;
+}
+
+html.dark .app-shell .brand-logo-mark,
+html.dark .login-view .brand-logo-mark {
+  background: #0f766e !important;
+  color: #ffffff !important;
+  box-shadow: none;
+}
+
+html.dark .app-shell .mobile-sidebar {
+  background: #0f172a !important;
+  border-color: #1e293b !important;
+  color: #cbd5e1 !important;
+  box-shadow: 0 18px 44px rgba(2, 6, 23, 0.42) !important;
+}
+
+html.dark .app-shell .mobile-sidebar-brand {
+  color: #f8fafc !important;
+}
+
+html.dark .app-shell .mobile-sidebar-role {
+  color: #5eead4 !important;
+}
+
+html.dark .app-shell .mobile-sidebar-link {
+  color: #cbd5e1 !important;
+}
+
+html.dark .app-shell .mobile-sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(148, 163, 184, 0.18) !important;
+  color: #f8fafc !important;
+}
+
+html.dark .app-shell .mobile-sidebar-link-active {
+  background: rgba(45, 212, 191, 0.12) !important;
+  border-color: rgba(94, 234, 212, 0.36) !important;
+  color: #f8fafc !important;
+}
+
+html.dark .app-shell .mobile-sidebar-link-active .mobile-sidebar-icon,
+html.dark .app-shell .mobile-sidebar-link-active .mobile-sidebar-desc {
+  color: #5eead4 !important;
+}
+
+html.dark .app-shell .mobile-sidebar-icon {
+  color: #64748b !important;
+}
+
+html.dark .app-shell .mobile-sidebar-title {
+  color: inherit !important;
+}
+
+html.dark .app-shell .mobile-sidebar-desc {
+  color: #94a3b8 !important;
+}
+
+html.dark .app-shell .mobile-sidebar-close,
+html.dark .app-shell .mobile-sidebar-logout {
+  color: #94a3b8 !important;
+}
+
+html.dark .app-shell .mobile-sidebar-close:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #f8fafc !important;
+}
+
+html.dark .app-shell .mobile-sidebar-footer {
+  border-color: #1e293b !important;
+}
+
+html.dark .app-shell .mobile-sidebar-logout:hover {
+  background: rgba(248, 113, 113, 0.1) !important;
+  color: #fca5a5 !important;
+}
+
 html.dark .app-shell .prediction-control-strip {
   background: #18212f;
   border-color: #334155;

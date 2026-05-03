@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { API } from '../services/api';
 import { safeLocalStorageSetItem, safeLocalStorageSetJson } from '../services/storage';
+import BrandLogo from '../components/BrandLogo';
 import DismissibleAlert from '../components/DismissibleAlert';
 import {
   BuildingStorefrontIcon,
@@ -481,9 +482,7 @@ export default function Login({ onLogin }) {
         <div className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white lg:grid-cols-[22rem_minmax(0,1fr)]">
           <aside className="hidden border-r border-slate-200 bg-slate-50 p-7 lg:flex lg:flex-col">
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary text-base font-semibold text-white">
-                S
-              </div>
+              <BrandLogo className="h-12 w-12" />
               <div className="min-w-0">
                 <div className="truncate text-xl font-semibold text-slate-950">SmartCanteen</div>
                 <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
@@ -536,9 +535,7 @@ export default function Login({ onLogin }) {
           <section className="flex items-center justify-center px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
             <div className="w-full max-w-md">
               <div className="mb-8 flex items-center gap-3 lg:hidden">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-semibold text-white">
-                  S
-                </div>
+                <BrandLogo className="h-11 w-11" />
                 <div className="min-w-0">
                   <div className="truncate text-xl font-semibold text-slate-950">SmartCanteen</div>
                   <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">

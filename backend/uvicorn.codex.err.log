@@ -31,3 +31,6 @@ INFO:     connection open
 INFO:     connection closed
 INFO:     ('127.0.0.1', 59159) - "WebSocket /api/realtime/alerts" [accepted]
 INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 59723) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
