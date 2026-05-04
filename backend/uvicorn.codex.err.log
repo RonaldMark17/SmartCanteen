@@ -105,3 +105,8 @@ INFO:     ('127.0.0.1', 51726) - "WebSocket /api/realtime/alerts" [accepted]
 INFO:     connection open
 INFO:     ('127.0.0.1', 59286) - "WebSocket /api/realtime/alerts" [accepted]
 INFO:     connection open
+INFO:     connection closed
+INFO:     ('127.0.0.1', 59245) - "WebSocket /api/realtime/alerts" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed

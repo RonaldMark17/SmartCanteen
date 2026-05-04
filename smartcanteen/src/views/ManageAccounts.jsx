@@ -4,7 +4,9 @@ import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
   ArrowPathIcon,
+  BellAlertIcon,
   CheckCircleIcon,
+  ClockIcon,
   KeyIcon,
   MagnifyingGlassIcon,
   PencilSquareIcon,
@@ -62,6 +64,48 @@ function formatDate(value) {
     month: 'short',
     day: 'numeric',
   });
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return 'Not available';
+  }
+
+  const date = new Date(`${value}`.endsWith('Z') ? value : `${value}Z`);
+  if (Number.isNaN(date.getTime())) {
+    return 'Not available';
+  }
+
+  return date.toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatResetStatus(status) {
+  const value = String(status || 'pending').trim().toLowerCase();
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function getResetStatusClass(status) {
+  const value = String(status || 'pending').trim().toLowerCase();
+  if (value === 'approved') {
+    return 'bg-emerald-50 text-emerald-700';
+  }
+  if (value === 'denied') {
+    return 'bg-red-50 text-red-700';
+  }
+  if (value === 'completed') {
+    return 'bg-sky-50 text-sky-700';
+  }
+  if (value === 'expired') {
+    return 'bg-slate-100 text-slate-500';
+  }
+  return 'bg-amber-50 text-amber-700';
 }
 
 function getInitials(user) {
@@ -126,6 +170,10 @@ export default function ManageAccounts() {
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [busyUserId, setBusyUserId] = useState(null);
+  const [passwordResetRequests, setPasswordResetRequests] = useState([]);
+  const [resetRequestsLoading, setResetRequestsLoading] = useState(true);
+  const [resetRequestError, setResetRequestError] = useState('');
+  const [busyResetRequestId, setBusyResetRequestId] = useState(null);
 
   const loadUsers = useCallback(async ({ showLoading = false } = {}) => {
     if (showLoading) {
@@ -145,15 +193,38 @@ export default function ManageAccounts() {
     }
   }, []);
 
+  const loadPasswordResetRequests = useCallback(async ({ showLoading = false } = {}) => {
+    if (showLoading) {
+      setResetRequestsLoading(true);
+    }
+
+    setResetRequestError('');
+    try {
+      const data = await API.getPasswordResetRequests();
+      setPasswordResetRequests(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setResetRequestError(err.message || 'Password reset requests could not be loaded.');
+    } finally {
+      if (showLoading) {
+        setResetRequestsLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     loadUsers({ showLoading: true });
-  }, [loadUsers]);
+    loadPasswordResetRequests({ showLoading: true });
+  }, [loadPasswordResetRequests, loadUsers]);
 
   const activeUsers = users.filter((user) => user.is_active);
   const activeAdmins = users.filter((user) => user.is_active && user.role === 'admin');
   const protectedMfaUsers = users.filter((user) => user.authenticator_mfa_enabled);
   const lowRecoveryUsers = users.filter(
     (user) => user.authenticator_mfa_enabled && Number(user.recovery_codes_remaining || 0) <= 1
+  );
+  const pendingResetRequests = passwordResetRequests.filter((request) => request.status === 'pending');
+  const openResetRequests = passwordResetRequests.filter((request) =>
+    ['pending', 'approved', 'expired'].includes(request.status)
   );
 
   const filteredUsers = useMemo(() => {
@@ -303,6 +374,34 @@ export default function ManageAccounts() {
     }
   };
 
+  const reviewPasswordResetRequest = async (request, action) => {
+    const username = request.username || request.identifier;
+    const approved = action === 'approve';
+    const confirmed = window.confirm(
+      `${approved ? 'Approve' : 'Deny'} password reset for ${username}?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setBusyResetRequestId(request.id);
+    setResetRequestError('');
+    try {
+      if (approved) {
+        await API.approvePasswordResetRequest(request.id);
+        window.showToast?.(`Password reset approved for ${username}.`, 'success');
+      } else {
+        await API.denyPasswordResetRequest(request.id);
+        window.showToast?.(`Password reset denied for ${username}.`, 'warning');
+      }
+      await loadPasswordResetRequests();
+    } catch (err) {
+      setResetRequestError(err.message || 'Password reset request could not be updated.');
+    } finally {
+      setBusyResetRequestId(null);
+    }
+  };
+
   const isEditingSelf = editingUser?.id === currentUser.id;
 
   return (
@@ -320,8 +419,15 @@ export default function ManageAccounts() {
         </div>
 
         <div className="flex w-full flex-wrap gap-3 md:w-auto">
-          <button type="button" onClick={() => loadUsers({ showLoading: true })} className="action-button">
-            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          <button
+            type="button"
+            onClick={() => {
+              loadUsers({ showLoading: true });
+              loadPasswordResetRequests({ showLoading: true });
+            }}
+            className="action-button"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${loading || resetRequestsLoading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
           <button type="button" onClick={openCreateModal} className="primary-action-button">
@@ -337,7 +443,13 @@ export default function ManageAccounts() {
         </DismissibleAlert>
       )}
 
-      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      {resetRequestError && (
+        <DismissibleAlert resetKey={resetRequestError} tone="red" title="Password reset issue" className="rounded-xl">
+          {resetRequestError}
+        </DismissibleAlert>
+      )}
+
+      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
         <AccountMetricCard
           title="Accounts"
           value={formatCount(users.length)}
@@ -365,6 +477,13 @@ export default function ManageAccounts() {
           detail="MFA users with 0-1 backup codes"
           icon={ShieldCheckIcon}
           tone={lowRecoveryUsers.length > 0 ? 'amber' : 'emerald'}
+        />
+        <AccountMetricCard
+          title="Reset Requests"
+          value={formatCount(pendingResetRequests.length)}
+          detail={`${formatCount(openResetRequests.length)} open`}
+          icon={BellAlertIcon}
+          tone={pendingResetRequests.length > 0 ? 'amber' : 'slate'}
         />
       </div>
 
@@ -406,6 +525,102 @@ export default function ManageAccounts() {
           <option value="inactive">Inactive</option>
         </select>
       </div>
+
+      <section className="data-card shrink-0">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Password Reset Requests</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Approve a request so the user can change their password from the login screen.
+            </p>
+          </div>
+          <BellAlertIcon className="h-5 w-5 shrink-0 text-slate-400" />
+        </div>
+
+        <div className="grid gap-3 p-4 lg:grid-cols-2 2xl:grid-cols-3">
+          {resetRequestsLoading ? (
+            Array.from({ length: 3 }, (_, index) => (
+              <div key={`reset-request-skeleton-${index}`} className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 rounded-full" />
+                  <SkeletonText lines={['h-4 w-36', 'h-3 w-28']} className="flex-1" />
+                </div>
+                <Skeleton className="mt-4 h-16 rounded-lg" />
+              </div>
+            ))
+          ) : passwordResetRequests.length === 0 ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500 lg:col-span-2 2xl:col-span-3">
+              No password reset requests right now.
+            </div>
+          ) : (
+            passwordResetRequests.map((request) => {
+              const isBusy = busyResetRequestId === request.id;
+              const canApprove = request.status === 'pending' || request.status === 'expired';
+              const canDeny = ['pending', 'approved', 'expired'].includes(request.status);
+              const displayName = request.full_name || request.username || request.identifier;
+
+              return (
+                <article key={`reset-request-${request.id}`} className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                      {getInitials({ full_name: request.full_name, username: request.username || request.identifier })}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold text-slate-900">{displayName}</div>
+                      <div className="mt-1 truncate font-mono text-xs text-slate-400">
+                        @{request.username || request.identifier}
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${getResetStatusClass(request.status)}`}
+                    >
+                      {formatResetStatus(request.status)}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 text-xs text-slate-500">
+                    <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                      <ClockIcon className="h-4 w-4 shrink-0 text-slate-400" />
+                      <span>Requested {formatDateTime(request.requested_at)}</span>
+                    </div>
+                    {request.status === 'approved' && (
+                      <div className="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700">
+                        Approved until {formatDateTime(request.expires_at)}
+                      </div>
+                    )}
+                    {request.reviewer_username && (
+                      <div className="rounded-lg bg-slate-50 px-3 py-2">
+                        Reviewed by @{request.reviewer_username}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => reviewPasswordResetRequest(request, 'approve')}
+                      disabled={!canApprove || isBusy}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <CheckCircleIcon className="h-4 w-4" />
+                      {isBusy && canApprove ? 'Approving...' : 'Approve'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => reviewPasswordResetRequest(request, 'deny')}
+                      disabled={!canDeny || isBusy}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <XMarkIcon className="h-4 w-4" />
+                      {isBusy && canDeny ? 'Denying...' : 'Deny'}
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
 
       <section className="data-card shrink-0">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">

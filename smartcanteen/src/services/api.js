@@ -1015,8 +1015,16 @@ export const API = {
   verifyAuthenticatorLogin,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
+  requestPasswordReset: (identifier) => request('POST', '/auth/password-reset/request', { identifier }),
+  completePasswordReset: (data) => request('POST', '/auth/password-reset/complete', data),
   regenerateRecoveryCodes: () => request('POST', '/auth/recovery-codes/regenerate'),
   getAdminUsers: () => request('GET', '/admin/users'),
+  getPasswordResetRequests: (status = 'all') =>
+    request('GET', `/admin/password-reset-requests${toQuery({ status })}`),
+  approvePasswordResetRequest: (requestId) =>
+    request('POST', `/admin/password-reset-requests/${requestId}/approve`),
+  denyPasswordResetRequest: (requestId) =>
+    request('POST', `/admin/password-reset-requests/${requestId}/deny`),
   createAdminUser: (data) => request('POST', '/admin/users', data),
   updateAdminUser: (userId, data) => request('PUT', `/admin/users/${userId}`, data),
   deleteAdminUser: (userId) => request('DELETE', `/admin/users/${userId}`),

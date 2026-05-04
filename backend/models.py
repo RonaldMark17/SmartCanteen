@@ -72,6 +72,21 @@ class UserAlertState(Base):
     user = relationship("User", back_populates="alert_states")
 
 
+class PasswordResetRequest(Base):
+    __tablename__ = "password_reset_requests"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    user_id               = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    identifier            = Column(String, nullable=False)
+    normalized_identifier = Column(String, nullable=False, index=True)
+    status                = Column(String, default="pending", index=True)  # pending | approved | denied | completed
+    requested_at          = Column(DateTime, default=utc_now_naive, index=True)
+    reviewed_at           = Column(DateTime, nullable=True)
+    completed_at          = Column(DateTime, nullable=True)
+    expires_at            = Column(DateTime, nullable=True, index=True)
+    reviewer_id           = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
 class Product(Base):
     __tablename__ = "products"
 

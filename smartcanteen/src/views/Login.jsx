@@ -9,8 +9,10 @@ import {
   CheckCircleIcon,
   EyeIcon,
   EyeSlashIcon,
+  KeyIcon,
   LockClosedIcon,
   ShieldCheckIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 
 const LOGIN_LOCKOUT_STORAGE_KEY = 'sc_login_lockouts';
@@ -242,6 +244,14 @@ export default function Login({ onLogin }) {
   const [pendingRecoveryCodes, setPendingRecoveryCodes] = useState([]);
   const [pendingLoginResult, setPendingLoginResult] = useState(null);
   const [recoveryCodesCopied, setRecoveryCodesCopied] = useState(false);
+  const [passwordResetOpen, setPasswordResetOpen] = useState(false);
+  const [passwordResetMode, setPasswordResetMode] = useState('request');
+  const [passwordResetIdentifier, setPasswordResetIdentifier] = useState('');
+  const [passwordResetNewPassword, setPasswordResetNewPassword] = useState('');
+  const [passwordResetConfirmPassword, setPasswordResetConfirmPassword] = useState('');
+  const [passwordResetLoading, setPasswordResetLoading] = useState(false);
+  const [passwordResetError, setPasswordResetError] = useState('');
+  const [passwordResetSuccess, setPasswordResetSuccess] = useState('');
   const authenticatorCodeRef = useRef(null);
 
   const loginIdentifier = normalizeLoginIdentifier(username);
@@ -476,6 +486,75 @@ export default function Login({ onLogin }) {
     );
   };
 
+  const openPasswordReset = (mode = 'request') => {
+    setPasswordResetMode(mode);
+    setPasswordResetIdentifier(username.trim());
+    setPasswordResetNewPassword('');
+    setPasswordResetConfirmPassword('');
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+    setPasswordResetOpen(true);
+  };
+
+  const closePasswordReset = () => {
+    if (passwordResetLoading) {
+      return;
+    }
+
+    setPasswordResetOpen(false);
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+    setPasswordResetNewPassword('');
+    setPasswordResetConfirmPassword('');
+  };
+
+  const submitPasswordResetRequest = async (event) => {
+    event.preventDefault();
+    setPasswordResetLoading(true);
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+
+    try {
+      await API.requestPasswordReset(passwordResetIdentifier.trim());
+      setPasswordResetSuccess('Request sent. Wait for admin approval, then return here to change your password.');
+    } catch (err) {
+      setPasswordResetError(err.message || 'Password reset request could not be sent.');
+    } finally {
+      setPasswordResetLoading(false);
+    }
+  };
+
+  const submitApprovedPasswordChange = async (event) => {
+    event.preventDefault();
+    setPasswordResetLoading(true);
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+
+    if (passwordResetNewPassword !== passwordResetConfirmPassword) {
+      setPasswordResetError('Passwords do not match.');
+      setPasswordResetLoading(false);
+      return;
+    }
+
+    try {
+      const identifier = passwordResetIdentifier.trim();
+      await API.completePasswordReset({
+        identifier,
+        new_password: passwordResetNewPassword,
+      });
+      setUsername(identifier);
+      setPassword('');
+      setPasswordResetOpen(false);
+      setPasswordResetNewPassword('');
+      setPasswordResetConfirmPassword('');
+      window.showToast?.('Password changed. Sign in with your new password.', 'success');
+    } catch (err) {
+      setPasswordResetError(err.message || 'Password could not be changed yet.');
+    } finally {
+      setPasswordResetLoading(false);
+    }
+  };
+
   return (
     <div className="login-view min-h-[100dvh] overflow-y-auto bg-slate-50 px-4 py-6 text-slate-700 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-5xl items-center">
@@ -632,15 +711,25 @@ export default function Login({ onLogin }) {
                   </div>
                 </label>
 
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={rememberUsername}
-                    onChange={(event) => setRememberUsername(event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-2 focus:ring-primary/20"
-                  />
-                  Remember me for 30 days
-                </label>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={rememberUsername}
+                      onChange={(event) => setRememberUsername(event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-2 focus:ring-primary/20"
+                    />
+                    Remember me for 30 days
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => openPasswordReset('request')}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary transition hover:text-primary-dark"
+                  >
+                    <KeyIcon className="h-4 w-4" />
+                    Forgot password?
+                  </button>
+                </div>
 
                 <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
                   <ShieldCheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -684,6 +773,179 @@ export default function Login({ onLogin }) {
           </section>
         </div>
       </div>
+
+      {passwordResetOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 px-4 py-5 backdrop-blur-sm">
+          <div
+            className="w-full max-w-[30rem] overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="password-reset-title"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-primary">
+                  <KeyIcon className="h-4 w-4" />
+                  Password recovery
+                </div>
+                <h3 id="password-reset-title" className="mt-3 text-xl font-semibold leading-7 text-slate-950">
+                  Forgot password
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  Send a request to admin, then change your password once it is approved.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closePasswordReset}
+                disabled={passwordResetLoading}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-white hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Close password reset"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 py-5">
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPasswordResetMode('request');
+                    setPasswordResetError('');
+                    setPasswordResetSuccess('');
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    passwordResetMode === 'request'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Request
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPasswordResetMode('change');
+                    setPasswordResetError('');
+                    setPasswordResetSuccess('');
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    passwordResetMode === 'change'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Change
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {passwordResetError && (
+                  <DismissibleAlert resetKey={passwordResetError} tone="red" title="Recovery issue" className="rounded-xl">
+                    {passwordResetError}
+                  </DismissibleAlert>
+                )}
+                {passwordResetSuccess && (
+                  <DismissibleAlert
+                    resetKey={passwordResetSuccess}
+                    tone="emerald"
+                    title="Request recorded"
+                    className="rounded-xl"
+                  >
+                    {passwordResetSuccess}
+                  </DismissibleAlert>
+                )}
+              </div>
+
+              {passwordResetMode === 'request' ? (
+                <form onSubmit={submitPasswordResetRequest} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={passwordResetIdentifier}
+                      onChange={(event) => setPasswordResetIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={passwordResetLoading || !passwordResetIdentifier.trim()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {passwordResetLoading ? 'Sending...' : 'Send Request'}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={submitApprovedPasswordChange} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={passwordResetIdentifier}
+                      onChange={(event) => setPasswordResetIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      New password
+                    </span>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={passwordResetNewPassword}
+                      onChange={(event) => setPasswordResetNewPassword(event.target.value)}
+                      placeholder="At least 6 characters"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Confirm password
+                    </span>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={passwordResetConfirmPassword}
+                      onChange={(event) => setPasswordResetConfirmPassword(event.target.value)}
+                      placeholder="Re-enter new password"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={
+                      passwordResetLoading ||
+                      !passwordResetIdentifier.trim() ||
+                      !passwordResetNewPassword ||
+                      !passwordResetConfirmPassword
+                    }
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {passwordResetLoading ? 'Changing...' : 'Change Password'}
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isAuthenticatorStep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 px-4 py-5 backdrop-blur-sm">

@@ -23,6 +23,30 @@ class AuthenticatorResetRequest(BaseModel):
 
 # ── User ───────────────────────────────────────────────────────────────────────
 
+class PasswordResetRequestCreate(BaseModel):
+    identifier: str
+
+
+class PasswordResetComplete(BaseModel):
+    identifier: str
+    new_password: str
+
+
+class PasswordResetRequestResponse(BaseModel):
+    id: int
+    identifier: str
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    status: str
+    requested_at: datetime
+    reviewed_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    reviewer_username: Optional[str] = None
+
+
 class UserCreate(BaseModel):
     username:  str
     full_name: str

@@ -887,6 +887,8 @@ def _build_authenticator_user_hint(user: models.User, enabled: bool) -> dict:
 
 
 USER_ROLES = {"admin", "staff", "cashier"}
+PASSWORD_RESET_REVIEW_STATUSES = {"pending", "approved"}
+PASSWORD_RESET_APPROVAL_EXPIRE_HOURS = 24
 
 
 def _normalize_username(value: str) -> str:
@@ -929,6 +931,24 @@ def _find_user_by_username(db: Session, username: str, exclude_user_id: Optional
     return query.first()
 
 
+def _normalize_password_reset_identifier(value: str) -> str:
+    identifier = str(value or "").strip()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Username or email is required")
+    if len(identifier) > 128:
+        raise HTTPException(status_code=400, detail="Username or email must be 128 characters or fewer")
+    return identifier
+
+
+def _find_user_by_reset_identifier(db: Session, identifier: str):
+    normalized_identifier = _normalize_password_reset_identifier(identifier).lower()
+    return (
+        db.query(models.User)
+        .filter(func.lower(models.User.username) == normalized_identifier)
+        .first()
+    )
+
+
 def _active_admin_count(db: Session, exclude_user_id: Optional[int] = None) -> int:
     query = db.query(models.User).filter(
         models.User.role == "admin",
@@ -968,6 +988,54 @@ def _serialize_admin_user(db: Session, user: models.User) -> dict:
         "remembered_devices_active": _count_active_trusted_devices(db, user),
         "created_at": user.created_at,
     }
+
+
+def _effective_password_reset_status(reset_request: models.PasswordResetRequest) -> str:
+    if (
+        reset_request.status == "approved"
+        and reset_request.expires_at is not None
+        and reset_request.expires_at <= datetime.utcnow()
+    ):
+        return "expired"
+    return reset_request.status
+
+
+def _serialize_password_reset_request(
+    db: Session,
+    reset_request: models.PasswordResetRequest,
+) -> dict:
+    user = None
+    reviewer = None
+    if reset_request.user_id:
+        user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    if reset_request.reviewer_id:
+        reviewer = db.query(models.User).filter(models.User.id == reset_request.reviewer_id).first()
+
+    return {
+        "id": reset_request.id,
+        "identifier": reset_request.identifier,
+        "username": user.username if user else None,
+        "full_name": user.full_name if user else None,
+        "role": user.role if user else None,
+        "is_active": user.is_active if user else None,
+        "status": _effective_password_reset_status(reset_request),
+        "requested_at": reset_request.requested_at,
+        "reviewed_at": reset_request.reviewed_at,
+        "completed_at": reset_request.completed_at,
+        "expires_at": reset_request.expires_at,
+        "reviewer_username": reviewer.username if reviewer else None,
+    }
+
+
+def _get_password_reset_request_or_404(db: Session, request_id: int):
+    reset_request = (
+        db.query(models.PasswordResetRequest)
+        .filter(models.PasswordResetRequest.id == request_id)
+        .first()
+    )
+    if not reset_request:
+        raise HTTPException(status_code=404, detail="Password reset request not found")
+    return reset_request
 
 
 def _begin_authenticator_setup(user: models.User):
@@ -1139,6 +1207,107 @@ def authenticator_authentication_verify(
     return response
 
 
+@app.post("/auth/password-reset/request", include_in_schema=False)
+@app.post("/api/auth/password-reset/request", tags=["Auth"])
+def request_password_reset(
+    data: schemas.PasswordResetRequestCreate,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _normalize_password_reset_identifier(data.identifier)
+    normalized_identifier = identifier.lower()
+    user = _find_user_by_reset_identifier(db, identifier)
+
+    if user and user.is_active:
+        existing_request = (
+            db.query(models.PasswordResetRequest)
+            .filter(
+                models.PasswordResetRequest.user_id == user.id,
+                models.PasswordResetRequest.status.in_(PASSWORD_RESET_REVIEW_STATUSES),
+            )
+            .order_by(models.PasswordResetRequest.requested_at.desc())
+            .first()
+        )
+
+        if existing_request and _effective_password_reset_status(existing_request) == "approved":
+            existing_request.identifier = identifier
+            existing_request.normalized_identifier = normalized_identifier
+        elif existing_request:
+            existing_request.identifier = identifier
+            existing_request.normalized_identifier = normalized_identifier
+            existing_request.status = "pending"
+            existing_request.requested_at = datetime.utcnow()
+            existing_request.reviewed_at = None
+            existing_request.completed_at = None
+            existing_request.expires_at = None
+            existing_request.reviewer_id = None
+        else:
+            db.add(models.PasswordResetRequest(
+                user_id=user.id,
+                identifier=identifier,
+                normalized_identifier=normalized_identifier,
+                status="pending",
+            ))
+
+    _add_audit_log(
+        db,
+        user_id=user.id if user else None,
+        action="PASSWORD_RESET_REQUESTED",
+        details=f"Password reset requested for identifier: {identifier}",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "message": "If the account exists, an admin will review the password reset request.",
+    }
+
+
+@app.post("/auth/password-reset/complete", include_in_schema=False)
+@app.post("/api/auth/password-reset/complete", tags=["Auth"])
+def complete_password_reset(
+    data: schemas.PasswordResetComplete,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _normalize_password_reset_identifier(data.identifier)
+    user = _find_user_by_reset_identifier(db, identifier)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="No approved password reset request is available")
+
+    reset_request = (
+        db.query(models.PasswordResetRequest)
+        .filter(
+            models.PasswordResetRequest.user_id == user.id,
+            models.PasswordResetRequest.status == "approved",
+        )
+        .order_by(models.PasswordResetRequest.reviewed_at.desc(), models.PasswordResetRequest.requested_at.desc())
+        .first()
+    )
+
+    if not reset_request or _effective_password_reset_status(reset_request) != "approved":
+        raise HTTPException(status_code=400, detail="No approved password reset request is available")
+
+    password = _validate_user_password(data.new_password)
+    user.password_hash = auth.get_password_hash(password)
+    _reset_user_authenticator(db, user, revoke_remembered_devices=True)
+    reset_request.status = "completed"
+    reset_request.completed_at = datetime.utcnow()
+
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="PASSWORD_RESET_COMPLETED",
+        details="User changed password after admin approval",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "message": "Password changed. Sign in with your new password.",
+    }
+
+
 @app.post("/auth/register", include_in_schema=False)
 @app.post("/api/auth/register", tags=["Auth"])
 def register(
@@ -1216,6 +1385,108 @@ def list_admin_users(
 ):
     users = db.query(models.User).order_by(models.User.username).all()
     return [_serialize_admin_user(db, user) for user in users]
+
+
+@app.get(
+    "/api/admin/password-reset-requests",
+    response_model=List[schemas.PasswordResetRequestResponse],
+    tags=["Admin"],
+)
+def list_password_reset_requests(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_admin),
+):
+    query = db.query(models.PasswordResetRequest)
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status and normalized_status != "all":
+        if normalized_status == "expired":
+            query = query.filter(
+                models.PasswordResetRequest.status == "approved",
+                models.PasswordResetRequest.expires_at <= datetime.utcnow(),
+            )
+        else:
+            query = query.filter(models.PasswordResetRequest.status == normalized_status)
+
+    reset_requests = (
+        query
+        .order_by(models.PasswordResetRequest.requested_at.desc())
+        .limit(100)
+        .all()
+    )
+    return [_serialize_password_reset_request(db, reset_request) for reset_request in reset_requests]
+
+
+@app.post(
+    "/api/admin/password-reset-requests/{request_id}/approve",
+    response_model=schemas.PasswordResetRequestResponse,
+    tags=["Admin"],
+)
+def approve_password_reset_request(
+    request_id: int,
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    reset_request = _get_password_reset_request_or_404(db, request_id)
+    if reset_request.status not in PASSWORD_RESET_REVIEW_STATUSES:
+        raise HTTPException(status_code=400, detail="Only open reset requests can be approved")
+
+    user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="This account is not active")
+
+    now = datetime.utcnow()
+    reset_request.status = "approved"
+    reset_request.reviewed_at = now
+    reset_request.completed_at = None
+    reset_request.expires_at = now + timedelta(hours=PASSWORD_RESET_APPROVAL_EXPIRE_HOURS)
+    reset_request.reviewer_id = current.id
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PASSWORD_RESET_APPROVED",
+        details=f"Approved password reset for {user.username}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(reset_request)
+    return _serialize_password_reset_request(db, reset_request)
+
+
+@app.post(
+    "/api/admin/password-reset-requests/{request_id}/deny",
+    response_model=schemas.PasswordResetRequestResponse,
+    tags=["Admin"],
+)
+def deny_password_reset_request(
+    request_id: int,
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    reset_request = _get_password_reset_request_or_404(db, request_id)
+    if reset_request.status not in PASSWORD_RESET_REVIEW_STATUSES:
+        raise HTTPException(status_code=400, detail="This reset request has already been closed")
+
+    user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    now = datetime.utcnow()
+    reset_request.status = "denied"
+    reset_request.reviewed_at = now
+    reset_request.expires_at = None
+    reset_request.reviewer_id = current.id
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PASSWORD_RESET_DENIED",
+        details=f"Denied password reset for {user.username if user else reset_request.identifier}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(reset_request)
+    return _serialize_password_reset_request(db, reset_request)
 
 
 @app.post("/api/admin/users", response_model=schemas.UserResponse, tags=["Admin"])
