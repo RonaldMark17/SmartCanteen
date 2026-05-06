@@ -1054,6 +1054,13 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.1) !important;
 }
 
+.app-shell .notification-dismiss-layer,
+.app-shell .notification-dismiss-layer:hover,
+.app-shell .notification-dismiss-layer:focus,
+.app-shell .notification-dismiss-layer:focus-visible {
+  background: transparent !important;
+}
+
 .app-shell .notification-alert-card-danger {
   border-left: 3px solid #ef4444;
 }

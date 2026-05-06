@@ -1338,7 +1338,7 @@ export default function Layout({ children, onLogout }) {
                     type="button"
                     aria-label="Close notifications"
                     onClick={() => setNotificationsOpen(false)}
-                    className="fixed inset-0 z-40 cursor-default bg-transparent"
+                    className="notification-dismiss-layer fixed inset-x-0 bottom-0 top-16 z-40 cursor-default bg-transparent"
                   />
                   <div className="notification-popover fixed inset-x-3 top-16 z-50 max-h-[calc(100dvh-5rem)] overflow-hidden rounded-xl border border-slate-200 bg-white md:absolute md:inset-x-auto md:right-0 md:top-12 md:w-[22.5rem]">
                     <div className="notification-panel-head border-b border-slate-100 px-4 py-3">
@@ -1525,7 +1525,7 @@ export default function Layout({ children, onLogout }) {
                     type="button"
                     aria-label="Close reminders"
                     onClick={() => setRemindersOpen(false)}
-                    className="fixed inset-0 z-40 cursor-default bg-transparent"
+                    className="notification-dismiss-layer fixed inset-x-0 bottom-0 top-16 z-40 cursor-default bg-transparent"
                   />
                   <div className="notification-popover fixed inset-x-3 top-16 z-50 max-h-[calc(100dvh-5rem)] overflow-hidden rounded-xl border border-slate-200 bg-white md:absolute md:inset-x-auto md:right-0 md:top-12 md:w-[22.5rem]">
                     <div className="notification-panel-head border-b border-slate-100 px-4 py-3">

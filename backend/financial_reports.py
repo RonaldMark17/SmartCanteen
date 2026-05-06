@@ -604,10 +604,48 @@ def _serialize_report(
     }
 
 
+def _fund_balance_total(
+    allocations: list[models.Allocation],
+    balances: dict[str, float],
+) -> float:
+    return _round_money(
+        sum(
+            balances.get(str(allocation.category_key or "").strip(), 0.0)
+            for allocation in allocations
+        )
+    )
+
+
+def _calculate_next_fund_balances(
+    report: dict,
+    allocations: list[models.Allocation],
+    previous_balances: dict[str, float],
+) -> dict[str, float]:
+    next_balances = dict(previous_balances)
+    report_allocations_by_key = {
+        str(allocation.get("category_key") or "").strip(): allocation
+        for allocation in report.get("allocations", [])
+    }
+
+    for allocation in allocations:
+        category_key = str(allocation.category_key or "").strip()
+        previous_balance = _round_money(previous_balances.get(category_key, 0.0))
+        report_allocation = report_allocations_by_key.get(category_key, {})
+        net_income = _round_money(report_allocation.get("amount", 0.0))
+        expenses = _round_money(report_allocation.get("fund_expenses", 0.0))
+        others = _round_money(report_allocation.get("fund_others", 0.0))
+        next_balances[category_key] = _round_money(
+            previous_balance + net_income - expenses + others
+        )
+
+    return next_balances
+
+
 def _build_auto_input_payload(
     report: dict,
     *,
     previous_report: Optional[dict],
+    previous_current_balance_total: Optional[float],
     transaction_sales: float,
     historical_reports: list[dict],
 ) -> tuple[dict, dict]:
@@ -629,11 +667,13 @@ def _build_auto_input_payload(
     auto_inputs = {
         "beginning_cash_on_hand": {
             "value": _round_money(
-                previous_report["ending_cash"] if previous_report else report["beginning_cash_on_hand"]
+                previous_current_balance_total
+                if previous_report is not None and previous_current_balance_total is not None
+                else report["beginning_cash_on_hand"]
             ),
             "source": (
-                f'Auto-carried from {previous_report["month_label"]} ending cash'
-                if previous_report
+                f'Auto-carried from {previous_report["month_label"]} Current Balance total'
+                if previous_report is not None and previous_current_balance_total is not None
                 else 'Using the saved value for this month'
             ),
         },
@@ -691,7 +731,7 @@ def _build_auto_input_payload(
         }
 
     default_inputs = {
-        "beginning_cash_on_hand": report["beginning_cash_on_hand"],
+        "beginning_cash_on_hand": auto_inputs["beginning_cash_on_hand"]["value"],
         "current_sales": report["current_sales"],
         "cost_of_sales": report["cost_of_sales"],
         "operation_expenses": report["total_operating_expenses"],
@@ -789,18 +829,27 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
     ]
 
     previous_report = None
+    previous_fund_balances: dict[str, float] = {
+        str(allocation.category_key or "").strip(): _round_money(
+            getattr(allocation, "opening_balance", 0.0)
+        )
+        for allocation in allocations
+    }
     historical_reports = []
     for report in serialized_reports:
         transaction_sales = transaction_sales_by_report_id[report["id"]]
+        previous_balance_total = _fund_balance_total(allocations, previous_fund_balances)
         auto_inputs, default_inputs = _build_auto_input_payload(
             report,
             previous_report=previous_report,
+            previous_current_balance_total=previous_balance_total if previous_report else None,
             transaction_sales=transaction_sales,
             historical_reports=historical_reports,
         )
         report["auto_inputs"] = auto_inputs
         report["default_inputs"] = default_inputs
         report["auto_fill_applied_by_default"] = False
+        report["fund_previous_balance_total"] = previous_balance_total
 
         if previous_report:
             report["comparison"] = {
@@ -808,6 +857,14 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
                 "sales_delta": _round_money(report["current_sales"] - previous_report["current_sales"]),
                 "net_profit_delta": _round_money(report["net_profit"] - previous_report["net_profit"]),
             }
+
+        next_fund_balances = _calculate_next_fund_balances(
+            report,
+            allocations,
+            previous_fund_balances,
+        )
+        report["fund_current_balance_total"] = _fund_balance_total(allocations, next_fund_balances)
+        previous_fund_balances = next_fund_balances
         previous_report = report
         historical_reports.append(report)
 
@@ -1055,7 +1112,7 @@ def _build_school_year_workbook_export(
     allocations = sorted(school_year.allocations, key=lambda item: (item.sort_order, item.id))[
         :len(FUND_MONITORING_COLUMNS)
     ]
-    previous_ending_cash = None
+    has_previous_report = False
     previous_fund_balances: dict[str, float] = {
         str(allocation.category_key or "").strip(): _round_money(
             getattr(allocation, "opening_balance", 0.0)
@@ -1065,11 +1122,16 @@ def _build_school_year_workbook_export(
     for report in sorted(school_year.monthly_reports, key=lambda item: item.month_index):
         if report.month_name in workbook.sheetnames:
             worksheet = workbook[report.month_name]
+            beginning_cash_override = (
+                _fund_balance_total(allocations, previous_fund_balances)
+                if has_previous_report
+                else None
+            )
             result = _populate_report_worksheet(
                 worksheet,
                 report,
                 current_sales_override=_get_report_transaction_sales(db, report),
-                beginning_cash_override=previous_ending_cash,
+                beginning_cash_override=beginning_cash_override,
             )
             previous_fund_balances = _populate_fund_monitoring_worksheet(
                 worksheet,
@@ -1078,7 +1140,7 @@ def _build_school_year_workbook_export(
                 previous_balances=previous_fund_balances,
                 fund_entries_by_key=_fund_entry_map(report),
             )
-            previous_ending_cash = result["ending_cash"]
+            has_previous_report = True
 
     if active_sheet_name and active_sheet_name in workbook.sheetnames:
         for worksheet in workbook.worksheets:
