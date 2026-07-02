@@ -39,7 +39,6 @@ import { Bar, Doughnut } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
-const DEFAULT_METRICS = { accuracy: '0.00%' };
 const PERIOD_OPTIONS = [
   { key: 'day', label: 'Day' },
   { key: 'month', label: 'Month' },
@@ -547,7 +546,6 @@ export default function Dashboard() {
     categorySplit: [],
     topProducts: [],
     predictions: [],
-    metrics: DEFAULT_METRICS,
   });
 
   useEffect(() => {
@@ -573,10 +571,6 @@ export default function Dashboard() {
           predictionsResult.status === 'fulfilled'
             ? predictionsResult.value?.predictions || []
             : [],
-        metrics:
-          predictionsResult.status === 'fulfilled'
-            ? predictionsResult.value?.metrics || DEFAULT_METRICS
-            : DEFAULT_METRICS,
       }));
 
       const failures = [
@@ -721,7 +715,7 @@ export default function Dashboard() {
   }
 
   const periodTitle = getPeriodTitle(period);
-  const { summary, transactions, predictions, metrics, dailySales, hourlySales } = data;
+  const { summary, transactions, predictions, dailySales, hourlySales } = data;
   const recentTxns = mapRecentTransactions(transactions);
   const categorySplit = data.categorySplit;
   const trend = buildTrend(period, dailySales, hourlySales, referenceDate);
@@ -759,7 +753,6 @@ export default function Dashboard() {
       ['Revenue', formatCurrency(periodRevenue)],
       ['Transactions', periodTransactionCount],
       ['Low Stock Alerts', summary?.low_stock_count || 0],
-      ['AI Model Accuracy', metrics?.accuracy || DEFAULT_METRICS.accuracy],
       ['Today Revenue', formatCurrency(summary?.today_revenue || 0)],
       ['Today Transactions', summary?.today_transactions || 0],
       ['Active Products', summary?.total_products || 0],
@@ -953,7 +946,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-3">
         <StatCard
           title={`${periodTitle} Revenue`}
           value={formatCurrency(periodRevenue)}
@@ -975,13 +968,6 @@ export default function Dashboard() {
           color="red"
           alert={summary?.low_stock_count > 0}
           onClick={() => navigate('/inventory')}
-        />
-        <StatCard
-          title="AI Model Accuracy"
-          value={metrics?.accuracy || '0.00%'}
-          icon={SparklesIcon}
-          color="teal"
-          onClick={() => navigate('/predictions')}
         />
       </div>
 
@@ -1277,7 +1263,7 @@ export default function Dashboard() {
         >
           <div className="mb-4 flex items-center justify-between">
             <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
-              <SparklesIcon className="h-5 w-5 text-primary" /> AI Restock Priorities
+              <SparklesIcon className="h-5 w-5 text-primary" /> Restock Priorities
             </h3>
             <span className="flex items-center gap-1 text-xs font-bold text-primary opacity-0 transition-opacity group-hover:opacity-100">
               View Forecast <ArrowTopRightOnSquareIcon className="h-3 w-3" />

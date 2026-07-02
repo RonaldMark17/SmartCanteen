@@ -1,4 +1,4 @@
-"""Command-line report for SmartCanteen AI predictor metrics."""
+"""Command-line report for SmartCanteen demand forecast metrics."""
 
 from ml_predictor import print_cli_model_metrics
 

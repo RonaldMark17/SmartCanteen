@@ -919,7 +919,6 @@ async function primeOfflineData({ role } = {}) {
       request(
         'GET',
         `/predictions/tomorrow${toQuery({
-          algorithm: 'XGBoost',
           weather: 'clear',
           event: 'none',
         })}`
@@ -1158,11 +1157,10 @@ export const API = {
   getPaymentSummary: (options = 7) => request('GET', `/analytics/payment-summary${toAnalyticsQuery(options)}`),
   getHourlyHeatmap: (options = {}) => request('GET', `/analytics/hourly-heatmap${toAnalyticsQuery(options)}`),
 
-  getPredictions: ({ algorithm = 'XGBoost', weather = 'clear', event = 'none' } = {}) =>
+  getPredictions: ({ weather = 'clear', event = 'none' } = {}) =>
     request(
       'GET',
       `/predictions/tomorrow${toQuery({
-        algorithm,
         weather,
         event,
       })}`

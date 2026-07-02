@@ -393,7 +393,7 @@ function getNavDescription(path) {
     return 'Monthly canteen finance and exports';
   }
   if (path === '/predictions') {
-    return 'Demand planning and AI guidance';
+    return 'Demand planning and sales forecast';
   }
   if (path === '/audit') {
     return 'Sensitive admin actions and logs';
@@ -445,7 +445,7 @@ export default function Layout({ children, onLogout }) {
     { name: 'Financial Reports', path: '/financial-reports', icon: BanknotesIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
-    { name: 'AI Predictions', path: '/predictions', icon: SparklesIcon },
+    { name: 'Demand Forecast', path: '/predictions', icon: SparklesIcon },
     { name: 'Audit Log', path: '/audit', icon: ShieldCheckIcon },
     { name: 'Manage Accounts', path: '/accounts', icon: UserGroupIcon },
   ];

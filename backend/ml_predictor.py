@@ -1570,7 +1570,7 @@ def _shared_ml_predictions(
 
     if xgb is None:
         for result in results.values():
-            result["reason"] = "XGBoost is not installed, so heuristic forecasting was used."
+            result["reason"] = "The demand forecast engine is unavailable, so historical forecasting was used."
         return results
 
     train_parts = []
@@ -2108,8 +2108,8 @@ def _outlook_label(level: str) -> str:
         "high": "High Tomorrow Sales",
         "normal": "Normal Tomorrow Sales",
         "low": "Low Tomorrow Sales",
-        "unavailable": "Waiting for Sales Data",
-    }.get(level, "Waiting for Sales Data")
+        "unavailable": "Waiting for Transaction Data",
+    }.get(level, "Waiting for Transaction Data")
 
 
 def _build_tomorrow_sales_outlook(
@@ -2252,8 +2252,8 @@ def _build_insights(predictions: List[Dict], summary: Dict, data_source: str) ->
         insights.append(
             {
                 "type": "coverage",
-                "title": "Forecast fallback active",
-                "message": "The system used heuristic forecasting where sales history was too limited for full model training.",
+                "title": "History-based forecast active",
+                "message": "The system used historical averages where transaction history was still limited.",
             }
         )
 
@@ -2670,7 +2670,7 @@ def print_cli_model_metrics() -> None:
     _, database_url = _load_cli_session()
     model_metrics = get_cli_model_metrics()
 
-    print("SmartCanteen AI Model Metrics")
+    print("SmartCanteen Demand Forecast Metrics")
     print(f"Database: {database_url}")
     print("")
 

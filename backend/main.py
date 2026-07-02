@@ -1,5 +1,5 @@
 """
-main.py  –  SmartCanteen AI  |  FastAPI Backend
+main.py  –  SmartCanteen  |  FastAPI Backend
 ─────────────────────────────────────────────────
 Run:  uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ─────────────────────────────────────────────────
@@ -421,7 +421,7 @@ _ensure_analytics_indexes()
 _ensure_financial_reporting_columns()
 
 app = FastAPI(
-    title="SmartCanteen AI",
+    title="SmartCanteen",
     description="Predictive Inventory & Sales System",
     version="1.0.0",
 )
@@ -576,7 +576,7 @@ def _frontend_index_response():
     index_file = _resolve_frontend_file("index.html")
     if index_file:
         return FileResponse(index_file)
-    message = "SmartCanteen AI API is running. Frontend build not found."
+    message = "SmartCanteen API is running. Frontend build not found."
     if FRONTEND_BUILD_ERROR:
         message = f"{message} Auto-build failed: {FRONTEND_BUILD_ERROR}"
     return {"message": message, "docs": "/docs"}
@@ -2324,13 +2324,12 @@ def hourly_heatmap(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ML PREDICTIONS
+# DEMAND FORECAST
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/predictions/tomorrow", tags=["Predictions"])
 def predict_tomorrow(
     background_tasks: BackgroundTasks,
-    algorithm: str = "XGBoost",
     weather: str = "clear",
     event: str = "none",
     db: Session = Depends(get_db),
@@ -2338,19 +2337,18 @@ def predict_tomorrow(
 ):
     """Fulfills Research Objective (d): Predict demand to reduce food waste."""
     try:
-        result = ml_predictor.predict_tomorrow_sales(db, algorithm, weather, event)
+        forecast_engine = ml_predictor.BEST_ALGORITHM
+        result = ml_predictor.predict_tomorrow_sales(db, forecast_engine, weather, event)
         if result.get("cache_refresh_needed"):
-            if ml_predictor.begin_prediction_cache_refresh(algorithm, weather, event):
+            if ml_predictor.begin_prediction_cache_refresh(forecast_engine, weather, event):
                 background_tasks.add_task(
                     ml_predictor.refresh_prediction_cache,
-                    algorithm,
+                    forecast_engine,
                     weather,
                     event,
                 )
 
         return {
-            "metrics": result.get("metrics", {}),
-            "algorithm_metrics": result.get("algorithm_metrics", {}),
             "feature_summary": result.get("feature_summary", {}),
             "predictions": result.get("predictions", []),  # ✅ safe
             "weekly_sales_trend": result.get("weekly_sales_trend", []),
@@ -2366,7 +2364,6 @@ def predict_tomorrow(
 
     except Exception as e:
         return {
-            "metrics": {},
             "feature_summary": {},
             "predictions": [],
             "weekly_sales_trend": [],

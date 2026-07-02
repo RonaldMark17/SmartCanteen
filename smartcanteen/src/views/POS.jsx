@@ -1204,7 +1204,7 @@ export default function POS() {
                 <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
                   <BanknotesIcon className="h-6 w-6 text-slate-700" />
                 </div>
-                <h2 className="text-lg font-black text-slate-900">SmartCanteen AI</h2>
+                <h2 className="text-lg font-black text-slate-900">SmartCanteen Receipt</h2>
                 <p className="mt-1 text-xs font-medium text-slate-500">
                   {new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}
                 </p>

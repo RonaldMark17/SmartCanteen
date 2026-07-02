@@ -43,15 +43,12 @@ import { Line } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
-const DEFAULT_ALGORITHM = 'XGBoost';
-const MODEL_ALGORITHMS = [DEFAULT_ALGORITHM];
 const OPENWEATHER_API_KEY = import.meta.env.VITE_OPENWEATHERMAP_API_KEY?.trim() || '';
 const OPENWEATHER_LAT = import.meta.env.VITE_OPENWEATHERMAP_LAT?.trim() || '';
 const OPENWEATHER_LON = import.meta.env.VITE_OPENWEATHERMAP_LON?.trim() || '';
 const DEFAULT_OPENWEATHER_LAT = '14.5995';
 const DEFAULT_OPENWEATHER_LON = '120.9842';
 const DEFAULT_OPENWEATHER_LOCATION_LABEL = 'Manila, PH';
-const METRIC_REFRESH_IDLE_TIMEOUT_MS = 1500;
 const WEATHER_OPTIONS = [
   {
     value: 'hot_dry',
@@ -157,22 +154,6 @@ const RISK_META = {
   medium: { label: 'Medium', chip: 'bg-amber-100 text-amber-700', card: 'border-amber-200 bg-amber-50/70' },
   high: { label: 'High', chip: 'bg-red-100 text-red-700', card: 'border-red-200 bg-red-50/70' },
 };
-const ALGORITHM_REFERENCE_METRICS = {
-  XGBoost: { accuracy: '91.6%', rmse: '4.21', mape: '8.4%', error_rate: '8.4%', r2: '0.87' },
-};
-const DEFAULT_METRICS = ALGORITHM_REFERENCE_METRICS.XGBoost;
-const EMPTY_MODEL_METRICS = {
-  accuracy: '0.00',
-  rmse: '0.00',
-  mape: '0.00',
-  wape: '0.00',
-  error_rate: '0.00',
-  r2: '0.00',
-  accuracy_basis: 'No live metric data',
-};
-const MODEL_METRIC_TONES = {
-  XGBoost: 'bg-blue-50 ring-blue-100 text-blue-700',
-};
 const SCHOOL_WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const SCHOOL_WEEKDAY_SALES_WEIGHTS = {
   Mon: 1.08,
@@ -193,23 +174,6 @@ const SCHOOL_SCHEDULE_BADGE_META = {
   halfday: 'bg-amber-50 text-amber-700 ring-amber-100',
 };
 const RECOMMENDATIONS_PER_PAGE = 6;
-
-function scheduleIdleTask(callback) {
-  if (typeof window === 'undefined') {
-    callback();
-    return () => {};
-  }
-
-  if ('requestIdleCallback' in window) {
-    const idleId = window.requestIdleCallback(callback, {
-      timeout: METRIC_REFRESH_IDLE_TIMEOUT_MS,
-    });
-    return () => window.cancelIdleCallback?.(idleId);
-  }
-
-  const timeoutId = window.setTimeout(callback, 0);
-  return () => window.clearTimeout(timeoutId);
-}
 
 function buildPaginationItems(currentPage, totalPages) {
   if (totalPages <= 7) {
@@ -314,7 +278,7 @@ const SALES_WEEK_CLASS_META = {
     description: 'Tomorrow demand is below the same-day benchmark.',
   },
   unavailable: {
-    label: 'Waiting for Sales Data',
+    label: 'Waiting for Transaction Data',
     chip: 'bg-slate-200 text-slate-700',
     card: 'bg-slate-50/70 ring-slate-100',
     description: 'Add more sales records to generate a tomorrow outlook.',
@@ -471,65 +435,6 @@ function normalizePrediction(prediction, index) {
 
   normalized.recommendation = normalized.recommendation || buildRecommendation(type, normalized);
   return normalized;
-}
-
-function normalizeMetrics(metrics, fallback = DEFAULT_METRICS) {
-  return {
-    accuracy: metrics?.accuracy || fallback.accuracy,
-    rmse: metrics?.rmse || fallback.rmse,
-    mape: metrics?.mape || fallback.mape,
-    wape: metrics?.wape || metrics?.canteen_wape || metrics?.mape || fallback.wape || fallback.mape,
-    error_rate:
-      metrics?.error_rate ||
-      metrics?.wape ||
-      metrics?.canteen_wape ||
-      metrics?.mape ||
-      fallback.error_rate ||
-      fallback.mape,
-    r2: metrics?.r2 || metrics?.r_squared || fallback.r2,
-    accuracy_basis: metrics?.accuracy_basis || fallback.accuracy_basis || 'school-day canteen WAPE',
-  };
-}
-
-function normalizeAlgorithmMetrics(rawMetrics, selectedAlgorithm = DEFAULT_ALGORITHM, selectedMetrics = null) {
-  const normalized = MODEL_ALGORITHMS.reduce((acc, algorithmName) => {
-    acc[algorithmName] = normalizeMetrics(
-      rawMetrics?.[algorithmName],
-      EMPTY_MODEL_METRICS
-    );
-    return acc;
-  }, {});
-
-  if (selectedMetrics && MODEL_ALGORITHMS.includes(selectedAlgorithm)) {
-    normalized[selectedAlgorithm] = normalizeMetrics(
-      selectedMetrics,
-      EMPTY_MODEL_METRICS
-    );
-  }
-
-  return normalized;
-}
-
-function buildLiveAlgorithmMetrics(primaryAlgorithm, primaryResponse, comparisonAlgorithms, comparisonResults) {
-  const liveMetrics = normalizeAlgorithmMetrics(primaryResponse?.algorithm_metrics);
-
-  if (primaryResponse?.metrics && MODEL_ALGORITHMS.includes(primaryAlgorithm)) {
-    liveMetrics[primaryAlgorithm] = normalizeMetrics(
-      primaryResponse.metrics,
-      EMPTY_MODEL_METRICS
-    );
-  }
-
-  comparisonAlgorithms.forEach((algorithmName, index) => {
-    const result = comparisonResults[index];
-    if (result?.status !== 'fulfilled') return;
-    liveMetrics[algorithmName] = normalizeMetrics(
-      result.value?.metrics,
-      EMPTY_MODEL_METRICS
-    );
-  });
-
-  return liveMetrics;
 }
 
 function normalizeFeatureSummary(summary) {
@@ -1104,7 +1009,7 @@ function buildFunctionalTomorrowSalesPrediction(inputs) {
 function getTomorrowOutlookHeadline(level) {
   if (level === 'high') return 'Tomorrow Outlook: Strong Demand Expected';
   if (level === 'low') return 'Tomorrow Outlook: Lighter Demand Expected';
-  if (level === 'unavailable') return 'Tomorrow Outlook: Waiting for Sales Data';
+  if (level === 'unavailable') return 'Tomorrow Outlook: Waiting for Transaction Data';
   return 'Tomorrow Outlook: Stable Demand Expected';
 }
 
@@ -1354,8 +1259,8 @@ function deriveInsights(predictions, summary, dataSource) {
   if (summary.heuristic_predictions > 0 && dataSource !== 'ml+heuristic') {
     insights.push({
       type: 'low_demand',
-      title: 'Heuristic mode active',
-      message: 'The forecast is using historical averages because model-ready data is still limited.',
+      title: 'History-based forecast active',
+      message: 'The forecast is using historical averages because transaction history is still limited.',
     });
   }
 
@@ -1382,7 +1287,7 @@ function normalizeInsights(insights, predictions, summary, dataSource) {
   return deriveInsights(predictions, summary, dataSource);
 }
 
-function normalizeForecastResponse(response, selectedAlgorithm = DEFAULT_ALGORITHM) {
+function normalizeForecastResponse(response) {
   const predictions = Array.isArray(response?.predictions) ? response.predictions.map(normalizePrediction) : [];
   const derivedSummary = deriveSummary(predictions);
   const summary = {
@@ -1403,12 +1308,6 @@ function normalizeForecastResponse(response, selectedAlgorithm = DEFAULT_ALGORIT
     (summary.model_backed_predictions > 0 ? 'ml+heuristic' : 'heuristic');
 
   return {
-    metrics: normalizeMetrics(response?.metrics),
-    algorithmMetrics: normalizeAlgorithmMetrics(
-      response?.algorithm_metrics,
-      selectedAlgorithm,
-      response?.metrics
-    ),
     featureSummary: normalizeFeatureSummary(response?.feature_summary),
     predictions,
     weeklyTrend: normalizeTrend(response?.weekly_sales_trend),
@@ -1815,8 +1714,6 @@ function buildCatalogOnlyForecast(catalogProducts, weather, event) {
   const summary = deriveSummary(predictions);
 
   return {
-    metrics: DEFAULT_METRICS,
-    algorithmMetrics: normalizeAlgorithmMetrics(),
     featureSummary: DEFAULT_FEATURE_SUMMARY,
     predictions,
     weeklyTrend: normalizeTrend([]),
@@ -1945,7 +1842,7 @@ function deriveRiskAnalysis(predictions, summary, weather, event, dataSource) {
       title: 'Forecast quality risk',
       message:
         lowConfidenceItems.length > 0 || summary.heuristic_predictions > 0
-          ? `${formatCount(lowConfidenceItems.length)} low-confidence product${lowConfidenceItems.length !== 1 ? 's' : ''} and ${formatCount(summary.heuristic_predictions)} heuristic forecast${summary.heuristic_predictions !== 1 ? 's' : ''} need closer review.`
+          ? `${formatCount(lowConfidenceItems.length)} low-confidence product${lowConfidenceItems.length !== 1 ? 's' : ''} and ${formatCount(summary.heuristic_predictions)} history-based forecast${summary.heuristic_predictions !== 1 ? 's' : ''} need closer review.`
           : 'Forecast quality looks stable for the current run.',
     });
   }
@@ -2060,7 +1957,6 @@ function TomorrowSalesOutlookInputs({
   onUpdatePlan,
   onWeatherChange,
   predictions = [],
-  selectedAlgorithm,
   weather,
   weatherProfile,
   weatherSyncing,
@@ -2355,12 +2251,6 @@ function TomorrowSalesOutlookInputs({
           Auto-filled from transactions, inventory, weather, school-day context, and forecasted product demand.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="prediction-model-chip flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
-            <span className="whitespace-nowrap text-slate-500">AI Model</span>
-            <span className="prediction-model-name rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
-              {selectedAlgorithm || DEFAULT_ALGORITHM}
-            </span>
-          </div>
           <button
             type="button"
             onClick={onUpdatePlan}
@@ -2368,7 +2258,7 @@ function TomorrowSalesOutlookInputs({
             className="prediction-primary-action inline-flex items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'Updating...' : 'Update Plan'}
+            {loading ? 'Updating...' : 'Update Forecast'}
           </button>
           <button
             type="button"
@@ -2441,7 +2331,7 @@ function TomorrowSalesOutlookInputs({
         <div className={`self-start rounded-[20px] p-4 shadow-md ring-1 backdrop-blur ${predictionMeta.card}`}>
           <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-slate-600 shadow-sm">
             <SparklesIcon className="h-4 w-4 text-primary" />
-            AI Output
+            Demand Forecast
           </div>
           <div className="mt-3 text-2xl font-black leading-tight text-slate-900">
             {getTomorrowOutlookHeadline(prediction.level)}
@@ -2574,7 +2464,6 @@ function PredictionRecommendationsSkeleton() {
 
 export default function Predictions() {
   const location = useLocation();
-  const algorithm = DEFAULT_ALGORITHM;
   const [weather, setWeather] = useState('hot_dry');
   const [event, setEvent] = useState('none');
   const [search, setSearch] = useState('');
@@ -2593,8 +2482,6 @@ export default function Predictions() {
   const [weatherForecastTimezone, setWeatherForecastTimezone] = useState('Asia/Manila');
   const [weatherForecastError, setWeatherForecastError] = useState('');
   const [forecast, setForecast] = useState(() => ({
-    metrics: DEFAULT_METRICS,
-    algorithmMetrics: normalizeAlgorithmMetrics(),
     featureSummary: DEFAULT_FEATURE_SUMMARY,
     predictions: [],
     weeklyTrend: normalizeTrend([]),
@@ -2610,7 +2497,6 @@ export default function Predictions() {
   const hasAutoWeatherSyncedRef = useRef(false);
   const isMountedRef = useRef(true);
   const forecastRequestIdRef = useRef(0);
-  const comparisonMetricsRequestIdRef = useRef(0);
   const weatherProfile = getWeatherProfile(weather);
   const eventProfile = getEventProfile(event);
   const deferredSearch = useDeferredValue(search);
@@ -2621,7 +2507,6 @@ export default function Predictions() {
     return () => {
       isMountedRef.current = false;
       forecastRequestIdRef.current += 1;
-      comparisonMetricsRequestIdRef.current += 1;
     };
   }, []);
 
@@ -2629,67 +2514,14 @@ export default function Predictions() {
     recommendationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function refreshComparisonMetrics({
-    activeAlgorithm,
-    activeWeather,
-    activeEvent,
-    primaryResponse,
-    requestId,
-  }) {
-    const comparisonAlgorithms = MODEL_ALGORITHMS.filter((modelName) => modelName !== activeAlgorithm);
-    const hasAllAlgorithmMetrics = MODEL_ALGORITHMS.every(
-      (modelName) => primaryResponse?.algorithm_metrics?.[modelName]
-    );
-
-    if (comparisonAlgorithms.length === 0 || hasAllAlgorithmMetrics) {
-      return;
-    }
-
-    const comparisonRequestId = ++comparisonMetricsRequestIdRef.current;
-    const activeWeatherProfile = getWeatherProfile(activeWeather);
-
-    scheduleIdleTask(async () => {
-      const comparisonResults = await Promise.allSettled(
-        comparisonAlgorithms.map((modelName) =>
-          API.getPredictions({
-            algorithm: modelName,
-            weather: activeWeatherProfile.backendWeather,
-            event: activeEvent,
-          })
-        )
-      );
-
-      if (
-        !isMountedRef.current ||
-        requestId !== forecastRequestIdRef.current ||
-        comparisonRequestId !== comparisonMetricsRequestIdRef.current
-      ) {
-        return;
-      }
-
-      setForecast((currentForecast) => ({
-        ...currentForecast,
-        algorithmMetrics: buildLiveAlgorithmMetrics(
-          activeAlgorithm,
-          primaryResponse,
-          comparisonAlgorithms,
-          comparisonResults
-        ),
-      }));
-    });
-  }
-
   async function loadForecast({
-    algorithmOverride = algorithm,
     weatherOverride = weather,
     eventOverride = event,
     leadingNotice = '',
   } = {}) {
     const requestId = ++forecastRequestIdRef.current;
-    comparisonMetricsRequestIdRef.current += 1;
     const activeWeather = weatherOverride;
     const activeEvent = eventOverride;
-    const activeAlgorithm = algorithmOverride;
     const activeWeatherProfile = getWeatherProfile(activeWeather);
 
     setLoading(true);
@@ -2699,7 +2531,6 @@ export default function Predictions() {
     try {
       const [predictionResult, productsResult] = await Promise.allSettled([
         API.getPredictions({
-          algorithm: activeAlgorithm,
           weather: activeWeatherProfile.backendWeather,
           event: activeEvent,
         }),
@@ -2719,7 +2550,7 @@ export default function Predictions() {
       let normalized;
       if (predictionResult.status === 'fulfilled') {
         normalized = ensureForecastCoverage(
-          normalizeForecastResponse(primaryResponse, activeAlgorithm),
+          normalizeForecastResponse(primaryResponse),
           catalogProducts,
           activeWeather,
           activeEvent
@@ -2730,26 +2561,7 @@ export default function Predictions() {
         throw predictionResult.reason || new Error('Unable to load prediction data.');
       }
 
-      normalized = {
-        ...normalized,
-        algorithmMetrics: buildLiveAlgorithmMetrics(
-          activeAlgorithm,
-          primaryResponse,
-          [],
-          []
-        ),
-      };
-
       setForecast(normalized);
-      if (primaryResponse) {
-        refreshComparisonMetrics({
-          activeAlgorithm,
-          activeWeather,
-          activeEvent,
-          primaryResponse,
-          requestId,
-        });
-      }
 
       const notices = leadingNotice ? [leadingNotice] : [];
       if (normalized.backendError) {
@@ -3189,22 +3001,6 @@ export default function Predictions() {
     () => buildWeeklySummaryItems(schoolWeekSalesOutlook),
     [schoolWeekSalesOutlook]
   );
-  const liveModelMetricRows = useMemo(
-    () =>
-      MODEL_ALGORITHMS.map((modelName) => ({
-        name: modelName,
-        metrics: normalizeMetrics(
-          forecast.algorithmMetrics?.[modelName],
-          EMPTY_MODEL_METRICS
-        ),
-        tone: MODEL_METRIC_TONES[modelName] || 'bg-slate-50 ring-slate-100 text-slate-700',
-      })),
-    [forecast.algorithmMetrics]
-  );
-  const selectedModelMetric = useMemo(
-    () => liveModelMetricRows.find((model) => model.name === algorithm) || liveModelMetricRows[0],
-    [algorithm, liveModelMetricRows]
-  );
   const salesOutlookUsesForecastWeather = useMemo(
     () => schoolWeekSalesOutlook.some((item) => item.usesForecastWeather),
     [schoolWeekSalesOutlook]
@@ -3339,21 +3135,19 @@ export default function Predictions() {
         tone: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
       },
       {
-        title: `${selectedModelMetric?.name || algorithm} Accuracy`,
-        value: selectedModelMetric?.metrics.accuracy || '0.00',
-        detail: `${selectedModelMetric?.metrics.error_rate || '0.00'} error rate`,
-        tone: 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-100',
+        title: 'Prediction Status',
+        value: tomorrowSalesPrediction.level === 'unavailable' ? 'Waiting for Transaction Data' : 'Ready for Planning',
+        detail: `${formatCount(forecast.summary.total_products)} products checked`,
+        tone: 'bg-violet-50 text-violet-700 ring-violet-100',
       },
     ],
     [
-      algorithm,
       forecast.summary.expected_revenue,
       forecast.summary.expected_units,
-      selectedModelMetric?.metrics.accuracy,
-      selectedModelMetric?.metrics.error_rate,
-      selectedModelMetric?.name,
+      forecast.summary.total_products,
       tomorrowOutlookMeta.label,
       tomorrowSalesPrediction.estimatedSales,
+      tomorrowSalesPrediction.level,
     ]
   );
 
@@ -3378,7 +3172,6 @@ export default function Predictions() {
                   <Skeleton className="h-7 w-36 rounded-full" />
                   <Skeleton className="h-7 w-28 rounded-full" />
                   <Skeleton className="h-7 w-28 rounded-full" />
-                  <Skeleton className="h-7 w-32 rounded-full" />
                 </>
               ) : (
                 <>
@@ -3390,9 +3183,6 @@ export default function Predictions() {
                   </span>
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
                     {eventLabel}
-                  </span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                    Model: {algorithm}
                   </span>
                 </>
               )}
@@ -3447,7 +3237,6 @@ export default function Predictions() {
             onUpdatePlan={() => loadForecast()}
             onWeatherChange={setWeather}
             predictions={forecast.predictions}
-            selectedAlgorithm={algorithm}
             weather={weather}
             weatherProfile={weatherProfile}
             weatherSyncing={weatherSyncing}
@@ -3655,7 +3444,7 @@ export default function Predictions() {
                   </p>
                 </div>
                 <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-black text-white shadow-sm">
-                  Selected model: {algorithm}
+                  Demand Forecast
                 </span>
               </div>
 
