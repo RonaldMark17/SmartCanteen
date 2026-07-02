@@ -7,6 +7,17 @@
   --color-primary-light: #99f6e4;
 }
 
+:root {
+  --sc-motion-fast: 0.18s;
+  --sc-motion-medium: 0.22s;
+  --sc-motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --sc-press-scale: 0.97;
+  --sc-card-press-scale: 0.985;
+  --sc-focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.12);
+  --sc-soft-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  --sc-modal-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
+}
+
 /* 2. Your base styles */
 body {
   @apply bg-slate-50 text-slate-700 antialiased;
@@ -18,6 +29,48 @@ html.dark {
 
 html.dark body {
   @apply bg-slate-950 text-slate-100;
+}
+
+@keyframes scModalFadeScale {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes scOverlayFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scContentEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scToastEnter {
+  from {
+    opacity: 0;
+    transform: translateX(18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 
 @layer components {
@@ -1034,24 +1087,169 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
 
 .app-shell tbody tr,
 .app-shell button,
-.app-shell a {
-  transition-duration: 150ms;
+.app-shell a,
+.app-shell [role="button"],
+.app-shell summary,
+.login-view button,
+.login-view a,
+.login-view [role="button"] {
+  transition-property: transform, background-color, border-color, color, box-shadow, opacity;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
 }
 
-.app-shell button:hover,
-.app-shell a:hover {
+.app-shell button:not(:disabled):active,
+.app-shell a[href]:active,
+.app-shell [role="button"]:not([aria-disabled="true"]):active,
+.app-shell summary:active,
+.login-view button:not(:disabled):active,
+.login-view a[href]:active,
+.login-view [role="button"]:not([aria-disabled="true"]):active {
+  transform: scale(var(--sc-press-scale)) !important;
+}
+
+.app-shell button:disabled,
+.login-view button:disabled,
+.app-shell [aria-disabled="true"],
+.login-view [aria-disabled="true"] {
+  pointer-events: none;
   transform: none !important;
 }
 
 .app-shell .field-control,
 .app-shell input,
 .app-shell select,
-.app-shell textarea {
+.app-shell textarea,
+.login-view input,
+.login-view select,
+.login-view textarea {
   font-weight: 400;
+  transition-property: border-color, box-shadow, background-color, color, opacity;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+.app-shell .field-control:focus,
+.app-shell input:focus,
+.app-shell select:focus,
+.app-shell textarea:focus,
+.login-view input:focus,
+.login-view select:focus,
+.login-view textarea:focus {
+  box-shadow: var(--sc-focus-ring);
 }
 
 .app-shell .notification-popover {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.1) !important;
+}
+
+.app-shell .view-shell,
+.app-shell .view-shell-static,
+.login-view {
+  animation: scContentEnter var(--sc-motion-medium) var(--sc-motion-ease);
+}
+
+.app-shell .panel-card,
+.app-shell .data-card,
+.app-shell .control-surface,
+.app-shell .notification-alert-card,
+.app-shell .pos-product-card,
+.login-view [role="dialog"] {
+  transition-property: transform, border-color, box-shadow, background-color, opacity;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+.app-shell .panel-card.cursor-pointer:hover,
+.app-shell .data-card.cursor-pointer:hover,
+.app-shell [role="button"].panel-card:hover,
+.app-shell [role="button"].data-card:hover {
+  border-color: rgba(15, 118, 110, 0.18);
+  box-shadow: var(--sc-soft-shadow) !important;
+  transform: translateY(-2px);
+}
+
+.app-shell .pos-product-card:not(.opacity-50):hover {
+  border-color: #99f6e4 !important;
+  box-shadow: var(--sc-soft-shadow) !important;
+  transform: translateY(-2px);
+}
+
+.app-shell .pos-product-card.border-primary,
+.app-shell .pos-product-card.bg-primary\/5 {
+  border-color: #0f766e !important;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.12) !important;
+}
+
+.app-shell .pos-product-card:not(.opacity-50):has(button:not(:disabled):active) {
+  transform: translateY(-1px) scale(var(--sc-card-press-scale)) !important;
+}
+
+.app-shell .pos-qty-button:not(:disabled):active,
+.login-view button:not(:disabled):active {
+  transform: scale(var(--sc-press-scale)) !important;
+}
+
+.app-shell .pos-qty-button:disabled:hover {
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.app-shell nav a,
+.app-shell .mobile-sidebar-nav a,
+.app-shell [class*="tab"],
+.app-shell [aria-selected],
+.app-shell [role="tab"],
+.login-view [role="tab"] {
+  transition-property: transform, background-color, border-color, color, box-shadow, opacity;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+.app-shell nav a:active,
+.app-shell .mobile-sidebar-nav a:active,
+.app-shell [class*="tab"]:active,
+.app-shell [aria-selected]:active,
+.app-shell [role="tab"]:active,
+.login-view [role="tab"]:active {
+  transform: scale(var(--sc-press-scale));
+}
+
+.app-shell [role="dialog"][aria-modal="true"],
+.login-view [role="dialog"][aria-modal="true"] {
+  animation: scModalFadeScale var(--sc-motion-medium) var(--sc-motion-ease);
+  box-shadow: var(--sc-modal-shadow) !important;
+  transform-origin: center;
+}
+
+.app-shell .fixed.inset-0,
+.login-view .fixed.inset-0 {
+  animation: scOverlayFade var(--sc-motion-medium) var(--sc-motion-ease);
+}
+
+.app-shell .notification-popover,
+.app-shell .profile-popover,
+.app-shell .mobile-sidebar,
+.app-shell [class*="dropdown"],
+.app-shell [class*="popover"] {
+  animation: scModalFadeScale var(--sc-motion-medium) var(--sc-motion-ease);
+  transform-origin: top right;
+}
+
+.app-shell .notification-alert-card,
+.app-shell .panel-card.cursor-pointer,
+.app-shell .data-card.cursor-pointer,
+.app-shell [role="button"].panel-card,
+.app-shell [role="button"].data-card {
+  will-change: transform;
+}
+
+.app-shell .notification-alert-card:active,
+.app-shell .panel-card.cursor-pointer:active,
+.app-shell .data-card.cursor-pointer:active,
+.app-shell [role="button"].panel-card:active,
+.app-shell [role="button"].data-card:active {
+  transform: scale(var(--sc-card-press-scale));
 }
 
 .app-shell .notification-dismiss-layer,
@@ -1123,6 +1321,43 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
 .login-view .tracking-widest,
 .login-view [class*="tracking-["] {
   letter-spacing: 0.06em;
+}
+
+.smart-toast {
+  animation: scToastEnter var(--sc-motion-medium) var(--sc-motion-ease);
+  transition-property: transform, opacity, box-shadow, border-color, background-color;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+.smart-toast:active {
+  transform: scale(0.99);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .app-shell button:not(:disabled):active,
+  .app-shell a[href]:active,
+  .app-shell [role="button"]:not([aria-disabled="true"]):active,
+  .app-shell summary:active,
+  .login-view button:not(:disabled):active,
+  .login-view a[href]:active,
+  .login-view [role="button"]:not([aria-disabled="true"]):active,
+  .app-shell .pos-product-card:not(.opacity-50):hover,
+  .app-shell .pos-product-card:not(.opacity-50):has(button:not(:disabled):active),
+  .app-shell [role="dialog"][aria-modal="true"],
+  .login-view [role="dialog"][aria-modal="true"],
+  .smart-toast {
+    transform: none !important;
+  }
 }
 
 html.dark .app-shell {

@@ -22,6 +22,8 @@ export default function Toaster() {
   };
 
   useEffect(() => {
+    const timeoutIds = timeoutIdsRef.current;
+
     window.showToast = (message, type = 'info') => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setToasts((prev) => [...prev, { id, message, type }]);
@@ -30,12 +32,12 @@ export default function Toaster() {
         removeToast(id);
       }, 3000);
 
-      timeoutIdsRef.current.set(id, timeoutId);
+      timeoutIds.set(id, timeoutId);
     };
 
     return () => {
-      timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
-      timeoutIdsRef.current.clear();
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      timeoutIds.clear();
       delete window.showToast;
     };
   }, []);
@@ -59,7 +61,7 @@ export default function Toaster() {
       {toasts.map((toast) => (
         <div 
           key={toast.id} 
-          className={`pointer-events-auto flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg shadow-slate-900/5 animate-in slide-in-from-right-8 fade-in duration-300 sm:min-w-[280px] ${backgrounds[toast.type]}`}
+          className={`smart-toast pointer-events-auto flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg shadow-slate-900/5 animate-in slide-in-from-right-8 fade-in duration-300 sm:min-w-[280px] ${backgrounds[toast.type]}`}
         >
           <div className="shrink-0">{icons[toast.type]}</div>
           <span className="min-w-0 flex-1 text-sm font-bold">{toast.message}</span>
