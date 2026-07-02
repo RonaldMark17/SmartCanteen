@@ -1,0 +1,198 @@
+name: SmartCanteen CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+
+concurrency:
+  group: smartcanteen-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Check, Test, and Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pytest
+
+      - name: Check backend syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+          python -m compileall -q backend smartcanteen/src/services
+
+      - name: Run backend tests if available
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+          mapfile -t test_files < <(find backend tests -type f \( -name "test_*.py" -o -name "*_test.py" \) 2>/dev/null || true)
+          if [ "${#test_files[@]}" -gt 0 ]; then
+            python -m pytest "${test_files[@]}"
+          else
+            echo "No backend test files found. Backend syntax check completed."
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: smartcanteen/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: smartcanteen
+        run: npm ci
+
+      - name: Run frontend lint
+        working-directory: smartcanteen
+        run: npm run lint --if-present
+
+      - name: Run frontend tests if available
+        working-directory: smartcanteen
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.test ? 0 : 1)"; then
+            CI=true npm test
+          else
+            echo "No frontend test script found. Skipping frontend tests."
+          fi
+
+      - name: Build frontend
+        working-directory: smartcanteen
+        run: npm run build
+
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for secret_name in SERVER_HOST SERVER_USER SERVER_SSH_KEY; do
+            if [ -z "${!secret_name:-}" ]; then
+              echo "::error::Missing required GitHub secret: ${secret_name}"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          port="${SERVER_PORT:-22}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "$port" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync production environment file if provided
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+          SERVER_ENV_FILE: ${{ secrets.SERVER_ENV_FILE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVER_ENV_FILE:-}" ]; then
+            echo "SERVER_ENV_FILE secret is not set. Keeping the existing server .env file."
+            exit 0
+          fi
+          port="${SERVER_PORT:-22}"
+          app_dir="${SERVER_APP_DIR:-/var/www/smartcanteen}"
+          encoded_env="$(printf '%s' "$SERVER_ENV_FILE" | base64 -w 0)"
+          remote_command="$(
+            printf 'mkdir -p %q %q && umask 077 && printf %%s %q | base64 -d > %q && cp %q %q' \
+              "$app_dir" \
+              "$app_dir/smartcanteen" \
+              "$encoded_env" \
+              "$app_dir/.env" \
+              "$app_dir/.env" \
+              "$app_dir/smartcanteen/.env.production"
+          )"
+          ssh -p "$port" "$SERVER_USER@$SERVER_HOST" "$remote_command"
+
+      - name: Run deployment script
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+          BACKEND_SERVICE_NAME: ${{ secrets.BACKEND_SERVICE_NAME }}
+          NGINX_SERVICE_NAME: ${{ secrets.NGINX_SERVICE_NAME }}
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          set -euo pipefail
+          port="${SERVER_PORT:-22}"
+          app_dir="${SERVER_APP_DIR:-/var/www/smartcanteen}"
+          backend_service="${BACKEND_SERVICE_NAME:-smartcanteen}"
+          nginx_service="${NGINX_SERVICE_NAME:-nginx}"
+          healthcheck_url="${HEALTHCHECK_URL:-http://127.0.0.1:8000/api/health}"
+
+          remote_command="$(
+            printf 'SMARTCANTEEN_APP_DIR=%q SMARTCANTEEN_BRANCH=%q SMARTCANTEEN_BACKEND_SERVICE=%q SMARTCANTEEN_NGINX_SERVICE=%q SMARTCANTEEN_HEALTHCHECK_URL=%q bash -s' \
+              "$app_dir" \
+              "main" \
+              "$backend_service" \
+              "$nginx_service" \
+              "$healthcheck_url"
+          )"
+
+          ssh -p "$port" "$SERVER_USER@$SERVER_HOST" "$remote_command" < scripts/deploy.sh

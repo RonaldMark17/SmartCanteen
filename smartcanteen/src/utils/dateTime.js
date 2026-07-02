@@ -27,7 +27,7 @@ export function parseBackendDateTime(value) {
   let normalizedValue = rawValue;
   if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
     normalizedValue = `${rawValue}T12:00:00+08:00`;
-  } else if (!/(?:[zZ]|[+\-]\d{2}:\d{2})$/.test(rawValue)) {
+  } else if (!/(?:[zZ]|[+-]\d{2}:\d{2})$/.test(rawValue)) {
     normalizedValue = `${rawValue}Z`;
   }
 

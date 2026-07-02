@@ -36,6 +36,8 @@ export default function DismissibleAlert({
   const styles = TONE_STYLES[tone] || TONE_STYLES.amber;
 
   useEffect(() => {
+    // Reset the dismissible state when the parent provides a new alert cycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDismissed(false);
   }, [resetKey]);
 
