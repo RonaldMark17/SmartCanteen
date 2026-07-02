@@ -131,10 +131,6 @@ WEEKDAY_BASE_REVENUE = {
 }
 
 
-def _barcode(index: int) -> str:
-    return f"SC-PROD-{index:03d}"
-
-
 def _ph_to_utc_naive(day_value, hour: int, minute: int) -> datetime:
     local_value = datetime.combine(day_value, time(hour, minute), tzinfo=PH_TIMEZONE)
     return local_value.astimezone(timezone.utc).replace(tzinfo=None)
@@ -527,7 +523,6 @@ def seed_demo_canteen_database(db: Session, *, reset: bool = False):
             price=price,
             stock=stock,
             min_stock=min_stock,
-            barcode=_barcode(index),
             is_active=True,
             created_at=now_utc - timedelta(days=100),
             updated_at=now_utc - timedelta(hours=index % 24),

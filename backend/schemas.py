@@ -175,7 +175,6 @@ class ProductCreate(BaseModel):
     price:     float
     stock:     int   = 0
     min_stock: int   = 5
-    barcode:   Optional[str] = None
 
 class ProductUpdate(BaseModel):
     name:      Optional[str]   = None
@@ -192,7 +191,6 @@ class ProductResponse(BaseModel):
     price:     float
     stock:     int
     min_stock: int
-    barcode:   Optional[str]
     is_active: bool
     class Config:
         from_attributes = True

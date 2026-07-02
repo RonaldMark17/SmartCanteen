@@ -509,7 +509,6 @@ function openEditProduct(id) {
   document.getElementById("pf-price").value           = p.price;
   document.getElementById("pf-stock").value           = p.stock;
   document.getElementById("pf-min-stock").value       = p.min_stock;
-  document.getElementById("pf-barcode").value         = p.barcode || "";
   document.getElementById("product-modal").classList.remove("hidden");
 }
 
@@ -522,7 +521,6 @@ async function saveProduct(e) {
     price:     parseFloat(document.getElementById("pf-price").value),
     stock:     parseInt(document.getElementById("pf-stock").value),
     min_stock: parseInt(document.getElementById("pf-min-stock").value),
-    barcode:   document.getElementById("pf-barcode").value || null,
   };
   try {
     if (id) {

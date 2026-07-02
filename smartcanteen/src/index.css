@@ -1371,6 +1371,11 @@ html.dark .app-shell {
   --sc-primary: #5eead4;
   --sc-primary-strong: #2dd4bf;
   --sc-primary-soft: rgba(45, 212, 191, 0.1);
+  --sc-sidebar-item-bg: #111827;
+  --sc-sidebar-item-border: #243244;
+  --sc-sidebar-hover-bg: #1e293b;
+  --sc-sidebar-hover-border: #334155;
+  --sc-sidebar-hover-text: #ffffff;
   background: var(--sc-page);
   color: var(--sc-text);
 }
@@ -1429,6 +1434,185 @@ html.dark .app-shell .view-subtitle {
 
 html.dark .app-shell .text-slate-400 {
   color: var(--sc-muted);
+}
+
+html.dark .app-shell .notification-popover {
+  background: #020617 !important;
+  border-color: #1f2937 !important;
+  color: #e5e7eb !important;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34) !important;
+}
+
+html.dark .app-shell .notification-panel-head,
+html.dark .app-shell .notification-footer {
+  background: #020617 !important;
+  border-color: #1f2937 !important;
+  color: #cbd5e1 !important;
+}
+
+html.dark .app-shell .notification-action {
+  background: var(--sc-sidebar-item-bg) !important;
+  border-color: var(--sc-sidebar-item-border) !important;
+  color: #e5e7eb !important;
+  transition-property: background-color, border-color, color, box-shadow, transform;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+html.dark .app-shell .notification-action:not(:disabled):hover {
+  background: var(--sc-sidebar-hover-bg) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  color: var(--sc-sidebar-hover-text) !important;
+  box-shadow: none !important;
+}
+
+html.dark .app-shell .notification-alert-card {
+  background: var(--sc-sidebar-item-bg) !important;
+  border-color: var(--sc-sidebar-item-border) !important;
+  color: #e5e7eb !important;
+  transition-property: background-color, border-color, color, box-shadow, transform;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+html.dark .app-shell .notification-alert-card:hover {
+  background: var(--sc-sidebar-hover-bg) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  color: var(--sc-sidebar-hover-text) !important;
+  box-shadow: none !important;
+}
+
+html.dark .app-shell .notification-alert-card-danger {
+  border-left-color: #ef4444 !important;
+}
+
+html.dark .app-shell .notification-alert-card-info {
+  border-left-color: #0ea5e9 !important;
+}
+
+html.dark .app-shell .notification-alert-card-danger:hover {
+  border-left-color: #ef4444 !important;
+}
+
+html.dark .app-shell .notification-alert-card-info:hover {
+  border-left-color: #0ea5e9 !important;
+}
+
+html.dark .app-shell .notification-alert-card .text-slate-950,
+html.dark .app-shell .notification-alert-card .text-slate-900,
+html.dark .app-shell .notification-alert-card .text-slate-800,
+html.dark .app-shell .notification-alert-card .text-slate-700 {
+  color: #f9fafb !important;
+}
+
+html.dark .app-shell .notification-alert-card .text-slate-600,
+html.dark .app-shell .notification-alert-card .text-slate-500,
+html.dark .app-shell .notification-alert-card .text-slate-400 {
+  color: #cbd5e1 !important;
+}
+
+html.dark .app-shell .notification-alert-card:hover .text-slate-600,
+html.dark .app-shell .notification-alert-card:hover .text-slate-500,
+html.dark .app-shell .notification-alert-card:hover .text-slate-400 {
+  color: #e5e7eb !important;
+}
+
+html.dark .app-shell .notification-alert-card > button[aria-label] {
+  color: #94a3b8 !important;
+  transition-property: background-color, color, box-shadow;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+html.dark .app-shell .notification-alert-card > button[aria-label]:hover {
+  background: var(--sc-sidebar-hover-bg) !important;
+  color: var(--sc-sidebar-hover-text) !important;
+}
+
+html.dark .app-shell .notification-alert-metric {
+  background: var(--sc-sidebar-item-bg) !important;
+  border: 1px solid var(--sc-sidebar-item-border) !important;
+  color: #cbd5e1 !important;
+  transition-property: background-color, border-color, color;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+html.dark .app-shell .notification-alert-card:hover .notification-alert-metric {
+  background: var(--sc-sidebar-hover-bg) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+}
+
+html.dark .app-shell .notification-alert-metric:hover {
+  background: var(--sc-sidebar-hover-bg) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  box-shadow: none !important;
+}
+
+html.dark .app-shell .notification-alert-card:hover .bg-slate-50,
+html.dark .app-shell .notification-alert-card:hover .bg-slate-100,
+html.dark .app-shell .notification-alert-card:hover .bg-white\/70 {
+  background: var(--sc-sidebar-hover-bg) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+}
+
+html.dark .app-shell .notification-alert-card:hover .text-red-600,
+html.dark .app-shell .notification-alert-card:hover .text-red-700 {
+  color: #fca5a5 !important;
+}
+
+html.dark .app-shell .notification-alert-card:hover .text-sky-600,
+html.dark .app-shell .notification-alert-card:hover .text-sky-700 {
+  color: #7dd3fc !important;
+}
+
+html.dark .app-shell .notification-alert-card:hover .text-emerald-700 {
+  color: #86efac !important;
+}
+
+html.dark .app-shell .notification-alert-card:hover .text-amber-700 {
+  color: #fcd34d !important;
+}
+
+html.dark .app-shell .notification-info-strip {
+  background: rgba(14, 165, 233, 0.1) !important;
+  border-color: rgba(125, 211, 252, 0.24) !important;
+  color: #bae6fd !important;
+}
+
+html.dark .app-shell .notification-popover .bg-white\/70 {
+  background: var(--sc-sidebar-item-bg) !important;
+  color: #e5e7eb !important;
+}
+
+html.dark .app-shell .notification-popover .bg-red-50,
+html.dark .app-shell .notification-popover .bg-red-100 {
+  background: rgba(239, 68, 68, 0.16) !important;
+  color: #fca5a5 !important;
+}
+
+html.dark .app-shell .notification-popover .bg-sky-50,
+html.dark .app-shell .notification-popover .bg-sky-100 {
+  background: rgba(14, 165, 233, 0.16) !important;
+  color: #7dd3fc !important;
+}
+
+html.dark .app-shell .notification-popover .bg-amber-50,
+html.dark .app-shell .notification-popover .bg-amber-100 {
+  background: rgba(245, 158, 11, 0.16) !important;
+  color: #fcd34d !important;
+}
+
+html.dark .app-shell .notification-popover .bg-emerald-50,
+html.dark .app-shell .notification-popover .bg-emerald-100 {
+  background: rgba(16, 185, 129, 0.16) !important;
+  color: #86efac !important;
+}
+
+html.dark .app-shell .notification-popover .bg-slate-50,
+html.dark .app-shell .notification-popover .bg-slate-100 {
+  background: var(--sc-sidebar-item-bg) !important;
+  color: #cbd5e1 !important;
 }
 
 .brand-logo-mark {

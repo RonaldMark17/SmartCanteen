@@ -376,7 +376,7 @@ export default function POS() {
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
               <input
                 type="search"
-                placeholder="Search products by name or barcode..."
+                placeholder="Search products by name or category..."
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 value={search}
                 onChange={(e) => {

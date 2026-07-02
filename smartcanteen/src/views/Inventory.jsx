@@ -55,7 +55,6 @@ function getProductSearchText(product) {
     product?.id,
     product?.name,
     product?.category,
-    product?.barcode,
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
@@ -536,7 +535,7 @@ export default function Inventory() {
   const tableColumnCount = isAdmin ? 7 : 6;
 
   function initialFormState() {
-    return { id: null, name: '', category: 'Staple', price: '', stock: 0, min_stock: 5, barcode: '' };
+    return { id: null, name: '', category: 'Staple', price: '', stock: 0, min_stock: 5 };
   }
 
   const fetchProducts = useCallback(async () => {
@@ -621,7 +620,6 @@ export default function Inventory() {
         price: parseFloat(formData.price),
         stock: parseInt(formData.stock),
         min_stock: parseInt(formData.min_stock),
-        barcode: formData.barcode || null,
       };
 
       if (formData.id) {
@@ -828,7 +826,7 @@ export default function Inventory() {
               type="search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search name, barcode, category, or ID"
+              placeholder="Search name, category, or ID"
               className="field-control w-full pl-10"
             />
           </label>
@@ -966,11 +964,6 @@ export default function Inventory() {
                     <label className="block text-sm font-semibold text-slate-700 mb-1">Min Alert Stock</label>
                     <input type="number" required value={formData.min_stock} onChange={(e) => setFormData({ ...formData, min_stock: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Barcode</label>
-                  <input type="text" value={formData.barcode || ''} onChange={(e) => setFormData({ ...formData, barcode: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                 </div>
 
                 <div className="flex flex-col gap-3 pt-4 sm:flex-row">

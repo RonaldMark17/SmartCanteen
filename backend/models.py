@@ -122,7 +122,6 @@ class Product(Base):
     price      = Column(Float, nullable=False)
     stock      = Column(Integer, default=0)
     min_stock  = Column(Integer, default=5)      # low-stock threshold
-    barcode    = Column(String, unique=True, nullable=True)
     is_active  = Column(Boolean, default=True)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
