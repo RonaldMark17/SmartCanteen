@@ -193,8 +193,10 @@ class FinancialAllocationsUpdate(BaseModel):
 
 class FinancialFundMonitoringInput(BaseModel):
     category_key: str
+    interest: float = 0.0
     expenses: float = 0.0
     others: float = 0.0
+    cash_on_bank: float = 0.0
 
 
 class FinancialFundMonitoringUpdate(BaseModel):

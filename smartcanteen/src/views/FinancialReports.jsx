@@ -226,14 +226,24 @@ function getPreviousFundBalance(detail, selectedReport, categoryKey, openingBala
       const allocation = (report.allocations || []).find((item) => item.category_key === categoryKey);
       return (
         total +
+        toMoney(allocation?.fund_interest) +
         toMoney(allocation?.amount) -
-        toMoney(allocation?.fund_expenses) +
+        toMoney(allocation?.fund_expenses) -
         toMoney(allocation?.fund_others)
       );
     }, 0);
 }
 
-function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, fundExpenseDrafts, netProfit) {
+function buildFundMonitoringFunds(
+  detail,
+  selectedReport,
+  allocationDrafts,
+  fundInterestDrafts,
+  fundExpenseDrafts,
+  fundOtherDrafts,
+  fundCashOnBankDrafts,
+  netProfit
+) {
   return (allocationDrafts || []).map((allocation) => {
     const savedAllocation = (selectedReport?.allocations || []).find(
       (item) => item.category_key === allocation.category_key
@@ -246,14 +256,21 @@ function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, fund
       allocation.category_key,
       openingBalance
     );
-    const interest = 0;
+    const interest = toMoney(
+      fundInterestDrafts?.[allocation.category_key] ?? savedAllocation?.fund_interest
+    );
     const netIncome = (toMoney(netProfit) * percentage) / 100;
     const expenses = toMoney(
       fundExpenseDrafts?.[allocation.category_key] ?? savedAllocation?.fund_expenses
     );
-    const others = toMoney(savedAllocation?.fund_others);
-    const totalCurrentExpenses = expenses;
-    const currentBalance = previousBalance + interest + netIncome - totalCurrentExpenses + others;
+    const others = toMoney(
+      fundOtherDrafts?.[allocation.category_key] ?? savedAllocation?.fund_others
+    );
+    const cashOnBank = toMoney(
+      fundCashOnBankDrafts?.[allocation.category_key] ?? savedAllocation?.fund_cash_on_bank
+    );
+    const totalCurrentExpenses = expenses + others;
+    const currentBalance = previousBalance + interest + netIncome - totalCurrentExpenses;
 
     return {
       category_key: allocation.category_key,
@@ -267,20 +284,20 @@ function buildFundMonitoringFunds(detail, selectedReport, allocationDrafts, fund
       others,
       totalCurrentExpenses,
       currentBalance,
-      cashOnBank: currentBalance,
+      cashOnBank,
     };
   });
 }
 
 const FUND_MONITORING_ROWS = [
   { key: 'previousBalance', label: 'Balance in Previous Month', editableForJuneOpeningBalance: true },
-  { key: 'interest', label: 'Interest on the Bank' },
+  { key: 'interest', label: 'Interest on the Bank', editableFundInterest: true },
   { key: 'netIncome', label: 'Net Income for the Month' },
   { key: 'expenses', label: 'Expenses for the Month', editableFundExpense: true },
-  { key: 'others', label: 'Others' },
+  { key: 'others', label: 'Others', editableFundOther: true },
   { key: 'totalCurrentExpenses', label: 'Total Current Expenses' },
   { key: 'currentBalance', label: 'Current Balance', emphasis: true },
-  { key: 'cashOnBank', label: 'Cash on Bank', emphasis: true, displayValue: '-' },
+  { key: 'cashOnBank', label: 'Cash on Bank', editableCashOnBank: true, emphasis: true },
 ];
 
 function formatFundMonitoringValue(row, fund) {
@@ -414,7 +431,10 @@ export default function FinancialReports() {
     cost_of_sales: '',
   });
   const [expenseDraft, setExpenseDraft] = useState(() => createEmptyOperationExpenseDraft());
+  const [fundInterestDrafts, setFundInterestDrafts] = useState({});
   const [fundExpenseDrafts, setFundExpenseDrafts] = useState({});
+  const [fundOtherDrafts, setFundOtherDrafts] = useState({});
+  const [fundCashOnBankDrafts, setFundCashOnBankDrafts] = useState({});
   const [allocationDrafts, setAllocationDrafts] = useState([]);
   const [exportingWorkbook, setExportingWorkbook] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
@@ -442,6 +462,8 @@ export default function FinancialReports() {
   const isJuneReport = Number(selectedReport?.month_index ?? -1) === 0;
   const beginningCashLocked = Boolean(selectedReport?.beginning_cash_locked);
   const beginningCashSource = selectedReport?.beginning_cash_source || '';
+  const currentSalesLocked = Boolean(selectedReport?.current_sales_locked);
+  const currentSalesSource = selectedReport?.auto_inputs?.current_sales?.source || '';
   const draftOperationExpensesTotal = sumOperationExpenseDraft(expenseDraft);
   const draftGrossIncome = toMoney(reportDraft.current_sales) - toMoney(reportDraft.cost_of_sales);
   const draftNetProfit = draftGrossIncome - draftOperationExpensesTotal;
@@ -452,7 +474,10 @@ export default function FinancialReports() {
     detail,
     selectedReport,
     allocationDrafts,
+    fundInterestDrafts,
     fundExpenseDrafts,
+    fundOtherDrafts,
+    fundCashOnBankDrafts,
     draftNetProfit
   );
 
@@ -475,11 +500,35 @@ export default function FinancialReports() {
       cost_of_sales: toInputValue(selectedReport.default_inputs?.cost_of_sales),
     });
     setExpenseDraft(buildOperationExpenseDraft(selectedReport));
+    setFundInterestDrafts(
+      Object.fromEntries(
+        (selectedReport.allocations || []).map((allocation) => [
+          allocation.category_key,
+          toInputValue(allocation.fund_interest),
+        ])
+      )
+    );
     setFundExpenseDrafts(
       Object.fromEntries(
         (selectedReport.allocations || []).map((allocation) => [
           allocation.category_key,
           toInputValue(allocation.fund_expenses),
+        ])
+      )
+    );
+    setFundOtherDrafts(
+      Object.fromEntries(
+        (selectedReport.allocations || []).map((allocation) => [
+          allocation.category_key,
+          toInputValue(allocation.fund_others),
+        ])
+      )
+    );
+    setFundCashOnBankDrafts(
+      Object.fromEntries(
+        (selectedReport.allocations || []).map((allocation) => [
+          allocation.category_key,
+          toInputValue(allocation.fund_cash_on_bank),
         ])
       )
     );
@@ -695,8 +744,10 @@ export default function FinancialReports() {
       const nextBeginningCash = beginningCashLocked
         ? toMoney(selectedReport.default_inputs?.beginning_cash_on_hand ?? selectedReport.beginning_cash_on_hand)
         : toMoney(reportDraft.beginning_cash_on_hand);
+      const nextCurrentSales = currentSalesLocked
+        ? toMoney(selectedReport.default_inputs?.current_sales ?? selectedReport.current_sales)
+        : toMoney(reportDraft.current_sales);
       const reportPayload = {
-        current_sales: toMoney(reportDraft.current_sales),
         other_income: 0,
         purchases: 0,
         inventory_used: 0,
@@ -705,6 +756,9 @@ export default function FinancialReports() {
 
       if (!beginningCashLocked) {
         reportPayload.beginning_cash_on_hand = nextBeginningCash;
+      }
+      if (!currentSalesLocked) {
+        reportPayload.current_sales = nextCurrentSales;
       }
 
       const reportResponse = await API.updateFinancialReport(selectedReport.id, reportPayload);
@@ -719,8 +773,10 @@ export default function FinancialReports() {
       );
       const nextFundEntries = allocationDrafts.map((allocation) => ({
         category_key: allocation.category_key,
+        interest: toMoney(fundInterestDrafts[allocation.category_key]),
         expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
-        others: 0,
+        others: toMoney(fundOtherDrafts[allocation.category_key]),
+        cash_on_bank: toMoney(fundCashOnBankDrafts[allocation.category_key]),
       }));
       const fundResponse = await API.updateFinancialFundMonitoring(
         selectedReport.id,
@@ -742,7 +798,7 @@ export default function FinancialReports() {
             return {
               ...report,
               beginning_cash_on_hand: nextBeginningCash,
-              current_sales: toMoney(reportDraft.current_sales),
+              current_sales: nextCurrentSales,
               other_income: 0,
               purchases: 0,
               inventory_used: 0,
@@ -757,15 +813,17 @@ export default function FinancialReports() {
               default_inputs: {
                 ...(report.default_inputs || {}),
                 beginning_cash_on_hand: nextBeginningCash,
-                current_sales: toMoney(reportDraft.current_sales),
+                current_sales: nextCurrentSales,
                 cost_of_sales: toMoney(reportDraft.cost_of_sales),
               },
               allocations: (report.allocations || []).map((allocation) => ({
                 ...allocation,
                 amount:
                   (draftNetProfit * toMoney(allocation.percentage)) / 100,
+                fund_interest: toMoney(fundInterestDrafts[allocation.category_key]),
                 fund_expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
-                fund_others: 0,
+                fund_others: toMoney(fundOtherDrafts[allocation.category_key]),
+                fund_cash_on_bank: toMoney(fundCashOnBankDrafts[allocation.category_key]),
               })),
             };
           }),
@@ -814,8 +872,10 @@ export default function FinancialReports() {
 
       const nextFundEntries = allocationDrafts.map((allocation) => ({
         category_key: allocation.category_key,
+        interest: toMoney(fundInterestDrafts[allocation.category_key]),
         expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
-        others: 0,
+        others: toMoney(fundOtherDrafts[allocation.category_key]),
+        cash_on_bank: toMoney(fundCashOnBankDrafts[allocation.category_key]),
       }));
       const fundResponse = await API.updateFinancialFundMonitoring(
         selectedReport.id,
@@ -832,8 +892,10 @@ export default function FinancialReports() {
                   ...report,
                   allocations: (report.allocations || []).map((allocation) => ({
                     ...allocation,
+                    fund_interest: toMoney(fundInterestDrafts[allocation.category_key]),
                     fund_expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
-                    fund_others: 0,
+                    fund_others: toMoney(fundOtherDrafts[allocation.category_key]),
+                    fund_cash_on_bank: toMoney(fundCashOnBankDrafts[allocation.category_key]),
                   })),
                 }
               : report
@@ -871,8 +933,29 @@ export default function FinancialReports() {
     }));
   }
 
+  function updateFundInterestDraft(categoryKey, value) {
+    setFundInterestDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [categoryKey]: value,
+    }));
+  }
+
   function updateFundExpenseDraft(categoryKey, value) {
     setFundExpenseDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [categoryKey]: value,
+    }));
+  }
+
+  function updateFundOtherDraft(categoryKey, value) {
+    setFundOtherDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [categoryKey]: value,
+    }));
+  }
+
+  function updateFundCashOnBankDraft(categoryKey, value) {
+    setFundCashOnBankDrafts((currentDrafts) => ({
       ...currentDrafts,
       [categoryKey]: value,
     }));
@@ -1134,7 +1217,7 @@ export default function FinancialReports() {
                       label="Current Sales"
                       value={reportDraft.current_sales}
                       onChange={(event) => updateReportDraft('current_sales', event.target.value)}
-                      disabled={!canSaveSelectedSchoolYear}
+                      disabled={!canSaveSelectedSchoolYear || currentSalesLocked}
                     />
                     <FormField
                       label="Cost of Sales"
@@ -1146,6 +1229,11 @@ export default function FinancialReports() {
                   {beginningCashLocked && beginningCashSource ? (
                     <div className="mt-2 text-xs font-semibold text-slate-500">
                       {beginningCashSource}
+                    </div>
+                  ) : null}
+                  {currentSalesLocked && currentSalesSource ? (
+                    <div className="mt-2 text-xs font-semibold text-slate-500">
+                      {currentSalesSource}
                     </div>
                   ) : null}
 
@@ -1176,7 +1264,7 @@ export default function FinancialReports() {
                     <div>
                       <h2 className="text-lg font-black text-slate-900">Fund Allocation and Bank Monitoring</h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        Current balance = previous balance + interest + net income - expenses +/- others.
+                        Current balance = previous balance + interest + net income - expenses - others.
                       </p>
                     </div>
                     <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto">
@@ -1232,8 +1320,14 @@ export default function FinancialReports() {
                                 fundMonitoringEditing &&
                                 allocationIndex >= 0 &&
                                 canSaveSelectedSchoolYear;
+                              const canEditFundInterest =
+                                row.editableFundInterest && fundMonitoringEditing && canSaveSelectedSchoolYear;
                               const canEditFundExpense =
                                 row.editableFundExpense && fundMonitoringEditing && canSaveSelectedSchoolYear;
+                              const canEditFundOther =
+                                row.editableFundOther && fundMonitoringEditing && canSaveSelectedSchoolYear;
+                              const canEditCashOnBank =
+                                row.editableCashOnBank && fundMonitoringEditing && canSaveSelectedSchoolYear;
 
                               return (
                                 <div key={`${row.key}-mobile-${fund.category_key}`} className="py-3">
@@ -1249,6 +1343,15 @@ export default function FinancialReports() {
                                       onChange={(event) => updateAllocationDraft(allocationIndex, 'opening_balance', event.target.value)}
                                       className="field-control mt-2 h-11 w-full text-right text-base"
                                     />
+                                  ) : canEditFundInterest ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundInterestDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundInterestDraft(fund.category_key, event.target.value)}
+                                      className="field-control mt-2 h-11 w-full text-right text-base"
+                                    />
                                   ) : canEditFundExpense ? (
                                     <input
                                       type="number"
@@ -1256,6 +1359,24 @@ export default function FinancialReports() {
                                       step="0.01"
                                       value={fundExpenseDrafts[fund.category_key] ?? '0'}
                                       onChange={(event) => updateFundExpenseDraft(fund.category_key, event.target.value)}
+                                      className="field-control mt-2 h-11 w-full text-right text-base"
+                                    />
+                                  ) : canEditFundOther ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundOtherDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundOtherDraft(fund.category_key, event.target.value)}
+                                      className="field-control mt-2 h-11 w-full text-right text-base"
+                                    />
+                                  ) : canEditCashOnBank ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundCashOnBankDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundCashOnBankDraft(fund.category_key, event.target.value)}
                                       className="field-control mt-2 h-11 w-full text-right text-base"
                                     />
                                   ) : (
@@ -1307,8 +1428,14 @@ export default function FinancialReports() {
                                 isAdmin &&
                                 fundMonitoringEditing &&
                                 canSaveSelectedSchoolYear;
+                              const canEditFundInterest =
+                                row.editableFundInterest && fundMonitoringEditing && canSaveSelectedSchoolYear;
                               const canEditFundExpense =
                                 row.editableFundExpense && fundMonitoringEditing && canSaveSelectedSchoolYear;
+                              const canEditFundOther =
+                                row.editableFundOther && fundMonitoringEditing && canSaveSelectedSchoolYear;
+                              const canEditCashOnBank =
+                                row.editableCashOnBank && fundMonitoringEditing && canSaveSelectedSchoolYear;
 
                               return (
                                 <td
@@ -1331,6 +1458,15 @@ export default function FinancialReports() {
                                       }}
                                       className="field-control h-9 w-full min-w-0 px-2 text-right text-[11px] sm:text-xs"
                                     />
+                                  ) : canEditFundInterest ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundInterestDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundInterestDraft(fund.category_key, event.target.value)}
+                                      className="field-control h-9 w-full min-w-0 px-2 text-right text-[11px] sm:text-xs"
+                                    />
                                   ) : canEditFundExpense ? (
                                     <input
                                       type="number"
@@ -1338,6 +1474,24 @@ export default function FinancialReports() {
                                       step="0.01"
                                       value={fundExpenseDrafts[fund.category_key] ?? '0'}
                                       onChange={(event) => updateFundExpenseDraft(fund.category_key, event.target.value)}
+                                      className="field-control h-9 w-full min-w-0 px-2 text-right text-[11px] sm:text-xs"
+                                    />
+                                  ) : canEditFundOther ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundOtherDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundOtherDraft(fund.category_key, event.target.value)}
+                                      className="field-control h-9 w-full min-w-0 px-2 text-right text-[11px] sm:text-xs"
+                                    />
+                                  ) : canEditCashOnBank ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={fundCashOnBankDrafts[fund.category_key] ?? '0'}
+                                      onChange={(event) => updateFundCashOnBankDraft(fund.category_key, event.target.value)}
                                       className="field-control h-9 w-full min-w-0 px-2 text-right text-[11px] sm:text-xs"
                                     />
                                   ) : (

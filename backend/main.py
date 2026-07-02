@@ -377,22 +377,37 @@ def _ensure_analytics_indexes():
 
 def _ensure_financial_reporting_columns():
     column_statements = [
-        ("opening_balance", "ALTER TABLE allocations ADD COLUMN opening_balance FLOAT DEFAULT 0.0"),
+        ("allocations", "opening_balance", "ALTER TABLE allocations ADD COLUMN opening_balance FLOAT DEFAULT 0.0"),
+        (
+            "fund_monitoring_entries",
+            "interest",
+            "ALTER TABLE fund_monitoring_entries ADD COLUMN interest FLOAT DEFAULT 0.0",
+        ),
+        (
+            "fund_monitoring_entries",
+            "cash_on_bank",
+            "ALTER TABLE fund_monitoring_entries ADD COLUMN cash_on_bank FLOAT DEFAULT 0.0",
+        ),
     ]
 
     try:
         with engine.begin() as connection:
-            existing_columns = {
-                row["name"]
-                for row in connection.execute(text("PRAGMA table_info(allocations)")).mappings()
-            }
-            for column_name, statement in column_statements:
+            existing_columns_by_table = {}
+            for table_name, _column_name, _statement in column_statements:
+                if table_name not in existing_columns_by_table:
+                    existing_columns_by_table[table_name] = {
+                        row["name"]
+                        for row in connection.execute(text(f"PRAGMA table_info({table_name})")).mappings()
+                    }
+
+            for table_name, column_name, statement in column_statements:
+                existing_columns = existing_columns_by_table.get(table_name, set())
                 if column_name not in existing_columns:
                     connection.execute(text(statement))
     except Exception:
         try:
             with engine.begin() as connection:
-                for _column_name, statement in column_statements:
+                for _table_name, _column_name, statement in column_statements:
                     try:
                         connection.execute(text(statement))
                     except Exception:

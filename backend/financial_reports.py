@@ -70,6 +70,9 @@ CURRENT_FINANCIAL_REPORT_ERROR = "Financial reports can only be saved for the cu
 BEGINNING_CASH_CARRY_FORWARD_ERROR = (
     "Beginning cash is system-generated from the previous school year's final current balance."
 )
+CURRENT_SALES_TRANSACTION_ERROR = (
+    "Current sales is system-generated from transactions for the selected month."
+)
 DEMO_BEGINNING_CASH_ON_HAND = 11834.59
 DEMO_MONTHLY_REPORT_ROWS = [
     {
@@ -532,8 +535,10 @@ def _serialize_allocation(
     allocation: models.Allocation,
     net_profit: float = 0.0,
     *,
+    fund_interest: float = 0.0,
     fund_expenses: float = 0.0,
     fund_others: float = 0.0,
+    fund_cash_on_bank: float = 0.0,
 ) -> dict:
     percentage = float(allocation.percentage or 0.0)
     return {
@@ -544,8 +549,10 @@ def _serialize_allocation(
         "opening_balance": _round_money(getattr(allocation, "opening_balance", 0.0)),
         "sort_order": int(allocation.sort_order or 0),
         "amount": _round_money(net_profit * percentage / 100.0),
+        "fund_interest": _round_money(fund_interest),
         "fund_expenses": _round_money(fund_expenses),
         "fund_others": _round_money(fund_others),
+        "fund_cash_on_bank": _round_money(fund_cash_on_bank),
     }
 
 
@@ -584,12 +591,14 @@ def _serialize_report(
     serialized_expenses = [_serialize_expense(expense) for expense in expenses]
     beginning_cash = _round_money(report.beginning_cash_on_hand)
     saved_current_sales = _round_money(report.current_sales)
-    analytics_current_sales = (
+    transaction_current_sales = (
         None if current_sales_override is None else _round_money(current_sales_override)
     )
-    current_sales = saved_current_sales
-    if current_sales <= 0 and analytics_current_sales is not None:
-        current_sales = analytics_current_sales
+    current_sales = (
+        transaction_current_sales
+        if transaction_current_sales is not None
+        else saved_current_sales
+    )
     other_income = _round_money(report.other_income)
     purchases = _round_money(report.purchases)
     inventory_used = _round_money(report.inventory_used)
@@ -602,21 +611,20 @@ def _serialize_report(
     ending_cash = _round_money(beginning_cash + net_profit)
     total_expenses = _round_money(cost_of_sales + total_operating_expenses)
     fund_entries_by_key = _fund_entry_map(report)
-    allocations_breakdown = [
-        _serialize_allocation(
-            allocation,
-            net_profit,
-            fund_expenses=fund_entries_by_key.get(str(allocation.category_key or "").strip()).expenses
-            if fund_entries_by_key.get(str(allocation.category_key or "").strip())
-            else 0.0,
-            fund_others=fund_entries_by_key.get(str(allocation.category_key or "").strip()).others
-            if fund_entries_by_key.get(str(allocation.category_key or "").strip())
-            else 0.0,
+    allocations_breakdown = []
+    for allocation in sorted(allocations, key=lambda item: (item.sort_order, item.id)):
+        category_key = str(allocation.category_key or "").strip()
+        fund_entry = fund_entries_by_key.get(category_key)
+        allocations_breakdown.append(
+            _serialize_allocation(
+                allocation,
+                net_profit,
+                fund_interest=getattr(fund_entry, "interest", 0.0) if fund_entry else 0.0,
+                fund_expenses=getattr(fund_entry, "expenses", 0.0) if fund_entry else 0.0,
+                fund_others=getattr(fund_entry, "others", 0.0) if fund_entry else 0.0,
+                fund_cash_on_bank=getattr(fund_entry, "cash_on_bank", 0.0) if fund_entry else 0.0,
+            )
         )
-        for allocation in sorted(
-            allocations, key=lambda item: (item.sort_order, item.id)
-        )
-    ]
 
     return {
         "id": report.id,
@@ -629,10 +637,10 @@ def _serialize_report(
         "month_label": f"{report.month_name} {report.calendar_year}",
         "beginning_cash_on_hand": beginning_cash,
         "current_sales": current_sales,
-        "analytics_current_sales": analytics_current_sales,
-        "current_sales_source": (
-            "saved" if saved_current_sales > 0 or analytics_current_sales is None else "analytics"
-        ),
+        "analytics_current_sales": transaction_current_sales,
+        "transaction_current_sales": transaction_current_sales,
+        "current_sales_source": "transactions" if transaction_current_sales is not None else "saved",
+        "current_sales_locked": transaction_current_sales is not None,
         "other_income": other_income,
         "purchases": purchases,
         "inventory_used": inventory_used,
@@ -680,10 +688,11 @@ def _calculate_next_fund_balances(
         previous_balance = _round_money(previous_balances.get(category_key, 0.0))
         report_allocation = report_allocations_by_key.get(category_key, {})
         net_income = _round_money(report_allocation.get("amount", 0.0))
+        interest = _round_money(report_allocation.get("fund_interest", 0.0))
         expenses = _round_money(report_allocation.get("fund_expenses", 0.0))
         others = _round_money(report_allocation.get("fund_others", 0.0))
         next_balances[category_key] = _round_money(
-            previous_balance + net_income - expenses + others
+            previous_balance + interest + net_income - expenses - others
         )
 
     return next_balances
@@ -1199,12 +1208,14 @@ def _populate_report_worksheet(
     beginning_cash_override: Optional[float] = None,
 ) -> dict:
     saved_current_sales = _round_money(report.current_sales)
-    analytics_current_sales = (
+    transaction_current_sales = (
         None if current_sales_override is None else _round_money(current_sales_override)
     )
-    current_sales = saved_current_sales
-    if current_sales <= 0 and analytics_current_sales is not None:
-        current_sales = analytics_current_sales
+    current_sales = (
+        transaction_current_sales
+        if transaction_current_sales is not None
+        else saved_current_sales
+    )
     beginning_cash = _round_money(
         report.beginning_cash_on_hand
         if beginning_cash_override is None
@@ -1271,14 +1282,15 @@ def _populate_fund_monitoring_worksheet(
         category_key = str(allocation.category_key or "").strip()
         percentage = round(float(allocation.percentage or 0.0), 2)
         previous_balance = _round_money(previous_balances.get(category_key, 0.0))
-        interest = 0.0
-        net_income = _round_money(_round_money(net_profit) * percentage / 100.0)
         fund_entry = fund_entries_by_key.get(category_key)
-        expenses = _round_money(fund_entry.expenses if fund_entry else 0.0)
-        others = _round_money(fund_entry.others if fund_entry else 0.0)
-        total_current_expenses = _round_money(expenses)
+        interest = _round_money(getattr(fund_entry, "interest", 0.0) if fund_entry else 0.0)
+        net_income = _round_money(_round_money(net_profit) * percentage / 100.0)
+        expenses = _round_money(getattr(fund_entry, "expenses", 0.0) if fund_entry else 0.0)
+        others = _round_money(getattr(fund_entry, "others", 0.0) if fund_entry else 0.0)
+        cash_on_bank = _round_money(getattr(fund_entry, "cash_on_bank", 0.0) if fund_entry else 0.0)
+        total_current_expenses = _round_money(expenses + others)
         current_balance = _round_money(
-            previous_balance + interest + net_income - total_current_expenses + others
+            previous_balance + interest + net_income - total_current_expenses
         )
 
         worksheet[f"{column_letter}38"] = f"{str(allocation.label or '').upper()}\n{percentage:.2f}%"
@@ -1289,13 +1301,13 @@ def _populate_fund_monitoring_worksheet(
         worksheet[f"{column_letter}43"] = others
         worksheet[f"{column_letter}44"] = total_current_expenses
         worksheet[f"{column_letter}45"] = current_balance
-        worksheet[f"{column_letter}46"] = "-"
+        worksheet[f"{column_letter}46"] = cash_on_bank
 
         next_balances[category_key] = current_balance
 
     for column_letter in FUND_MONITORING_COLUMNS[len(allocations):]:
         for row_number in range(39, 47):
-            worksheet[f"{column_letter}{row_number}"] = "-" if row_number == 46 else 0.0
+            worksheet[f"{column_letter}{row_number}"] = 0.0
 
     worksheet["H45"] = _round_money(
         sum(next_balances.get(str(allocation.category_key or "").strip(), 0.0) for allocation in allocations)
@@ -1534,11 +1546,16 @@ def update_report(
     _validate_school_year_write_allowed(report.school_year)
 
     carry_forward = _get_report_beginning_cash_carry_forward(db, report)
+    transaction_current_sales = _get_report_transaction_sales(db, report)
     updates = payload.model_dump(exclude_unset=True)
     if carry_forward and "beginning_cash_on_hand" in updates:
         if _round_money(updates["beginning_cash_on_hand"]) != _round_money(carry_forward["amount"]):
             raise HTTPException(status_code=400, detail=BEGINNING_CASH_CARRY_FORWARD_ERROR)
         updates.pop("beginning_cash_on_hand", None)
+    if "current_sales" in updates:
+        if _round_money(updates["current_sales"]) != transaction_current_sales:
+            raise HTTPException(status_code=400, detail=CURRENT_SALES_TRANSACTION_ERROR)
+        updates.pop("current_sales", None)
 
     for field_name, value in updates.items():
         if field_name == "notes":
@@ -1548,6 +1565,7 @@ def update_report(
 
     if carry_forward:
         report.beginning_cash_on_hand = _round_money(carry_forward["amount"])
+    report.current_sales = transaction_current_sales
 
     _audit_log(
         db,
@@ -1700,8 +1718,10 @@ def replace_report_fund_monitoring(
             models.FundMonitoringEntry(
                 report_id=report.id,
                 category_key=category_key,
+                interest=_round_money(item.interest),
                 expenses=_round_money(item.expenses),
                 others=_round_money(item.others),
+                cash_on_bank=_round_money(item.cash_on_bank),
             )
         )
 

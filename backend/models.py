@@ -289,8 +289,10 @@ class FundMonitoringEntry(Base):
     id           = Column(Integer, primary_key=True, index=True)
     report_id    = Column(Integer, ForeignKey("monthly_reports.id"), nullable=False, index=True)
     category_key = Column(String, nullable=False)
+    interest     = Column(Float, default=0.0)
     expenses     = Column(Float, default=0.0)
     others       = Column(Float, default=0.0)
+    cash_on_bank = Column(Float, default=0.0)
     created_at   = Column(DateTime, default=utc_now_naive)
     updated_at   = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
