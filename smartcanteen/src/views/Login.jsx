@@ -5,13 +5,8 @@ import { safeLocalStorageSetItem, safeLocalStorageSetJson } from '../services/st
 import BrandLogo from '../components/BrandLogo';
 import DismissibleAlert from '../components/DismissibleAlert';
 import {
-  BuildingStorefrontIcon,
-  CheckCircleIcon,
   EyeIcon,
   EyeSlashIcon,
-  KeyIcon,
-  LockClosedIcon,
-  ShieldCheckIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 
@@ -20,31 +15,92 @@ const REMEMBERED_USERNAME_STORAGE_KEY = 'sc_remembered_username';
 const MAX_LOGIN_ATTEMPTS = 3;
 const LOGIN_LOCKOUT_MS = 60 * 1000;
 const RECOVERY_CODE_LENGTH = 12;
+const PASSWORD_RESET_REQUEST_SENT_MESSAGE = 'Your password reset request has been sent. Please wait for admin approval.';
+const PASSWORD_RESET_STATUS_MESSAGES = {
+  pending: 'Your password reset request is still pending. Please wait for admin approval.',
+  approved: 'Your password reset request has been approved. You may now change your password.',
+  declined: 'Your password reset request was declined. You may submit an appeal if you believe this was a mistake.',
+  appealed: 'Your appeal has been submitted. Please wait for admin review.',
+  appeal_approved: 'Your password reset appeal has been approved. You may now change your password.',
+  appeal_declined: 'Your appeal was declined. Please contact the admin for assistance.',
+  expired: 'Your password reset approval has expired. Please send a new request.',
+  used: 'This password reset request has already been used. Please send a new request if you need another password change.',
+  none: 'No password reset request was found for this account.',
+};
+const PASSWORD_RESET_CHANGE_STATUSES = new Set(['approved', 'appeal_approved']);
+const AUTHENTICATOR_RECOVERY_REQUEST_SENT_MESSAGE =
+  'Your authenticator recovery request has been sent. Please wait for admin approval.';
+const AUTHENTICATOR_RECOVERY_STATUS_MESSAGES = {
+  pending: 'Your authenticator recovery request is still pending. Please wait for admin approval.',
+  approved: 'Your authenticator recovery request has been approved. You may now set up a new authenticator.',
+  declined: 'Your authenticator recovery request was declined. You may submit an appeal if you believe this was a mistake.',
+  appealed: 'Your appeal has been submitted. Please wait for admin review.',
+  appeal_approved: 'Your authenticator recovery request has been approved. You may now set up a new authenticator.',
+  appeal_declined: 'Your appeal was declined. Please contact the admin for assistance.',
+  expired: 'Your authenticator recovery approval has expired. Please send a new request.',
+  used: 'This authenticator recovery request has already been used. Please send a new request if you need another recovery.',
+  none: 'No authenticator recovery request was found for this account.',
+};
+const AUTHENTICATOR_RECOVERY_SETUP_STATUSES = new Set(['approved', 'appeal_approved']);
 
-const workspaceDetails = [
-  {
-    label: 'POS operations',
-    description: 'Checkout flow, cart review, and receipt history.',
-  },
-  {
-    label: 'Inventory control',
-    description: 'Stock visibility, low-stock notices, and item review.',
-  },
-  {
-    label: 'Demand planning',
-    description: 'Forecasts, reminders, analytics, and prep signals.',
-  },
-  {
-    label: 'Audit trail',
-    description: 'Role-based actions and admin oversight.',
-  },
-];
+function normalizePasswordResetStatus(status) {
+  const value = String(status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (value === 'denied') {
+    return 'declined';
+  }
+  if (value === 'completed') {
+    return 'used';
+  }
+  if (value === 'appealapproved') {
+    return 'appeal_approved';
+  }
+  if (value === 'appealdeclined' || value === 'appealdenied' || value === 'appeal_denied') {
+    return 'appeal_declined';
+  }
+  return value;
+}
 
-const accessDetails = [
-  { label: 'Roles', value: 'Cashier, Staff, Admin' },
-  { label: 'Lockout', value: '3 failed attempts' },
-  { label: 'MFA', value: 'Authenticator app' },
-];
+function getPasswordResetMessage(statusResult) {
+  const status = normalizePasswordResetStatus(statusResult?.status);
+  return statusResult?.message || PASSWORD_RESET_STATUS_MESSAGES[status] || PASSWORD_RESET_STATUS_MESSAGES.none;
+}
+
+function getPasswordResetTone(statusResult) {
+  const status = normalizePasswordResetStatus(statusResult?.status);
+  if (PASSWORD_RESET_CHANGE_STATUSES.has(status)) {
+    return 'emerald';
+  }
+  if (status === 'pending' || status === 'appealed') {
+    return 'amber';
+  }
+  if (status === 'declined' || status === 'appeal_declined' || status === 'expired' || status === 'used') {
+    return 'red';
+  }
+  return 'slate';
+}
+
+function getAuthenticatorRecoveryMessage(statusResult) {
+  const status = normalizePasswordResetStatus(statusResult?.status);
+  return (
+    statusResult?.message ||
+    AUTHENTICATOR_RECOVERY_STATUS_MESSAGES[status] ||
+    AUTHENTICATOR_RECOVERY_STATUS_MESSAGES.none
+  );
+}
+
+function getAuthenticatorRecoveryTone(statusResult) {
+  const status = normalizePasswordResetStatus(statusResult?.status);
+  if (AUTHENTICATOR_RECOVERY_SETUP_STATUSES.has(status)) {
+    return 'emerald';
+  }
+  if (status === 'pending' || status === 'appealed') {
+    return 'amber';
+  }
+  if (status === 'declined' || status === 'appeal_declined' || status === 'expired' || status === 'used') {
+    return 'red';
+  }
+  return 'slate';
+}
 
 function normalizeLoginIdentifier(value) {
   return String(value || '').trim().toLowerCase();
@@ -194,24 +250,6 @@ function getRememberedUsername() {
   }
 }
 
-function getPortalLabel(identifier) {
-  const value = normalizeLoginIdentifier(identifier);
-
-  if (value.includes('admin')) {
-    return 'Admin Portal';
-  }
-
-  if (value.includes('cashier') || value.includes('pos')) {
-    return 'Cashier Portal';
-  }
-
-  if (value.includes('staff')) {
-    return 'Staff Portal';
-  }
-
-  return 'Staff Portal';
-}
-
 function persistAuthenticatedSession(accessToken, user) {
   const quotaMessage =
     'This device is out of browser storage. SmartCanteen cleared temporary cache, but there is still not enough space to save your session. Clear site data for this app and try again.';
@@ -247,17 +285,29 @@ export default function Login({ onLogin }) {
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
   const [passwordResetMode, setPasswordResetMode] = useState('request');
   const [passwordResetIdentifier, setPasswordResetIdentifier] = useState('');
+  const [passwordResetAppealReason, setPasswordResetAppealReason] = useState('');
   const [passwordResetNewPassword, setPasswordResetNewPassword] = useState('');
   const [passwordResetConfirmPassword, setPasswordResetConfirmPassword] = useState('');
   const [passwordResetLoading, setPasswordResetLoading] = useState(false);
   const [passwordResetError, setPasswordResetError] = useState('');
   const [passwordResetSuccess, setPasswordResetSuccess] = useState('');
+  const [passwordResetStatus, setPasswordResetStatus] = useState(null);
+  const [passwordResetCanChange, setPasswordResetCanChange] = useState(false);
+  const [authRecoveryOpen, setAuthRecoveryOpen] = useState(false);
+  const [authRecoveryMode, setAuthRecoveryMode] = useState('request');
+  const [authRecoveryIdentifier, setAuthRecoveryIdentifier] = useState('');
+  const [authRecoveryReason, setAuthRecoveryReason] = useState('');
+  const [authRecoveryAppealReason, setAuthRecoveryAppealReason] = useState('');
+  const [authRecoveryLoading, setAuthRecoveryLoading] = useState(false);
+  const [authRecoveryError, setAuthRecoveryError] = useState('');
+  const [authRecoverySuccess, setAuthRecoverySuccess] = useState('');
+  const [authRecoveryStatus, setAuthRecoveryStatus] = useState(null);
+  const [authRecoveryCanSetup, setAuthRecoveryCanSetup] = useState(false);
   const authenticatorCodeRef = useRef(null);
 
   const loginIdentifier = normalizeLoginIdentifier(username);
   const lockoutState = getLoginLockoutState(loginIdentifier, lockoutNow);
   const lockoutRemainingLabel = formatLockoutDuration(lockoutState.remainingMs);
-  const portalLabel = getPortalLabel(username);
   const isAuthenticatorStep = Boolean(authenticatorChallenge);
   const isAuthenticatorSetup = authenticatorChallenge?.mfa_type === 'authenticator_setup';
   const canSubmitAuthenticatorCode = isAuthenticatorCodeReady(authenticatorCode, {
@@ -487,12 +537,15 @@ export default function Login({ onLogin }) {
   };
 
   const openPasswordReset = (mode = 'request') => {
-    setPasswordResetMode(mode);
+    setPasswordResetMode(mode === 'change' && !passwordResetCanChange ? 'status' : mode);
     setPasswordResetIdentifier(username.trim());
+    setPasswordResetAppealReason('');
     setPasswordResetNewPassword('');
     setPasswordResetConfirmPassword('');
     setPasswordResetError('');
     setPasswordResetSuccess('');
+    setPasswordResetStatus(null);
+    setPasswordResetCanChange(false);
     setPasswordResetOpen(true);
   };
 
@@ -504,6 +557,39 @@ export default function Login({ onLogin }) {
     setPasswordResetOpen(false);
     setPasswordResetError('');
     setPasswordResetSuccess('');
+    setPasswordResetAppealReason('');
+    setPasswordResetNewPassword('');
+    setPasswordResetConfirmPassword('');
+    setPasswordResetStatus(null);
+    setPasswordResetCanChange(false);
+  };
+
+  const applyPasswordResetStatus = (statusResult) => {
+    const status = normalizePasswordResetStatus(statusResult?.status);
+    const normalizedResult = { ...(statusResult || {}), status };
+
+    setPasswordResetStatus(normalizedResult);
+    setPasswordResetSuccess(getPasswordResetMessage(normalizedResult));
+    setPasswordResetError('');
+
+    if (PASSWORD_RESET_CHANGE_STATUSES.has(status)) {
+      setPasswordResetCanChange(true);
+      setPasswordResetMode('change');
+      return;
+    }
+
+    setPasswordResetCanChange(false);
+    setPasswordResetNewPassword('');
+    setPasswordResetConfirmPassword('');
+  };
+
+  const updatePasswordResetIdentifier = (value) => {
+    setPasswordResetIdentifier(value);
+    setPasswordResetCanChange(false);
+    setPasswordResetStatus(null);
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+    setPasswordResetAppealReason('');
     setPasswordResetNewPassword('');
     setPasswordResetConfirmPassword('');
   };
@@ -513,12 +599,68 @@ export default function Login({ onLogin }) {
     setPasswordResetLoading(true);
     setPasswordResetError('');
     setPasswordResetSuccess('');
+    setPasswordResetStatus(null);
+    setPasswordResetCanChange(false);
 
     try {
-      await API.requestPasswordReset(passwordResetIdentifier.trim());
-      setPasswordResetSuccess('Request sent. Wait for admin approval, then return here to change your password.');
+      const response = await API.requestPasswordReset(passwordResetIdentifier.trim());
+      if (response?.status) {
+        applyPasswordResetStatus(response);
+        if (!PASSWORD_RESET_CHANGE_STATUSES.has(normalizePasswordResetStatus(response.status))) {
+          setPasswordResetMode('status');
+        }
+      } else {
+        setPasswordResetStatus({ status: 'pending' });
+        setPasswordResetSuccess(response?.message || PASSWORD_RESET_REQUEST_SENT_MESSAGE);
+        setPasswordResetMode('status');
+      }
     } catch (err) {
       setPasswordResetError(err.message || 'Password reset request could not be sent.');
+    } finally {
+      setPasswordResetLoading(false);
+    }
+  };
+
+  const checkPasswordResetStatus = async (event) => {
+    event.preventDefault();
+    setPasswordResetLoading(true);
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+
+    try {
+      const statusResult = await API.checkPasswordResetStatus(passwordResetIdentifier.trim());
+      applyPasswordResetStatus(statusResult);
+    } catch (err) {
+      setPasswordResetCanChange(false);
+      setPasswordResetError(err.message || 'Password reset status could not be checked.');
+    } finally {
+      setPasswordResetLoading(false);
+    }
+  };
+
+  const submitPasswordResetAppeal = async (event) => {
+    event.preventDefault();
+    setPasswordResetLoading(true);
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+
+    const reason = passwordResetAppealReason.trim();
+    if (!reason) {
+      setPasswordResetError('Enter your reason for appeal.');
+      setPasswordResetLoading(false);
+      return;
+    }
+
+    try {
+      const statusResult = await API.appealPasswordReset({
+        usernameOrEmail: passwordResetIdentifier.trim(),
+        reason,
+      });
+      applyPasswordResetStatus(statusResult);
+      setPasswordResetMode('status');
+      setPasswordResetAppealReason('');
+    } catch (err) {
+      setPasswordResetError(err.message || 'Appeal could not be submitted.');
     } finally {
       setPasswordResetLoading(false);
     }
@@ -529,6 +671,12 @@ export default function Login({ onLogin }) {
     setPasswordResetLoading(true);
     setPasswordResetError('');
     setPasswordResetSuccess('');
+
+    if (!passwordResetCanChange) {
+      setPasswordResetError('Please check your request status first. Password changes are only available after admin approval.');
+      setPasswordResetLoading(false);
+      return;
+    }
 
     if (passwordResetNewPassword !== passwordResetConfirmPassword) {
       setPasswordResetError('Passwords do not match.');
@@ -547,6 +695,8 @@ export default function Login({ onLogin }) {
       setPasswordResetOpen(false);
       setPasswordResetNewPassword('');
       setPasswordResetConfirmPassword('');
+      setPasswordResetStatus({ status: 'used' });
+      setPasswordResetCanChange(false);
       window.showToast?.('Password changed. Sign in with your new password.', 'success');
     } catch (err) {
       setPasswordResetError(err.message || 'Password could not be changed yet.');
@@ -555,66 +705,182 @@ export default function Login({ onLogin }) {
     }
   };
 
+  const openAuthenticatorRecovery = (mode = 'request') => {
+    setAuthRecoveryMode(mode === 'setup' && !authRecoveryCanSetup ? 'status' : mode);
+    setAuthRecoveryIdentifier(username.trim());
+    setAuthRecoveryReason('');
+    setAuthRecoveryAppealReason('');
+    setAuthRecoveryError('');
+    setAuthRecoverySuccess('');
+    setAuthRecoveryStatus(null);
+    setAuthRecoveryCanSetup(false);
+    setAuthRecoveryOpen(true);
+  };
+
+  const closeAuthenticatorRecovery = () => {
+    if (authRecoveryLoading) {
+      return;
+    }
+
+    setAuthRecoveryOpen(false);
+    setAuthRecoveryError('');
+    setAuthRecoverySuccess('');
+    setAuthRecoveryReason('');
+    setAuthRecoveryAppealReason('');
+    setAuthRecoveryStatus(null);
+    setAuthRecoveryCanSetup(false);
+  };
+
+  const applyAuthenticatorRecoveryStatus = (statusResult) => {
+    const status = normalizePasswordResetStatus(statusResult?.status);
+    const normalizedResult = { ...(statusResult || {}), status };
+
+    setAuthRecoveryStatus(normalizedResult);
+    setAuthRecoverySuccess(getAuthenticatorRecoveryMessage(normalizedResult));
+    setAuthRecoveryError('');
+
+    if (AUTHENTICATOR_RECOVERY_SETUP_STATUSES.has(status)) {
+      setAuthRecoveryCanSetup(true);
+      setAuthRecoveryMode('setup');
+      return;
+    }
+
+    setAuthRecoveryCanSetup(false);
+  };
+
+  const updateAuthenticatorRecoveryIdentifier = (value) => {
+    setAuthRecoveryIdentifier(value);
+    setAuthRecoveryCanSetup(false);
+    setAuthRecoveryStatus(null);
+    setAuthRecoveryError('');
+    setAuthRecoverySuccess('');
+    setAuthRecoveryAppealReason('');
+  };
+
+  const submitAuthenticatorRecoveryRequest = async (event) => {
+    event.preventDefault();
+    setAuthRecoveryLoading(true);
+    setAuthRecoveryError('');
+    setAuthRecoverySuccess('');
+    setAuthRecoveryStatus(null);
+    setAuthRecoveryCanSetup(false);
+
+    const reason = authRecoveryReason.trim();
+    if (!reason) {
+      setAuthRecoveryError('Enter your reason for authenticator recovery.');
+      setAuthRecoveryLoading(false);
+      return;
+    }
+
+    try {
+      const response = await API.requestAuthenticatorRecovery({
+        usernameOrEmail: authRecoveryIdentifier.trim(),
+        reason,
+      });
+      if (response?.status) {
+        applyAuthenticatorRecoveryStatus(response);
+        if (!AUTHENTICATOR_RECOVERY_SETUP_STATUSES.has(normalizePasswordResetStatus(response.status))) {
+          setAuthRecoveryMode('status');
+        }
+      } else {
+        setAuthRecoveryStatus({ status: 'pending' });
+        setAuthRecoverySuccess(response?.message || AUTHENTICATOR_RECOVERY_REQUEST_SENT_MESSAGE);
+        setAuthRecoveryMode('status');
+      }
+    } catch (err) {
+      setAuthRecoveryError(err.message || 'Authenticator recovery request could not be sent.');
+    } finally {
+      setAuthRecoveryLoading(false);
+    }
+  };
+
+  const checkAuthenticatorRecoveryStatus = async (event) => {
+    event.preventDefault();
+    setAuthRecoveryLoading(true);
+    setAuthRecoveryError('');
+    setAuthRecoverySuccess('');
+
+    try {
+      const statusResult = await API.checkAuthenticatorRecoveryStatus(authRecoveryIdentifier.trim());
+      applyAuthenticatorRecoveryStatus(statusResult);
+    } catch (err) {
+      setAuthRecoveryCanSetup(false);
+      setAuthRecoveryError(err.message || 'Authenticator recovery status could not be checked.');
+    } finally {
+      setAuthRecoveryLoading(false);
+    }
+  };
+
+  const submitAuthenticatorRecoveryAppeal = async (event) => {
+    event.preventDefault();
+    setAuthRecoveryLoading(true);
+    setAuthRecoveryError('');
+    setAuthRecoverySuccess('');
+
+    const reason = authRecoveryAppealReason.trim();
+    if (!reason) {
+      setAuthRecoveryError('Enter your reason for appeal.');
+      setAuthRecoveryLoading(false);
+      return;
+    }
+
+    try {
+      const statusResult = await API.appealAuthenticatorRecovery({
+        usernameOrEmail: authRecoveryIdentifier.trim(),
+        reason,
+      });
+      applyAuthenticatorRecoveryStatus(statusResult);
+      setAuthRecoveryMode('status');
+      setAuthRecoveryAppealReason('');
+    } catch (err) {
+      setAuthRecoveryError(err.message || 'Appeal could not be submitted.');
+    } finally {
+      setAuthRecoveryLoading(false);
+    }
+  };
+
+  const startApprovedAuthenticatorSetup = async (event) => {
+    event.preventDefault();
+    setAuthRecoveryLoading(true);
+    setAuthRecoveryError('');
+    setAuthRecoverySuccess('');
+
+    if (!authRecoveryCanSetup) {
+      setAuthRecoveryError('Check your recovery request status first. Setup is available after admin approval.');
+      setAuthRecoveryLoading(false);
+      return;
+    }
+
+    try {
+      const identifier = authRecoveryIdentifier.trim();
+      const response = await API.startAuthenticatorRecoverySetup(identifier);
+      setUsername(identifier);
+      setAuthenticatorChallenge(response);
+      setAuthenticatorCode('');
+      setSecretCopied(false);
+      setAuthRecoveryOpen(false);
+      setAuthRecoveryStatus(null);
+      setAuthRecoveryCanSetup(false);
+    } catch (err) {
+      setAuthRecoveryError(err.message || 'New authenticator setup could not be started yet.');
+    } finally {
+      setAuthRecoveryLoading(false);
+    }
+  };
+
+  const currentPasswordResetStatus = normalizePasswordResetStatus(passwordResetStatus?.status);
+  const canAppealPasswordReset = currentPasswordResetStatus === 'declined';
+  const currentAuthRecoveryStatus = normalizePasswordResetStatus(authRecoveryStatus?.status);
+  const canAppealAuthenticatorRecovery = currentAuthRecoveryStatus === 'declined';
+
   return (
     <div className="login-view min-h-[100dvh] overflow-y-auto bg-slate-50 px-4 py-6 text-slate-700 sm:px-6 lg:px-8">
-      <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-5xl items-center">
-        <div className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white lg:grid-cols-[22rem_minmax(0,1fr)]">
-          <aside className="hidden border-r border-slate-200 bg-slate-50 p-7 lg:flex lg:flex-col">
-            <div className="flex items-center gap-3">
-              <BrandLogo className="h-12 w-12" />
-              <div className="min-w-0">
-                <div className="truncate text-xl font-semibold text-slate-950">SmartCanteen</div>
-                <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                  Operations Workspace
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-10">
-              <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-xs font-medium text-primary">
-                <ShieldCheckIcon className="h-4 w-4" />
-                Protected access
-              </div>
-              <h1 className="mt-4 max-w-xs text-2xl font-semibold leading-8 text-slate-950">
-                Secure access for daily canteen service.
-              </h1>
-              <p className="mt-3 text-sm leading-6 text-slate-500">
-                Open only the workspace your role needs, with authenticator checks for account safety.
-              </p>
-            </div>
-
-            <div className="mt-8 space-y-3">
-              {workspaceDetails.map((item) => (
-                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                    <CheckCircleIcon className="h-4 w-4 shrink-0 text-primary" />
-                    {item.label}
-                  </div>
-                  <div className="mt-1 pl-6 text-xs leading-5 text-slate-500">
-                    {item.description}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-auto grid grid-cols-3 gap-2 pt-8">
-              {accessDetails.map((item) => (
-                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
-                    {item.label}
-                  </div>
-                  <div className="mt-1 truncate text-xs font-medium text-slate-700">
-                    {item.value}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </aside>
-
-          <section className="flex items-center justify-center px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
+      <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-lg items-center">
+        <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <section className="flex items-center justify-center px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
             <div className="w-full max-w-md">
-              <div className="mb-8 flex items-center gap-3 lg:hidden">
-                <BrandLogo className="h-11 w-11" />
+              <div className="mb-8 flex items-center gap-3">
+                <BrandLogo className="h-12 w-12" />
                 <div className="min-w-0">
                   <div className="truncate text-xl font-semibold text-slate-950">SmartCanteen</div>
                   <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
@@ -623,32 +889,14 @@ export default function Login({ onLogin }) {
                 </div>
               </div>
 
-              <div className="flex items-start justify-between gap-4">
+              <div>
                 <div className="min-w-0">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium uppercase tracking-wider text-slate-500">
-                    <BuildingStorefrontIcon className="h-4 w-4" />
-                    {portalLabel}
-                  </div>
-                  <h2 className="mt-5 text-2xl font-semibold leading-8 text-slate-950">
+                  <h2 className="text-2xl font-semibold leading-8 text-slate-950">
                     Welcome back
                   </h2>
                   <p className="mt-1 text-sm leading-6 text-slate-500">
                     Sign in to continue to SmartCanteen.
                   </p>
-                </div>
-                <div className="hidden rounded-xl border border-slate-200 bg-slate-50 p-2 text-primary sm:block">
-                  <ShieldCheckIcon className="h-5 w-5" />
-                </div>
-              </div>
-
-              <div className="mt-6 grid grid-cols-2 gap-2">
-                <div className="flex items-center gap-2 rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-xs font-medium text-primary">
-                  <span className="h-2 w-2 rounded-full bg-primary" />
-                  Secure
-                </div>
-                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
-                  <LockClosedIcon className="h-4 w-4 text-slate-400" />
-                  Encrypted
                 </div>
               </div>
 
@@ -721,20 +969,21 @@ export default function Login({ onLogin }) {
                     />
                     Remember me for 30 days
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => openPasswordReset('request')}
-                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary transition hover:text-primary-dark"
-                  >
-                    <KeyIcon className="h-4 w-4" />
-                    Forgot password?
-                  </button>
-                </div>
-
-                <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                  <ShieldCheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                  <div className="text-xs leading-5 text-slate-500">
-                    <span className="font-semibold text-slate-800">MFA required:</span> Use a 6-digit code from your authenticator app.
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => openAuthenticatorRecovery('request')}
+                      className="text-sm font-semibold text-slate-500 transition hover:text-primary"
+                    >
+                      Authenticator Recovery
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openPasswordReset('request')}
+                      className="text-sm font-semibold text-primary transition hover:text-primary-dark"
+                    >
+                      Forgot password?
+                    </button>
                   </div>
                 </div>
 
@@ -765,10 +1014,6 @@ export default function Login({ onLogin }) {
                   )}
                 </button>
               </form>
-
-              <div className="mt-6 text-center text-xs font-medium text-slate-500">
-                SmartCanteen - Secure Staff Access
-              </div>
             </div>
           </section>
         </div>
@@ -784,11 +1029,7 @@ export default function Login({ onLogin }) {
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
               <div className="min-w-0">
-                <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-primary">
-                  <KeyIcon className="h-4 w-4" />
-                  Password recovery
-                </div>
-                <h3 id="password-reset-title" className="mt-3 text-xl font-semibold leading-7 text-slate-950">
+                <h3 id="password-reset-title" className="text-xl font-semibold leading-7 text-slate-950">
                   Forgot password
                 </h3>
                 <p className="mt-1 text-sm leading-6 text-slate-500">
@@ -807,7 +1048,7 @@ export default function Login({ onLogin }) {
             </div>
 
             <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 py-5">
-              <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1">
+              <div className="grid grid-cols-3 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -826,15 +1067,38 @@ export default function Login({ onLogin }) {
                 <button
                   type="button"
                   onClick={() => {
-                    setPasswordResetMode('change');
+                    setPasswordResetMode('status');
                     setPasswordResetError('');
                     setPasswordResetSuccess('');
                   }}
                   className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                    passwordResetMode === 'change'
+                    passwordResetMode === 'status'
                       ? 'bg-white text-slate-950 shadow-sm'
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
+                >
+                  Status
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!passwordResetCanChange) {
+                      setPasswordResetMode('status');
+                      setPasswordResetError('');
+                      setPasswordResetSuccess('Check your request status first. Change Password is available after admin approval.');
+                      setPasswordResetStatus({ status: 'pending' });
+                      return;
+                    }
+                    setPasswordResetMode('change');
+                    setPasswordResetError('');
+                    setPasswordResetSuccess('');
+                  }}
+                  disabled={!passwordResetCanChange}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    passwordResetMode === 'change'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  } disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:text-slate-300`}
                 >
                   Change
                 </button>
@@ -849,12 +1113,43 @@ export default function Login({ onLogin }) {
                 {passwordResetSuccess && (
                   <DismissibleAlert
                     resetKey={passwordResetSuccess}
-                    tone="emerald"
-                    title="Request recorded"
+                    tone={getPasswordResetTone(passwordResetStatus)}
+                    title="Request status"
                     className="rounded-xl"
                   >
-                    {passwordResetSuccess}
+                    <div
+                      id={
+                        currentPasswordResetStatus === 'declined'
+                          ? 'decline-message'
+                          : currentPasswordResetStatus === 'appealed'
+                            ? 'appeal-sent'
+                            : currentPasswordResetStatus === 'appeal_declined'
+                              ? 'appeal-declined'
+                              : undefined
+                      }
+                    >
+                      {passwordResetSuccess}
+                    </div>
+                    {passwordResetStatus?.review_note && (
+                      <div className="mt-1 font-semibold">Decline reason: {passwordResetStatus.review_note}</div>
+                    )}
+                    {passwordResetStatus?.appeal_review_note && (
+                      <div className="mt-1 font-semibold">Appeal note: {passwordResetStatus.appeal_review_note}</div>
+                    )}
                   </DismissibleAlert>
+                )}
+                {canAppealPasswordReset && passwordResetMode !== 'appeal' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPasswordResetMode('appeal');
+                      setPasswordResetError('');
+                      setPasswordResetSuccess('');
+                    }}
+                    className="inline-flex w-full items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+                  >
+                    Appeal
+                  </button>
                 )}
               </div>
 
@@ -868,7 +1163,7 @@ export default function Login({ onLogin }) {
                       type="text"
                       required
                       value={passwordResetIdentifier}
-                      onChange={(event) => setPasswordResetIdentifier(event.target.value)}
+                      onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
                       className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
                       autoComplete="username"
@@ -882,6 +1177,86 @@ export default function Login({ onLogin }) {
                     {passwordResetLoading ? 'Sending...' : 'Send Request'}
                   </button>
                 </form>
+              ) : passwordResetMode === 'status' ? (
+                <form onSubmit={checkPasswordResetStatus} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={passwordResetIdentifier}
+                      onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={passwordResetLoading || !passwordResetIdentifier.trim()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {passwordResetLoading ? 'Checking...' : 'Check Status'}
+                  </button>
+                </form>
+              ) : passwordResetMode === 'appeal' ? (
+                <form onSubmit={submitPasswordResetAppeal} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={passwordResetIdentifier}
+                      onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Appeal reason
+                    </span>
+                    <textarea
+                      id="appeal-placeholder"
+                      required
+                      rows={4}
+                      value={passwordResetAppealReason}
+                      onChange={(event) => setPasswordResetAppealReason(event.target.value)}
+                      placeholder="Enter your reason for appeal..."
+                      className="mt-1.5 w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                    />
+                  </label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPasswordResetMode('status');
+                        setPasswordResetError('');
+                        setPasswordResetSuccess(getPasswordResetMessage(passwordResetStatus));
+                      }}
+                      disabled={passwordResetLoading}
+                      className="flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={
+                        passwordResetLoading ||
+                        !passwordResetIdentifier.trim() ||
+                        !passwordResetAppealReason.trim()
+                      }
+                      className="flex w-full items-center justify-center rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {passwordResetLoading ? 'Submitting...' : 'Submit Appeal'}
+                    </button>
+                  </div>
+                </form>
               ) : (
                 <form onSubmit={submitApprovedPasswordChange} className="mt-5 space-y-4">
                   <label className="block">
@@ -892,12 +1267,17 @@ export default function Login({ onLogin }) {
                       type="text"
                       required
                       value={passwordResetIdentifier}
-                      onChange={(event) => setPasswordResetIdentifier(event.target.value)}
+                      onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
                       className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
                       autoComplete="username"
                     />
                   </label>
+                  {!passwordResetCanChange && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                      Check your request status first. You can change your password only after admin approval.
+                    </div>
+                  )}
                   <label className="block">
                     <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
                       New password
@@ -932,6 +1312,7 @@ export default function Login({ onLogin }) {
                     type="submit"
                     disabled={
                       passwordResetLoading ||
+                      !passwordResetCanChange ||
                       !passwordResetIdentifier.trim() ||
                       !passwordResetNewPassword ||
                       !passwordResetConfirmPassword
@@ -939,6 +1320,279 @@ export default function Login({ onLogin }) {
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {passwordResetLoading ? 'Changing...' : 'Change Password'}
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {authRecoveryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 px-4 py-5 backdrop-blur-sm">
+          <div
+            className="w-full max-w-[30rem] overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="authenticator-recovery-title"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div className="min-w-0">
+                <h3 id="authenticator-recovery-title" className="text-xl font-semibold leading-7 text-slate-950">
+                  Authenticator Recovery
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  Request admin approval to set up a new authenticator app.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeAuthenticatorRecovery}
+                disabled={authRecoveryLoading}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-white hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Close authenticator recovery"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 py-5">
+              <div className="grid grid-cols-3 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthRecoveryMode('request');
+                    setAuthRecoveryError('');
+                    setAuthRecoverySuccess('');
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    authRecoveryMode === 'request'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Request
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthRecoveryMode('status');
+                    setAuthRecoveryError('');
+                    setAuthRecoverySuccess('');
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    authRecoveryMode === 'status'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Status
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!authRecoveryCanSetup) {
+                      setAuthRecoveryMode('status');
+                      setAuthRecoveryError('');
+                      setAuthRecoverySuccess('Check your recovery request status first. Setup is available after admin approval.');
+                      setAuthRecoveryStatus({ status: 'pending' });
+                      return;
+                    }
+                    setAuthRecoveryMode('setup');
+                    setAuthRecoveryError('');
+                    setAuthRecoverySuccess('');
+                  }}
+                  disabled={!authRecoveryCanSetup}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    authRecoveryMode === 'setup'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  } disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:text-slate-300`}
+                >
+                  Setup
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {authRecoveryError && (
+                  <DismissibleAlert resetKey={authRecoveryError} tone="red" title="Recovery issue" className="rounded-xl">
+                    {authRecoveryError}
+                  </DismissibleAlert>
+                )}
+                {authRecoverySuccess && (
+                  <DismissibleAlert
+                    resetKey={authRecoverySuccess}
+                    tone={getAuthenticatorRecoveryTone(authRecoveryStatus)}
+                    title="Request status"
+                    className="rounded-xl"
+                  >
+                    <div>{authRecoverySuccess}</div>
+                    {authRecoveryStatus?.review_note && (
+                      <div className="mt-1 font-semibold">Decline reason: {authRecoveryStatus.review_note}</div>
+                    )}
+                    {authRecoveryStatus?.appeal_review_note && (
+                      <div className="mt-1 font-semibold">Appeal note: {authRecoveryStatus.appeal_review_note}</div>
+                    )}
+                  </DismissibleAlert>
+                )}
+                {canAppealAuthenticatorRecovery && authRecoveryMode !== 'appeal' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthRecoveryMode('appeal');
+                      setAuthRecoveryError('');
+                      setAuthRecoverySuccess('');
+                    }}
+                    className="inline-flex w-full items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+                  >
+                    Appeal
+                  </button>
+                )}
+              </div>
+
+              {authRecoveryMode === 'request' ? (
+                <form onSubmit={submitAuthenticatorRecoveryRequest} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={authRecoveryIdentifier}
+                      onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Recovery reason
+                    </span>
+                    <textarea
+                      required
+                      rows={4}
+                      value={authRecoveryReason}
+                      onChange={(event) => setAuthRecoveryReason(event.target.value)}
+                      placeholder="Tell the admin why you need authenticator recovery"
+                      className="mt-1.5 w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={authRecoveryLoading || !authRecoveryIdentifier.trim() || !authRecoveryReason.trim()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {authRecoveryLoading ? 'Sending...' : 'Send Request'}
+                  </button>
+                </form>
+              ) : authRecoveryMode === 'status' ? (
+                <form onSubmit={checkAuthenticatorRecoveryStatus} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={authRecoveryIdentifier}
+                      onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={authRecoveryLoading || !authRecoveryIdentifier.trim()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {authRecoveryLoading ? 'Checking...' : 'Check Status'}
+                  </button>
+                </form>
+              ) : authRecoveryMode === 'appeal' ? (
+                <form onSubmit={submitAuthenticatorRecoveryAppeal} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={authRecoveryIdentifier}
+                      onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Appeal reason
+                    </span>
+                    <textarea
+                      required
+                      rows={4}
+                      value={authRecoveryAppealReason}
+                      onChange={(event) => setAuthRecoveryAppealReason(event.target.value)}
+                      placeholder="Enter your reason for appeal..."
+                      className="mt-1.5 w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                    />
+                  </label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthRecoveryMode('status');
+                        setAuthRecoveryError('');
+                        setAuthRecoverySuccess(getAuthenticatorRecoveryMessage(authRecoveryStatus));
+                      }}
+                      disabled={authRecoveryLoading}
+                      className="flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={
+                        authRecoveryLoading ||
+                        !authRecoveryIdentifier.trim() ||
+                        !authRecoveryAppealReason.trim()
+                      }
+                      className="flex w-full items-center justify-center rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {authRecoveryLoading ? 'Submitting...' : 'Submit Appeal'}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={startApprovedAuthenticatorSetup} className="mt-5 space-y-4">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                      Username or email
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={authRecoveryIdentifier}
+                      onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
+                      placeholder="Enter your username or email"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 sm:text-sm"
+                      autoComplete="username"
+                    />
+                  </label>
+                  {!authRecoveryCanSetup && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                      Check your request status first. You can set up a new authenticator only after admin approval.
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={authRecoveryLoading || !authRecoveryCanSetup || !authRecoveryIdentifier.trim()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {authRecoveryLoading ? 'Starting...' : 'Set Up New Authenticator'}
                   </button>
                 </form>
               )}
@@ -958,11 +1612,7 @@ export default function Login({ onLogin }) {
             <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-primary">
-                    <ShieldCheckIcon className="h-4 w-4" />
-                    Authenticator app
-                  </div>
-                  <h3 id="authenticator-modal-title" className="mt-3 text-xl font-semibold leading-7 text-slate-950">
+                  <h3 id="authenticator-modal-title" className="text-xl font-semibold leading-7 text-slate-950">
                     {isAuthenticatorSetup ? 'Set up verification' : 'Enter verification code'}
                   </h3>
                   <p className="mt-1 text-sm leading-6 text-slate-500">
@@ -970,9 +1620,6 @@ export default function Login({ onLogin }) {
                       ? 'Add SmartCanteen to your authenticator app, then enter the 6-digit code.'
                       : 'Open your authenticator app and enter the current 6-digit code.'}
                   </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-2 text-primary">
-                  <LockClosedIcon className="h-5 w-5" />
                 </div>
               </div>
             </div>
@@ -1041,7 +1688,15 @@ export default function Login({ onLogin }) {
                 />
                 {!isAuthenticatorSetup && (
                   <span className="mt-2 block text-xs leading-5 text-slate-500">
-                    Lost your authenticator app? Enter one saved recovery code here.
+                    Lost your authenticator app? Enter one saved recovery code here, or{' '}
+                    <button
+                      type="button"
+                      onClick={() => openAuthenticatorRecovery('request')}
+                      className="font-semibold text-primary transition hover:text-primary-dark"
+                    >
+                      request authenticator recovery
+                    </button>
+                    .
                   </span>
                 )}
               </label>
@@ -1086,11 +1741,7 @@ export default function Login({ onLogin }) {
             aria-labelledby="recovery-codes-title"
           >
             <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-primary">
-                <ShieldCheckIcon className="h-4 w-4" />
-                Backup access
-              </div>
-              <h3 id="recovery-codes-title" className="mt-3 text-xl font-semibold leading-7 text-slate-950">
+              <h3 id="recovery-codes-title" className="text-xl font-semibold leading-7 text-slate-950">
                 Save your recovery codes
               </h3>
               <p className="mt-1 text-sm leading-6 text-slate-500">

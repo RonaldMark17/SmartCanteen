@@ -287,7 +287,10 @@ function mapRecentTransactions(transactions) {
         second: '2-digit',
       }) || 'N/A',
     amount: Number(transaction.total || 0),
-    method: transaction.payment_type === 'gcash' ? 'GCash' : 'Cash',
+    method:
+      String(transaction.payment_type || 'cash').toLowerCase() === 'cash'
+        ? 'Cash'
+        : 'Legacy payment',
   }));
 }
 

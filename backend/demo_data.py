@@ -448,7 +448,7 @@ def _create_transactions(db: Session, products_by_name, cashier_user, staff_user
                 user_id=cashier_user.id if index % 11 else staff_user.id,
                 total=max(0.0, subtotal - discount),
                 discount=discount,
-                payment_type="gcash" if rng.random() < 0.2 else "cash",
+                payment_type="cash",
                 notes=f"Demo {WEATHER_LABELS[weather_row['weather']]} sale - {slot}",
                 created_at=created_at,
                 synced=True,

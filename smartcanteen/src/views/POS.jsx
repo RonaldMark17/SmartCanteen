@@ -37,6 +37,14 @@ function isBelowMinimumStock(product) {
 
 const POS_ITEMS_PER_PAGE = 12;
 const MAX_PAGE_BUTTONS = 5;
+const CASH_PAYMENT_TYPE = 'cash';
+const CASH_PAYMENT_LABEL = 'Cash Payment';
+
+function formatPaymentMethod(value) {
+  return String(value || CASH_PAYMENT_TYPE).toLowerCase() === CASH_PAYMENT_TYPE
+    ? CASH_PAYMENT_LABEL
+    : 'Legacy payment';
+}
 
 function getPageNumbers(currentPage, totalPages) {
   const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
@@ -121,7 +129,6 @@ export default function POS() {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Checkout State
-  const [paymentType, setPaymentType] = useState('cash');
   const [amountReceived, setAmountReceived] = useState('');
 
   // Receipt Modal State
@@ -205,16 +212,15 @@ export default function POS() {
   const totalUnits = cart.reduce((sum, item) => sum + item.qty, 0);
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const numericAmountReceived = parseFloat(amountReceived || 0) || 0;
-  const change = paymentType === 'cash' ? Math.max(0, numericAmountReceived - cartTotal) : 0;
-  const remainingBalance =
-    paymentType === 'cash' ? Math.max(0, cartTotal - numericAmountReceived) : 0;
+  const change = Math.max(0, numericAmountReceived - cartTotal);
+  const remainingBalance = Math.max(0, cartTotal - numericAmountReceived);
   const hasCartItems = cart.length > 0;
   const cartQtyByProductId = cart.reduce((acc, item) => {
     acc[item.id] = item.qty;
     return acc;
   }, {});
 
-  const isCheckoutDisabled = !hasCartItems || (paymentType === 'cash' && remainingBalance > 0);
+  const isCheckoutDisabled = !hasCartItems || remainingBalance > 0;
 
   const handleAmountReceivedChange = (event) => {
     setAmountReceived(sanitizeMoneyInput(event.target.value));
@@ -250,7 +256,7 @@ export default function POS() {
         quantity: item.qty,
         unit_price: item.price,
       })),
-      payment_type: paymentType,
+      payment_type: CASH_PAYMENT_TYPE,
     };
 
     if (!navigator.onLine) {
@@ -409,12 +415,12 @@ export default function POS() {
               return (
                 <div
                   key={product.id}
-                  className={`pos-product-card relative flex flex-col items-center rounded-xl border p-3 text-center shadow-sm transition-all sm:p-3 ${
+                  className={`pos-product-card relative flex flex-col items-center rounded-xl border p-3 text-center transition-[border-color,box-shadow,transform] duration-200 ease-out sm:p-3 ${
                     product.stock === 0
-                      ? 'border-slate-200 bg-white opacity-50 grayscale'
+                      ? 'border-slate-200 bg-white opacity-50 grayscale shadow-none'
                       : isSelected
-                        ? 'border-primary bg-primary/5 shadow-md ring-2 ring-primary/15'
-                        : 'border-slate-200 bg-white hover:-translate-y-1 hover:border-primary hover:shadow-md'
+                        ? 'border-primary bg-white shadow-[0_10px_24px_rgba(15,118,110,0.12)] hover:-translate-y-0.5 hover:shadow-[0_12px_26px_rgba(15,118,110,0.14)]'
+                        : 'border-slate-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-[0_8px_20px_rgba(15,23,42,0.08)]'
                   }`}
                 >
                   <button
@@ -474,7 +480,7 @@ export default function POS() {
                       type="button"
                       onClick={() => updateQty(product.id, selectedQty - 1)}
                       disabled={selectedQty === 0}
-                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500"
+                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
                       aria-label={`Decrease ${product.name} quantity`}
                     >
                       <MinusSmallIcon className="h-5 w-5" />
@@ -501,7 +507,7 @@ export default function POS() {
                       type="button"
                       onClick={() => addToCart(product)}
                       disabled={product.stock === 0 || selectedQty >= product.stock}
-                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500"
+                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
                       aria-label={`Increase ${product.name} quantity`}
                     >
                       <PlusSmallIcon className="h-5 w-5" />
@@ -810,7 +816,7 @@ export default function POS() {
                       Order details
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Choose how the customer will pay.
+                      Cash is the available payment method for student canteen transactions.
                     </p>
 
                     <div className="mt-4 grid grid-cols-1 gap-3">
@@ -818,83 +824,66 @@ export default function POS() {
                         <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Payment
                         </span>
-                        <div className="mt-2 grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setPaymentType('cash')}
-                            className={`rounded-2xl border px-3 py-3 text-sm font-black transition ${
-                              paymentType === 'cash'
-                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
-                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            Cash
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPaymentType('gcash')}
-                            className={`rounded-2xl border px-3 py-3 text-sm font-black transition ${
-                              paymentType === 'gcash'
-                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
-                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            GCash
-                          </button>
+                        <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-900 bg-slate-900 px-3 py-3 text-white shadow-sm">
+                          <BanknotesIcon className="h-5 w-5 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="text-sm font-black">{CASH_PAYMENT_LABEL}</div>
+                            <div className="mt-0.5 text-[11px] font-semibold text-slate-300">
+                              Enter the cash received below.
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
 
                   </div>
 
-                  {paymentType === 'cash' && (
-                    <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm">
-                      <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-                        <BanknotesIcon className="h-5 w-5 text-emerald-500" />
-                        Cash received
-                      </div>
+                  <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm">
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-900">
+                      <BanknotesIcon className="h-5 w-5 text-emerald-500" />
+                      Cash received
+                    </div>
 
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        pattern="[0-9]*[.]?[0-9]*"
-                        min={cartTotal}
-                        step="0.01"
-                        value={amountReceived}
-                        onChange={handleAmountReceivedChange}
-                        onKeyDown={preventInvalidMoneyKey}
-                        className="mt-3 w-full rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
-                        placeholder="0.00"
-                      />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      pattern="[0-9]*[.]?[0-9]*"
+                      min={cartTotal}
+                      step="0.01"
+                      value={amountReceived}
+                      onChange={handleAmountReceivedChange}
+                      onKeyDown={preventInvalidMoneyKey}
+                      className="mt-3 w-full rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
+                      placeholder="0.00"
+                    />
 
-                      <div className="mt-3 grid grid-cols-2 gap-3">
-                        <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                            Change
-                          </div>
-                          <div
-                            className={`mt-1 text-base font-black ${
-                              change > 0 ? 'text-emerald-600' : 'text-slate-500'
-                            }`}
-                          >
-                            {formatCurrency(change)}
-                          </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
+                        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Change
                         </div>
-                        <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                            Balance
-                          </div>
-                          <div
-                            className={`mt-1 text-base font-black ${
-                              remainingBalance > 0 ? 'text-red-600' : 'text-slate-700'
-                            }`}
-                          >
-                            {formatCurrency(remainingBalance)}
-                          </div>
+                        <div
+                          className={`mt-1 text-base font-black ${
+                            change > 0 ? 'text-emerald-600' : 'text-slate-500'
+                          }`}
+                        >
+                          {formatCurrency(change)}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
+                        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Balance
+                        </div>
+                        <div
+                          className={`mt-1 text-base font-black ${
+                            remainingBalance > 0 ? 'text-red-600' : 'text-slate-700'
+                          }`}
+                        >
+                          {formatCurrency(remainingBalance)}
                         </div>
                       </div>
                     </div>
-                  )}
+                  </div>
 
                   <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
                     <div className="flex items-end justify-between">
@@ -907,7 +896,7 @@ export default function POS() {
                         </div>
                       </div>
                       <div className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.24em] text-slate-200">
-                        {paymentType}
+                        {CASH_PAYMENT_LABEL}
                       </div>
                     </div>
                   </div>
@@ -924,7 +913,7 @@ export default function POS() {
                     </button>
 
                     <p className="text-center text-xs font-semibold text-slate-400">
-                      {paymentType === 'cash' && remainingBalance > 0
+                      {remainingBalance > 0
                         ? `Waiting for ${formatCurrency(remainingBalance)} more cash.`
                         : 'Review the full order here, then finish checkout when ready.'}
                     </p>
@@ -1055,7 +1044,7 @@ export default function POS() {
                       Order details
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Choose how the customer will pay.
+                      Cash is the available payment method for student canteen transactions.
                     </p>
 
                     <div className="mt-4 grid grid-cols-1 gap-4">
@@ -1063,96 +1052,79 @@ export default function POS() {
                         <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Payment Method
                         </span>
-                        <div className="mt-2 grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setPaymentType('cash')}
-                            className={`rounded-2xl border px-3 py-3 text-sm font-black transition ${
-                              paymentType === 'cash'
-                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
-                                : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-white'
-                            }`}
-                          >
-                            Cash
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPaymentType('gcash')}
-                            className={`rounded-2xl border px-3 py-3 text-sm font-black transition ${
-                              paymentType === 'gcash'
-                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
-                                : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-white'
-                            }`}
-                          >
-                            GCash
-                          </button>
+                        <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-900 bg-slate-900 px-3 py-3 text-white shadow-sm">
+                          <BanknotesIcon className="h-5 w-5 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="text-sm font-black">{CASH_PAYMENT_LABEL}</div>
+                            <div className="mt-0.5 text-[11px] font-semibold text-slate-300">
+                              Enter the cash received below.
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {paymentType === 'cash' && (
-                    <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-black text-slate-900">Cash received</div>
-                          <div className="mt-1 text-xs leading-5 text-slate-500">
-                            Enter the amount handed by the customer so the change is calculated
-                            automatically.
-                          </div>
-                        </div>
-                        <div className="rounded-2xl bg-white/80 p-2 text-emerald-500 shadow-sm">
-                          <BanknotesIcon className="h-5 w-5" />
+                  <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/80 p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-black text-slate-900">Cash received</div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">
+                          Enter the amount handed by the customer so the change is calculated
+                          automatically.
                         </div>
                       </div>
-
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        pattern="[0-9]*[.]?[0-9]*"
-                        min={cartTotal}
-                        step="0.01"
-                        value={amountReceived}
-                        onChange={handleAmountReceivedChange}
-                        onKeyDown={preventInvalidMoneyKey}
-                        className="mt-3 w-full rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
-                        placeholder="0.00"
-                      />
-
-                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                            Change
-                          </div>
-                          <div
-                            className={`mt-1 text-lg font-black ${
-                              change > 0 ? 'text-emerald-600' : 'text-slate-500'
-                            }`}
-                          >
-                            {formatCurrency(change)}
-                          </div>
-                        </div>
-                        <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                            Balance
-                          </div>
-                          <div
-                            className={`mt-1 text-lg font-black ${
-                              remainingBalance > 0 ? 'text-red-600' : 'text-slate-700'
-                            }`}
-                          >
-                            {formatCurrency(remainingBalance)}
-                          </div>
-                        </div>
+                      <div className="rounded-2xl bg-white/80 p-2 text-emerald-500 shadow-sm">
+                        <BanknotesIcon className="h-5 w-5" />
                       </div>
-
-                      {remainingBalance > 0 && (
-                        <p className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
-                          Add {formatCurrency(remainingBalance)} more to complete this order.
-                        </p>
-                      )}
                     </div>
-                  )}
+
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      pattern="[0-9]*[.]?[0-9]*"
+                      min={cartTotal}
+                      step="0.01"
+                      value={amountReceived}
+                      onChange={handleAmountReceivedChange}
+                      onKeyDown={preventInvalidMoneyKey}
+                      className="mt-3 w-full rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
+                      placeholder="0.00"
+                    />
+
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
+                        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Change
+                        </div>
+                        <div
+                          className={`mt-1 text-lg font-black ${
+                            change > 0 ? 'text-emerald-600' : 'text-slate-500'
+                          }`}
+                        >
+                          {formatCurrency(change)}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/70 bg-white px-3 py-3">
+                        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                          Balance
+                        </div>
+                        <div
+                          className={`mt-1 text-lg font-black ${
+                            remainingBalance > 0 ? 'text-red-600' : 'text-slate-700'
+                          }`}
+                        >
+                          {formatCurrency(remainingBalance)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {remainingBalance > 0 && (
+                      <p className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+                        Add {formatCurrency(remainingBalance)} more to complete this order.
+                      </p>
+                    )}
+                  </div>
 
                   <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
                     <div className="flex items-end justify-between">
@@ -1165,7 +1137,7 @@ export default function POS() {
                         </div>
                       </div>
                       <div className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.24em] text-slate-200">
-                        {paymentType}
+                        {CASH_PAYMENT_LABEL}
                       </div>
                     </div>
                   </div>
@@ -1182,7 +1154,7 @@ export default function POS() {
                     </button>
 
                     <p className="text-center text-xs font-semibold text-slate-400">
-                      {paymentType === 'cash' && remainingBalance > 0
+                      {remainingBalance > 0
                         ? `Waiting for ${formatCurrency(remainingBalance)} more cash.`
                         : 'Everything looks good. Finish checkout when ready.'}
                     </p>
@@ -1238,8 +1210,8 @@ export default function POS() {
               <div className="mt-6 space-y-1 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
                 <div className="flex justify-between">
                   <span>Payment Method:</span>
-                  <span className="font-bold uppercase text-slate-700">
-                    {receiptData.payment_type}
+                  <span className="font-bold text-slate-700">
+                    {formatPaymentMethod(receiptData.payment_type)}
                   </span>
                 </div>
                 {receiptData.isOffline && (

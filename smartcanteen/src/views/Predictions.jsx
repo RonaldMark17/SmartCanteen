@@ -1721,8 +1721,8 @@ function buildCatalogOnlyForecast(catalogProducts, weather, event) {
     insights: [
       {
         type: 'low_demand',
-        title: 'Catalog fallback mode',
-        message: 'Live prediction rows were unavailable, so the page built low-confidence forecasts for all active products from the product catalog.',
+        title: 'Catalog estimates active',
+        message: 'Product forecast rows were unavailable, so catalog-based estimates were used for all active products.',
       },
       ...deriveInsights(predictions, summary, 'catalog-fallback'),
     ].slice(0, 4),
@@ -1755,7 +1755,7 @@ function getEventRiskMessage(event) {
   if (event === 'intramurals') return 'Intramurals can quickly change demand during break time.';
   if (event === 'exams') return 'Exams may lower demand for some items and shift peak hours.';
   if (event === 'halfday') return 'Half day schedules can shorten selling hours.';
-  return 'No special event risk was added.';
+  return '';
 }
 
 function deriveRiskAnalysis(predictions, summary, weather, event, dataSource) {
@@ -1764,6 +1764,7 @@ function deriveRiskAnalysis(predictions, summary, weather, event, dataSource) {
   const lowConfidenceItems = predictions.filter((item) => item.confidence === 'low');
   const totalStockGap = restockItems.reduce((sum, item) => sum + Number(item.stock_gap || 0), 0);
   const totalOverstockUnits = wasteItems.reduce((sum, item) => sum + Number(item.overstock_units || 0), 0);
+  const historyBasedForecastCount = Number(summary.heuristic_predictions || 0);
   const source = String(dataSource || '');
 
   const supplyRiskPoints =
@@ -1800,7 +1801,7 @@ function deriveRiskAnalysis(predictions, summary, weather, event, dataSource) {
         ? 2
         : lowConfidenceItems.length >= Math.ceil(Math.max(predictions.length, 1) * 0.5)
           ? 2
-          : lowConfidenceItems.length > 0 || summary.heuristic_predictions > 0
+          : lowConfidenceItems.length > 0 || historyBasedForecastCount > 0
             ? 1
             : 0;
 
@@ -1809,51 +1810,28 @@ function deriveRiskAnalysis(predictions, summary, weather, event, dataSource) {
   );
   const supplyLevel = getRiskLevel(supplyRiskPoints * 2);
   const wasteLevel = getRiskLevel(wasteRiskPoints * 2);
-  const weatherLevel = getRiskLevel(weatherRiskPoints + eventRiskPoints + 1);
+  const weatherLevel = getRiskLevel(weatherRiskPoints * 2);
+  const eventLevel = getRiskLevel(eventRiskPoints * 2);
   const forecastLevel = getRiskLevel(forecastRiskPoints * 2);
-
-  const alerts = [];
-
-  if (summary.restock_count > 0) {
-    alerts.push({
-      level: supplyLevel,
-      title: 'Supply risk',
-      message: `${summary.restock_count} product${summary.restock_count > 1 ? 's may' : ' may'} run short. Total stock gap is ${formatCount(totalStockGap)} units.`,
-    });
-  }
-
-  if (summary.waste_risk_count > 0) {
-    alerts.push({
-      level: wasteLevel,
-      title: 'Waste risk',
-      message: `${summary.waste_risk_count} product${summary.waste_risk_count > 1 ? 's have' : ' has'} extra stock. Total overstock is ${formatCount(totalOverstockUnits)} units.`,
-    });
-  }
-
-  alerts.push({
-    level: weatherLevel,
-    title: 'Weather and event risk',
-    message: `${getWeatherRiskMessage(weather)} ${getEventRiskMessage(event)}`,
-  });
-
-  if (forecastLevel !== 'low' || alerts.length < 3) {
-    alerts.push({
-      level: forecastLevel,
-      title: 'Forecast quality risk',
-      message:
-        lowConfidenceItems.length > 0 || summary.heuristic_predictions > 0
-          ? `${formatCount(lowConfidenceItems.length)} low-confidence product${lowConfidenceItems.length !== 1 ? 's' : ''} and ${formatCount(summary.heuristic_predictions)} history-based forecast${summary.heuristic_predictions !== 1 ? 's' : ''} need closer review.`
-          : 'Forecast quality looks stable for the current run.',
-    });
-  }
-
-  if (alerts.length === 0) {
-    alerts.push({
-      level: 'low',
-      title: 'Risk status',
-      message: 'The current forecast looks stable. No major risk was found.',
-    });
-  }
+  const eventMessage = getEventRiskMessage(event);
+  const forecastWarningMessage =
+    source === 'catalog-fallback'
+      ? 'Live forecast rows were unavailable, so catalog-based estimates were used.'
+      : source.includes('catalog')
+        ? 'Some products used catalog-based estimates so every active item is covered.'
+        : lowConfidenceItems.length > 0 && historyBasedForecastCount > 0
+          ? `${formatCount(lowConfidenceItems.length)} product${lowConfidenceItems.length === 1 ? '' : 's'} and ${formatCount(historyBasedForecastCount)} history-based estimate${historyBasedForecastCount === 1 ? '' : 's'} need a quick review.`
+          : lowConfidenceItems.length > 0
+            ? `${formatCount(lowConfidenceItems.length)} product${lowConfidenceItems.length === 1 ? '' : 's'} have limited transaction history. Check quantities before prep.`
+            : historyBasedForecastCount > 0
+              ? `${formatCount(historyBasedForecastCount)} product${historyBasedForecastCount === 1 ? '' : 's'} are using historical averages. Check quantities before prep.`
+              : '';
+  const forecastWarningValue =
+    source.includes('catalog')
+      ? 'Catalog estimate'
+      : lowConfidenceItems.length > 0 || historyBasedForecastCount > 0
+        ? 'Review needed'
+        : '';
 
   const overallMessage =
     overallLevel === 'high'
@@ -1868,11 +1846,15 @@ function deriveRiskAnalysis(predictions, summary, weather, event, dataSource) {
     supplyLevel,
     wasteLevel,
     weatherLevel,
+    eventLevel,
     forecastLevel,
     totalStockGap,
     totalOverstockUnits,
     lowConfidenceCount: lowConfidenceItems.length,
-    alerts: alerts.slice(0, 4),
+    historyBasedForecastCount,
+    eventMessage,
+    forecastWarningMessage,
+    forecastWarningValue,
   };
 }
 
@@ -3083,37 +3065,58 @@ export default function Predictions() {
   );
   const overallRiskMeta = getRiskMeta(riskAnalysis.overallLevel);
   const riskSummaryCards = useMemo(
-    () => [
-      {
-        title: 'Overall',
-        value: overallRiskMeta.label,
-        description: riskAnalysis.overallMessage,
-        card: overallRiskMeta.card,
-      },
-      {
-        title: 'Supply',
-        value: `${formatCount(forecast.summary.restock_count)} item${forecast.summary.restock_count === 1 ? '' : 's'}`,
-        description: `${formatCount(riskAnalysis.totalStockGap)} total units may be short.`,
-        card: getRiskMeta(riskAnalysis.supplyLevel).card,
-      },
-      {
-        title: 'Use First',
-        value: `${formatCount(forecast.summary.waste_risk_count)} item${forecast.summary.waste_risk_count === 1 ? '' : 's'}`,
-        description: `${formatCount(riskAnalysis.totalOverstockUnits)} units have extra stock.`,
-        card: getRiskMeta(riskAnalysis.wasteLevel).card,
-      },
-      {
+    () => {
+      const cards = [];
+
+      if (forecast.summary.restock_count > 0 || riskAnalysis.totalStockGap > 0) {
+        cards.push({
+          title: 'Supply',
+          value: `${formatCount(forecast.summary.restock_count)} item${forecast.summary.restock_count === 1 ? '' : 's'}`,
+          description: `${formatCount(riskAnalysis.totalStockGap)} units may be short.`,
+          card: getRiskMeta(riskAnalysis.supplyLevel).card,
+        });
+      }
+
+      if (forecast.summary.waste_risk_count > 0 || riskAnalysis.totalOverstockUnits > 0) {
+        cards.push({
+          title: 'Use First',
+          value: `${formatCount(forecast.summary.waste_risk_count)} item${forecast.summary.waste_risk_count === 1 ? '' : 's'}`,
+          description: `${formatCount(riskAnalysis.totalOverstockUnits)} units have extra stock.`,
+          card: getRiskMeta(riskAnalysis.wasteLevel).card,
+        });
+      }
+
+      cards.push({
         title: 'Weather',
         value: weatherProfile.label,
         description: getWeatherRiskMessage(weather),
         card: getRiskMeta(riskAnalysis.weatherLevel).card,
-      },
-    ],
+      });
+
+      if (riskAnalysis.eventMessage) {
+        cards.push({
+          title: 'Event',
+          value: eventProfile.label,
+          description: riskAnalysis.eventMessage,
+          card: getRiskMeta(riskAnalysis.eventLevel).card,
+        });
+      }
+
+      if (riskAnalysis.forecastWarningMessage) {
+        cards.push({
+          title: 'Forecast Check',
+          value: riskAnalysis.forecastWarningValue,
+          description: riskAnalysis.forecastWarningMessage,
+          card: getRiskMeta(riskAnalysis.forecastLevel).card,
+        });
+      }
+
+      return cards;
+    },
     [
+      eventProfile.label,
       forecast.summary.restock_count,
       forecast.summary.waste_risk_count,
-      overallRiskMeta.card,
-      overallRiskMeta.label,
       riskAnalysis,
       weather,
       weatherProfile.label,
@@ -3396,7 +3399,7 @@ export default function Predictions() {
               <div>
                 <h2 className="text-[22px] font-extrabold text-slate-900">Risk Analysis Summary</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Quick checks for stock, waste, and school-day conditions before service starts.
+                  {riskAnalysis.overallMessage} Only active issues and useful planning signals are shown.
                 </p>
               </div>
               <span
@@ -3415,20 +3418,6 @@ export default function Predictions() {
                   </div>
                   <div className="mt-2 text-lg font-black text-slate-900">{card.value}</div>
                   <div className="mt-1 text-sm leading-6 text-slate-600">{card.description}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-              {riskAnalysis.alerts.slice(0, 3).map((alert, index) => (
-                <div
-                  key={`${alert.title}-${index}`}
-                  className={`rounded-2xl border px-4 py-3 ${getRiskMeta(alert.level).card}`}
-                >
-                  <div className="text-xs font-black uppercase tracking-widest text-slate-500">
-                    {alert.title}
-                  </div>
-                  <div className="mt-1 text-sm leading-6 text-slate-700">{alert.message}</div>
                 </div>
               ))}
             </div>

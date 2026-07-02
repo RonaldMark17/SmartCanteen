@@ -24,12 +24,25 @@ class AuthenticatorResetRequest(BaseModel):
 # ── User ───────────────────────────────────────────────────────────────────────
 
 class PasswordResetRequestCreate(BaseModel):
-    identifier: str
+    identifier: Optional[str] = None
+    usernameOrEmail: Optional[str] = None
 
 
 class PasswordResetComplete(BaseModel):
-    identifier: str
+    identifier: Optional[str] = None
+    usernameOrEmail: Optional[str] = None
     new_password: str
+
+
+class PasswordResetReviewUpdate(BaseModel):
+    note: Optional[str] = None
+
+
+class PasswordResetAppealCreate(BaseModel):
+    identifier: Optional[str] = None
+    usernameOrEmail: Optional[str] = None
+    reason: Optional[str] = None
+    appeal_reason: Optional[str] = None
 
 
 class PasswordResetRequestResponse(BaseModel):
@@ -45,6 +58,86 @@ class PasswordResetRequestResponse(BaseModel):
     completed_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     reviewer_username: Optional[str] = None
+    review_note: Optional[str] = None
+    appeal_reason: Optional[str] = None
+    appealed_at: Optional[datetime] = None
+    appeal_review_note: Optional[str] = None
+    appeal_reviewed_at: Optional[datetime] = None
+
+
+class PasswordResetStatusResponse(BaseModel):
+    status: str
+    message: str
+    can_change_password: bool = False
+    requested_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+    appeal_reason: Optional[str] = None
+    appealed_at: Optional[datetime] = None
+    appeal_review_note: Optional[str] = None
+    appeal_reviewed_at: Optional[datetime] = None
+
+
+class AuthenticatorRecoveryRequestCreate(BaseModel):
+    identifier: Optional[str] = None
+    usernameOrEmail: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class AuthenticatorRecoveryStatusCheck(BaseModel):
+    identifier: Optional[str] = None
+    usernameOrEmail: Optional[str] = None
+
+
+class AuthenticatorRecoveryAppealCreate(BaseModel):
+    identifier: Optional[str] = None
+    usernameOrEmail: Optional[str] = None
+    reason: Optional[str] = None
+    appeal_reason: Optional[str] = None
+
+
+class AuthenticatorRecoverySetupStart(BaseModel):
+    identifier: Optional[str] = None
+    usernameOrEmail: Optional[str] = None
+
+
+class AuthenticatorRecoveryRequestResponse(BaseModel):
+    id: int
+    identifier: str
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    reason: str
+    status: str
+    requested_at: datetime
+    reviewed_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    reviewer_username: Optional[str] = None
+    review_note: Optional[str] = None
+    appeal_reason: Optional[str] = None
+    appealed_at: Optional[datetime] = None
+    appeal_review_note: Optional[str] = None
+    appeal_reviewed_at: Optional[datetime] = None
+
+
+class AuthenticatorRecoveryStatusResponse(BaseModel):
+    status: str
+    message: str
+    can_recover_authenticator: bool = False
+    reason: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+    appeal_reason: Optional[str] = None
+    appealed_at: Optional[datetime] = None
+    appeal_review_note: Optional[str] = None
+    appeal_reviewed_at: Optional[datetime] = None
 
 
 class UserCreate(BaseModel):

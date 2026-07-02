@@ -48,6 +48,14 @@ function getItemName(item) {
   return item.product?.name || `Product #${item.product_id}`;
 }
 
+function isCashPayment(value) {
+  return String(value || 'cash').toLowerCase() === 'cash';
+}
+
+function formatPaymentMethod(value) {
+  return isCashPayment(value) ? 'Cash' : 'Legacy payment';
+}
+
 function escapeCsvValue(value) {
   return `"${String(value ?? '').replaceAll('"', '""')}"`;
 }
@@ -151,7 +159,7 @@ export default function TransactionHistory() {
   const searchTerm = search.trim().toLowerCase();
   const filteredTxns = transactions.filter((transaction) => {
     const txnId = `txn-${String(transaction.id || '').padStart(6, '0')}`.toLowerCase();
-    const payment = (transaction.payment_type || '').toLowerCase();
+    const payment = formatPaymentMethod(transaction.payment_type).toLowerCase();
     const productMatch = (transaction.items || []).some((item) =>
       getItemName(item).toLowerCase().includes(searchTerm)
     );
@@ -197,7 +205,7 @@ export default function TransactionHistory() {
         `TXN-${String(transaction.id || '').padStart(6, '0')}`,
         formatTransactionDate(transaction.created_at),
         formatTransactionTime(transaction.created_at) || 'N/A',
-        transaction.payment_type || 'cash',
+        formatPaymentMethod(transaction.payment_type),
         (transaction.items || []).length,
         itemsSummary || 'No items',
         Number(transaction.total || 0).toFixed(2),
@@ -357,12 +365,12 @@ export default function TransactionHistory() {
                     <td className="px-6 py-4">
                       <span
                         className={`rounded px-2 py-1 text-[10px] font-black uppercase ${
-                          transaction.payment_type === 'cash'
+                          isCashPayment(transaction.payment_type)
                             ? 'bg-emerald-50 text-emerald-600'
-                            : 'bg-blue-50 text-blue-600'
+                            : 'bg-slate-100 text-slate-600'
                         }`}
                       >
-                        {transaction.payment_type || 'cash'}
+                        {formatPaymentMethod(transaction.payment_type)}
                       </span>
                     </td>
                     <td className="px-6 py-4 font-black text-slate-900">
@@ -443,12 +451,12 @@ export default function TransactionHistory() {
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <span
                       className={`rounded px-2 py-1 text-[10px] font-black uppercase ${
-                        transaction.payment_type === 'cash'
+                        isCashPayment(transaction.payment_type)
                           ? 'bg-emerald-50 text-emerald-600'
-                          : 'bg-blue-50 text-blue-600'
+                          : 'bg-slate-100 text-slate-600'
                       }`}
                     >
-                      {transaction.payment_type || 'cash'}
+                      {formatPaymentMethod(transaction.payment_type)}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-right text-xs text-slate-500">
                       {(transaction.items || []).map(getItemName).slice(0, 2).join(', ') || 'No items'}
@@ -554,7 +562,7 @@ export default function TransactionHistory() {
                 <p>
                   Date: {formatTransactionDateTime(selectedTxn.created_at)}
                 </p>
-                <p>Payment: {selectedTxn.payment_type || 'cash'}</p>
+                <p>Payment: {formatPaymentMethod(selectedTxn.payment_type)}</p>
               </div>
             </div>
 

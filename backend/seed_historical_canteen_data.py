@@ -603,15 +603,7 @@ def minute_in_slot(rng: random.Random, slot: str) -> tuple[int, int]:
 
 
 def payment_type_for_transaction(rng: random.Random, day_value: date, subtotal: float) -> str:
-    gcash_probability = {
-        2023: 0.11,
-        2024: 0.17,
-        2025: 0.24,
-        2026: 0.31,
-    }.get(day_value.year, 0.2)
-    if subtotal >= 160:
-        gcash_probability += 0.08
-    return "gcash" if rng.random() < gcash_probability else "cash"
+    return "cash"
 
 
 def existing_transaction_days(cur: sqlite3.Cursor, start_day: date, end_day: date) -> set[date]:

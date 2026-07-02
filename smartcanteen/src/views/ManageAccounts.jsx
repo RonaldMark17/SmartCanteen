@@ -87,19 +87,26 @@ function formatDateTime(value) {
 }
 
 function formatResetStatus(status) {
-  const value = String(status || 'pending').trim().toLowerCase();
-  return value.charAt(0).toUpperCase() + value.slice(1);
+  const value = String(status || 'pending').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const label = value === 'denied' ? 'declined' : value === 'completed' ? 'used' : value;
+  return label
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function getResetStatusClass(status) {
-  const value = String(status || 'pending').trim().toLowerCase();
-  if (value === 'approved') {
+  const value = String(status || 'pending').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (value === 'approved' || value === 'appeal_approved') {
     return 'bg-emerald-50 text-emerald-700';
   }
-  if (value === 'denied') {
+  if (value === 'declined' || value === 'denied' || value === 'appeal_declined') {
     return 'bg-red-50 text-red-700';
   }
-  if (value === 'completed') {
+  if (value === 'appealed') {
+    return 'bg-amber-50 text-amber-700';
+  }
+  if (value === 'completed' || value === 'used') {
     return 'bg-sky-50 text-sky-700';
   }
   if (value === 'expired') {
@@ -174,6 +181,10 @@ export default function ManageAccounts() {
   const [resetRequestsLoading, setResetRequestsLoading] = useState(true);
   const [resetRequestError, setResetRequestError] = useState('');
   const [busyResetRequestId, setBusyResetRequestId] = useState(null);
+  const [authRecoveryRequests, setAuthRecoveryRequests] = useState([]);
+  const [authRecoveryLoading, setAuthRecoveryLoading] = useState(true);
+  const [authRecoveryError, setAuthRecoveryError] = useState('');
+  const [busyAuthRecoveryId, setBusyAuthRecoveryId] = useState(null);
 
   const loadUsers = useCallback(async ({ showLoading = false } = {}) => {
     if (showLoading) {
@@ -211,10 +222,29 @@ export default function ManageAccounts() {
     }
   }, []);
 
+  const loadAuthenticatorRecoveryRequests = useCallback(async ({ showLoading = false } = {}) => {
+    if (showLoading) {
+      setAuthRecoveryLoading(true);
+    }
+
+    setAuthRecoveryError('');
+    try {
+      const data = await API.getAuthenticatorRecoveryRequests();
+      setAuthRecoveryRequests(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setAuthRecoveryError(err.message || 'Authenticator recovery requests could not be loaded.');
+    } finally {
+      if (showLoading) {
+        setAuthRecoveryLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     loadUsers({ showLoading: true });
     loadPasswordResetRequests({ showLoading: true });
-  }, [loadPasswordResetRequests, loadUsers]);
+    loadAuthenticatorRecoveryRequests({ showLoading: true });
+  }, [loadAuthenticatorRecoveryRequests, loadPasswordResetRequests, loadUsers]);
 
   const activeUsers = users.filter((user) => user.is_active);
   const activeAdmins = users.filter((user) => user.is_active && user.role === 'admin');
@@ -223,8 +253,14 @@ export default function ManageAccounts() {
     (user) => user.authenticator_mfa_enabled && Number(user.recovery_codes_remaining || 0) <= 1
   );
   const pendingResetRequests = passwordResetRequests.filter((request) => request.status === 'pending');
+  const appealedResetRequests = passwordResetRequests.filter((request) => request.status === 'appealed');
   const openResetRequests = passwordResetRequests.filter((request) =>
-    ['pending', 'approved', 'expired'].includes(request.status)
+    ['pending', 'approved', 'appealed', 'appeal_approved', 'expired'].includes(request.status)
+  );
+  const pendingAuthRecoveryRequests = authRecoveryRequests.filter((request) => request.status === 'pending');
+  const appealedAuthRecoveryRequests = authRecoveryRequests.filter((request) => request.status === 'appealed');
+  const openAuthRecoveryRequests = authRecoveryRequests.filter((request) =>
+    ['pending', 'approved', 'appealed', 'appeal_approved', 'expired'].includes(request.status)
   );
 
   const filteredUsers = useMemo(() => {
@@ -376,29 +412,80 @@ export default function ManageAccounts() {
 
   const reviewPasswordResetRequest = async (request, action) => {
     const username = request.username || request.identifier;
-    const approved = action === 'approve';
+    const approved = action === 'approve' || action === 'approve_appeal';
+    const appealAction = action === 'approve_appeal' || action === 'deny_appeal';
     const confirmed = window.confirm(
-      `${approved ? 'Approve' : 'Deny'} password reset for ${username}?`
+      `${approved ? 'Approve' : 'Decline'} ${appealAction ? 'password reset appeal' : 'password reset'} for ${username}?`
     );
     if (!confirmed) {
       return;
     }
 
+    const note = approved
+      ? ''
+      : window.prompt('Optional reason to show the user:', '') || '';
+
     setBusyResetRequestId(request.id);
     setResetRequestError('');
     try {
-      if (approved) {
+      if (action === 'approve') {
         await API.approvePasswordResetRequest(request.id);
         window.showToast?.(`Password reset approved for ${username}.`, 'success');
+      } else if (action === 'approve_appeal') {
+        await API.approvePasswordResetAppeal(request.id);
+        window.showToast?.(`Password reset appeal approved for ${username}.`, 'success');
+      } else if (action === 'deny_appeal') {
+        await API.denyPasswordResetAppeal(request.id, { note: note.trim() });
+        window.showToast?.(`Password reset appeal declined for ${username}.`, 'warning');
       } else {
-        await API.denyPasswordResetRequest(request.id);
-        window.showToast?.(`Password reset denied for ${username}.`, 'warning');
+        await API.denyPasswordResetRequest(request.id, { note: note.trim() });
+        window.showToast?.(`Password reset declined for ${username}.`, 'warning');
       }
       await loadPasswordResetRequests();
     } catch (err) {
       setResetRequestError(err.message || 'Password reset request could not be updated.');
     } finally {
       setBusyResetRequestId(null);
+    }
+  };
+
+  const reviewAuthenticatorRecoveryRequest = async (request, action) => {
+    const username = request.username || request.identifier;
+    const approved = action === 'approve' || action === 'approve_appeal';
+    const appealAction = action === 'approve_appeal' || action === 'deny_appeal';
+    const confirmed = window.confirm(
+      `${approved ? 'Approve' : 'Decline'} ${appealAction ? 'authenticator recovery appeal' : 'authenticator recovery'} for ${username}?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const note = approved
+      ? ''
+      : window.prompt('Optional reason to show the user:', '') || '';
+
+    setBusyAuthRecoveryId(request.id);
+    setAuthRecoveryError('');
+    try {
+      if (action === 'approve') {
+        await API.approveAuthenticatorRecoveryRequest(request.id);
+        window.showToast?.(`Authenticator recovery approved for ${username}.`, 'success');
+      } else if (action === 'approve_appeal') {
+        await API.approveAuthenticatorRecoveryAppeal(request.id);
+        window.showToast?.(`Authenticator recovery appeal approved for ${username}.`, 'success');
+      } else if (action === 'deny_appeal') {
+        await API.denyAuthenticatorRecoveryAppeal(request.id, { note: note.trim() });
+        window.showToast?.(`Authenticator recovery appeal declined for ${username}.`, 'warning');
+      } else {
+        await API.denyAuthenticatorRecoveryRequest(request.id, { note: note.trim() });
+        window.showToast?.(`Authenticator recovery declined for ${username}.`, 'warning');
+      }
+      await loadAuthenticatorRecoveryRequests();
+      await loadUsers();
+    } catch (err) {
+      setAuthRecoveryError(err.message || 'Authenticator recovery request could not be updated.');
+    } finally {
+      setBusyAuthRecoveryId(null);
     }
   };
 
@@ -424,10 +511,11 @@ export default function ManageAccounts() {
             onClick={() => {
               loadUsers({ showLoading: true });
               loadPasswordResetRequests({ showLoading: true });
+              loadAuthenticatorRecoveryRequests({ showLoading: true });
             }}
             className="action-button"
           >
-            <ArrowPathIcon className={`h-4 w-4 ${loading || resetRequestsLoading ? 'animate-spin' : ''}`} />
+            <ArrowPathIcon className={`h-4 w-4 ${loading || resetRequestsLoading || authRecoveryLoading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
           <button type="button" onClick={openCreateModal} className="primary-action-button">
@@ -449,7 +537,13 @@ export default function ManageAccounts() {
         </DismissibleAlert>
       )}
 
-      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+      {authRecoveryError && (
+        <DismissibleAlert resetKey={authRecoveryError} tone="red" title="Authenticator recovery issue" className="rounded-xl">
+          {authRecoveryError}
+        </DismissibleAlert>
+      )}
+
+      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
         <AccountMetricCard
           title="Accounts"
           value={formatCount(users.length)}
@@ -484,6 +578,13 @@ export default function ManageAccounts() {
           detail={`${formatCount(openResetRequests.length)} open`}
           icon={BellAlertIcon}
           tone={pendingResetRequests.length > 0 ? 'amber' : 'slate'}
+        />
+        <AccountMetricCard
+          title="MFA Requests"
+          value={formatCount(pendingAuthRecoveryRequests.length)}
+          detail={`${formatCount(openAuthRecoveryRequests.length)} open`}
+          icon={KeyIcon}
+          tone={pendingAuthRecoveryRequests.length > 0 ? 'amber' : 'slate'}
         />
       </div>
 
@@ -531,8 +632,13 @@ export default function ManageAccounts() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Password Reset Requests</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Approve a request so the user can change their password from the login screen.
+              Review requests and appeals so users can change passwords only after admin approval.
             </p>
+            {appealedResetRequests.length > 0 && (
+              <div className="mt-2 inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                {appealedResetRequests.length} appeal{appealedResetRequests.length > 1 ? 's' : ''} pending review
+              </div>
+            )}
           </div>
           <BellAlertIcon className="h-5 w-5 shrink-0 text-slate-400" />
         </div>
@@ -557,6 +663,8 @@ export default function ManageAccounts() {
               const isBusy = busyResetRequestId === request.id;
               const canApprove = request.status === 'pending' || request.status === 'expired';
               const canDeny = ['pending', 'approved', 'expired'].includes(request.status);
+              const canApproveAppeal = request.status === 'appealed';
+              const canDenyAppeal = request.status === 'appealed';
               const displayName = request.full_name || request.username || request.identifier;
 
               return (
@@ -583,7 +691,7 @@ export default function ManageAccounts() {
                       <ClockIcon className="h-4 w-4 shrink-0 text-slate-400" />
                       <span>Requested {formatDateTime(request.requested_at)}</span>
                     </div>
-                    {request.status === 'approved' && (
+                    {(request.status === 'approved' || request.status === 'appeal_approved') && (
                       <div className="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700">
                         Approved until {formatDateTime(request.expires_at)}
                       </div>
@@ -593,28 +701,211 @@ export default function ManageAccounts() {
                         Reviewed by @{request.reviewer_username}
                       </div>
                     )}
+                    {request.review_note && (
+                      <div className="rounded-lg bg-red-50 px-3 py-2 text-red-700">
+                        Decline reason: {request.review_note}
+                      </div>
+                    )}
+                    {request.appeal_reason && (
+                      <div className="rounded-lg bg-amber-50 px-3 py-2 text-amber-700">
+                        Appeal reason: {request.appeal_reason}
+                      </div>
+                    )}
+                    {request.appeal_review_note && (
+                      <div className="rounded-lg bg-slate-50 px-3 py-2">
+                        Appeal note: {request.appeal_review_note}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => reviewPasswordResetRequest(request, 'approve')}
-                      disabled={!canApprove || isBusy}
-                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  {request.status === 'appealed' ? (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => reviewPasswordResetRequest(request, 'approve_appeal')}
+                        disabled={!canApproveAppeal || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <CheckCircleIcon className="h-4 w-4" />
+                        {isBusy && canApproveAppeal ? 'Approving...' : 'Approve Appeal'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reviewPasswordResetRequest(request, 'deny_appeal')}
+                        disabled={!canDenyAppeal || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                        {isBusy && canDenyAppeal ? 'Declining...' : 'Decline Appeal'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => reviewPasswordResetRequest(request, 'approve')}
+                        disabled={!canApprove || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <CheckCircleIcon className="h-4 w-4" />
+                        {isBusy && canApprove ? 'Approving...' : 'Approve'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reviewPasswordResetRequest(request, 'deny')}
+                        disabled={!canDeny || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                        {isBusy && canDeny ? 'Declining...' : 'Decline'}
+                      </button>
+                    </div>
+                  )}
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      <section className="data-card shrink-0">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Authenticator Recovery Requests</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Review requests from users who lost access to their authenticator app.
+            </p>
+            {appealedAuthRecoveryRequests.length > 0 && (
+              <div className="mt-2 inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                {appealedAuthRecoveryRequests.length} appeal{appealedAuthRecoveryRequests.length > 1 ? 's' : ''} pending review
+              </div>
+            )}
+          </div>
+          <KeyIcon className="h-5 w-5 shrink-0 text-slate-400" />
+        </div>
+
+        <div className="grid gap-3 p-4 lg:grid-cols-2 2xl:grid-cols-3">
+          {authRecoveryLoading ? (
+            Array.from({ length: 3 }, (_, index) => (
+              <div key={`auth-recovery-request-skeleton-${index}`} className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 rounded-full" />
+                  <SkeletonText lines={['h-4 w-36', 'h-3 w-28']} className="flex-1" />
+                </div>
+                <Skeleton className="mt-4 h-16 rounded-lg" />
+              </div>
+            ))
+          ) : authRecoveryRequests.length === 0 ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500 lg:col-span-2 2xl:col-span-3">
+              No authenticator recovery requests right now.
+            </div>
+          ) : (
+            authRecoveryRequests.map((request) => {
+              const isBusy = busyAuthRecoveryId === request.id;
+              const canApprove = request.status === 'pending' || request.status === 'expired';
+              const canDeny = ['pending', 'approved', 'expired'].includes(request.status);
+              const canApproveAppeal = request.status === 'appealed';
+              const canDenyAppeal = request.status === 'appealed';
+              const displayName = request.full_name || request.username || request.identifier;
+
+              return (
+                <article key={`auth-recovery-request-${request.id}`} className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                      {getInitials({ full_name: request.full_name, username: request.username || request.identifier })}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold text-slate-900">{displayName}</div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+                        <span className="font-mono">@{request.username || request.identifier}</span>
+                        {request.role && <span>{formatRole(request.role)}</span>}
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${getResetStatusClass(request.status)}`}
                     >
-                      <CheckCircleIcon className="h-4 w-4" />
-                      {isBusy && canApprove ? 'Approving...' : 'Approve'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => reviewPasswordResetRequest(request, 'deny')}
-                      disabled={!canDeny || isBusy}
-                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <XMarkIcon className="h-4 w-4" />
-                      {isBusy && canDeny ? 'Denying...' : 'Deny'}
-                    </button>
+                      {formatResetStatus(request.status)}
+                    </span>
                   </div>
+
+                  <div className="mt-4 grid gap-2 text-xs text-slate-500">
+                    <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                      <ClockIcon className="h-4 w-4 shrink-0 text-slate-400" />
+                      <span>Requested {formatDateTime(request.requested_at)}</span>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      Reason: {request.reason}
+                    </div>
+                    {(request.status === 'approved' || request.status === 'appeal_approved') && (
+                      <div className="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700">
+                        Approved until {formatDateTime(request.expires_at)}
+                      </div>
+                    )}
+                    {request.reviewer_username && (
+                      <div className="rounded-lg bg-slate-50 px-3 py-2">
+                        Reviewed by @{request.reviewer_username}
+                      </div>
+                    )}
+                    {request.review_note && (
+                      <div className="rounded-lg bg-red-50 px-3 py-2 text-red-700">
+                        Decline reason: {request.review_note}
+                      </div>
+                    )}
+                    {request.appeal_reason && (
+                      <div className="rounded-lg bg-amber-50 px-3 py-2 text-amber-700">
+                        Appeal reason: {request.appeal_reason}
+                      </div>
+                    )}
+                    {request.appeal_review_note && (
+                      <div className="rounded-lg bg-slate-50 px-3 py-2">
+                        Appeal note: {request.appeal_review_note}
+                      </div>
+                    )}
+                  </div>
+
+                  {request.status === 'appealed' ? (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => reviewAuthenticatorRecoveryRequest(request, 'approve_appeal')}
+                        disabled={!canApproveAppeal || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <CheckCircleIcon className="h-4 w-4" />
+                        {isBusy && canApproveAppeal ? 'Approving...' : 'Approve Appeal'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reviewAuthenticatorRecoveryRequest(request, 'deny_appeal')}
+                        disabled={!canDenyAppeal || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                        {isBusy && canDenyAppeal ? 'Declining...' : 'Decline Appeal'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => reviewAuthenticatorRecoveryRequest(request, 'approve')}
+                        disabled={!canApprove || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <CheckCircleIcon className="h-4 w-4" />
+                        {isBusy && canApprove ? 'Approving...' : 'Approve'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reviewAuthenticatorRecoveryRequest(request, 'deny')}
+                        disabled={!canDeny || isBusy}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                        {isBusy && canDeny ? 'Declining...' : 'Decline'}
+                      </button>
+                    </div>
+                  )}
                 </article>
               );
             })

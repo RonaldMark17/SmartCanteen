@@ -79,12 +79,38 @@ class PasswordResetRequest(Base):
     user_id               = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     identifier            = Column(String, nullable=False)
     normalized_identifier = Column(String, nullable=False, index=True)
-    status                = Column(String, default="pending", index=True)  # pending | approved | denied | completed
+    status                = Column(String, default="pending", index=True)  # pending | approved | declined | appealed | appeal_approved | appeal_declined | expired | used
     requested_at          = Column(DateTime, default=utc_now_naive, index=True)
     reviewed_at           = Column(DateTime, nullable=True)
     completed_at          = Column(DateTime, nullable=True)
     expires_at            = Column(DateTime, nullable=True, index=True)
     reviewer_id           = Column(Integer, ForeignKey("users.id"), nullable=True)
+    review_note           = Column(Text, nullable=True)
+    appeal_reason         = Column(Text, nullable=True)
+    appealed_at           = Column(DateTime, nullable=True)
+    appeal_review_note    = Column(Text, nullable=True)
+    appeal_reviewed_at    = Column(DateTime, nullable=True)
+
+
+class AuthenticatorRecoveryRequest(Base):
+    __tablename__ = "authenticator_recovery_requests"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    user_id               = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    identifier            = Column(String, nullable=False)
+    normalized_identifier = Column(String, nullable=False, index=True)
+    reason                = Column(Text, nullable=False)
+    status                = Column(String, default="pending", index=True)  # pending | approved | declined | appealed | appeal_approved | appeal_declined | expired | used
+    requested_at          = Column(DateTime, default=utc_now_naive, index=True)
+    reviewed_at           = Column(DateTime, nullable=True)
+    completed_at          = Column(DateTime, nullable=True)
+    expires_at            = Column(DateTime, nullable=True, index=True)
+    reviewer_id           = Column(Integer, ForeignKey("users.id"), nullable=True)
+    review_note           = Column(Text, nullable=True)
+    appeal_reason         = Column(Text, nullable=True)
+    appealed_at           = Column(DateTime, nullable=True)
+    appeal_review_note    = Column(Text, nullable=True)
+    appeal_reviewed_at    = Column(DateTime, nullable=True)
 
 
 class Product(Base):
@@ -111,7 +137,7 @@ class Transaction(Base):
     user_id      = Column(Integer, ForeignKey("users.id"))
     total        = Column(Float, nullable=False)
     discount     = Column(Float, default=0.0)
-    payment_type = Column(String, default="cash")   # cash | gcash
+    payment_type = Column(String, default="cash")   # cash
     notes        = Column(Text, nullable=True)
     created_at   = Column(DateTime, default=utc_now_naive)
     synced       = Column(Boolean, default=True)   # False = came from offline queue

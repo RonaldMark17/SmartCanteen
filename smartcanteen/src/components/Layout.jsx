@@ -47,6 +47,7 @@ const DISMISSED_LOW_STOCK_ALERTS_KEY = 'sc_dismissed_low_stock_alerts_v2';
 const DISMISSED_HIGH_DEMAND_ALERTS_KEY = 'sc_dismissed_high_demand_alerts';
 const READ_LOW_STOCK_ALERTS_KEY = 'sc_read_low_stock_alerts_v2';
 const READ_HIGH_DEMAND_ALERTS_KEY = 'sc_read_high_demand_alerts';
+const READ_ACCOUNT_NOTICES_KEY = 'sc_read_account_notices';
 const UNREAD_ALERTS_STORAGE_KEY = 'sc_has_unread_alerts';
 const DARK_MODE_STORAGE_KEY = 'sc_dark_mode';
 const LOW_STOCK_POLL_MS = 60000;
@@ -111,6 +112,10 @@ function isBelowMinimumStock(item) {
 
 function buildHighDemandAlertKey(item) {
   return String(item?.product_id ?? item?.product_name ?? '');
+}
+
+function buildAccountNoticeKey(notice) {
+  return String(notice?.id ?? `${notice?.type || 'notice'}-${notice?.status || 'open'}-${notice?.created_at || ''}`);
 }
 
 function persistAlertSignature(storageKey, signature) {
@@ -329,6 +334,76 @@ function formatCheckTime(value) {
   })}`;
 }
 
+function normalizeAccountNoticeStatus(status) {
+  const value = String(status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (value === 'denied') {
+    return 'declined';
+  }
+  if (value === 'completed') {
+    return 'used';
+  }
+  if (value === 'appealapproved') {
+    return 'appeal_approved';
+  }
+  if (value === 'appealdeclined' || value === 'appealdenied' || value === 'appeal_denied') {
+    return 'appeal_declined';
+  }
+  return value || 'pending';
+}
+
+function formatAccountNoticeStatus(status) {
+  const value = normalizeAccountNoticeStatus(status);
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function getAccountNoticeClass(status, isUnread) {
+  const value = normalizeAccountNoticeStatus(status);
+  if (value === 'approved' || value === 'appeal_approved') {
+    return isUnread
+      ? 'border-emerald-200 bg-emerald-50/70 hover:border-emerald-300'
+      : 'border-emerald-100 bg-white hover:border-emerald-200';
+  }
+  if (value === 'declined' || value === 'appeal_declined' || value === 'expired') {
+    return isUnread
+      ? 'border-red-200 bg-red-50/70 hover:border-red-300'
+      : 'border-red-100 bg-white hover:border-red-200';
+  }
+  if (value === 'used') {
+    return isUnread
+      ? 'border-sky-200 bg-sky-50/70 hover:border-sky-300'
+      : 'border-sky-100 bg-white hover:border-sky-200';
+  }
+  return isUnread
+    ? 'border-amber-200 bg-amber-50/70 hover:border-amber-300'
+    : 'border-amber-100 bg-white hover:border-amber-200';
+}
+
+function getAccountNoticeBadgeClass(status) {
+  const value = normalizeAccountNoticeStatus(status);
+  if (value === 'approved' || value === 'appeal_approved') {
+    return 'bg-emerald-100 text-emerald-700';
+  }
+  if (value === 'declined' || value === 'appeal_declined' || value === 'expired') {
+    return 'bg-red-100 text-red-700';
+  }
+  if (value === 'used') {
+    return 'bg-sky-100 text-sky-700';
+  }
+  return 'bg-amber-100 text-amber-700';
+}
+
+function formatAccountNoticeTime(notice) {
+  return formatCheckTime(
+    notice?.created_at ||
+      notice?.reviewed_at ||
+      notice?.completed_at ||
+      notice?.requested_at
+  );
+}
+
 function getPermissionLabel(status) {
   if (status === 'granted') {
     return 'Phone alerts enabled';
@@ -423,6 +498,8 @@ export default function Layout({ children, onLogout }) {
   const [darkMode, setDarkMode] = useState(getStoredDarkMode);
   const [lowStockItems, setLowStockItems] = useState([]);
   const [highDemandItems, setHighDemandItems] = useState([]);
+  const [accountNotices, setAccountNotices] = useState([]);
+  const [accountNoticesLoading, setAccountNoticesLoading] = useState(false);
   const [alertsLoading, setAlertsLoading] = useState(true);
   const [hasUnreadAlerts, setHasUnreadAlerts] = useState(getStoredUnreadAlerts);
   const [alertReadVersion, setAlertReadVersion] = useState(0);
@@ -478,13 +555,27 @@ export default function Layout({ children, onLogout }) {
         READ_HIGH_DEMAND_ALERTS_KEY,
         buildHighDemandAlertKey,
         alertReadVersion
-      ),
+    ),
     [alertReadVersion, highDemandItems]
+  );
+  const unreadAccountNoticeKeys = useMemo(
+    () =>
+      getUnreadAlertKeySet(
+        accountNotices,
+        READ_ACCOUNT_NOTICES_KEY,
+        buildAccountNoticeKey,
+        alertReadVersion
+      ),
+    [accountNotices, alertReadVersion]
   );
   const lowStockAlertCount = lowStockItems.length;
   const highDemandReminderCount = highDemandItems.length;
+  const accountNoticeCount = accountNotices.length;
   const unreadLowStockAlertCount = unreadLowStockAlertKeys.size;
   const unreadHighDemandReminderCount = unreadHighDemandReminderKeys.size;
+  const unreadAccountNoticeCount = unreadAccountNoticeKeys.size;
+  const notificationItemCount = lowStockAlertCount + accountNoticeCount;
+  const unreadNotificationCount = unreadLowStockAlertCount + unreadAccountNoticeCount;
   const defaultRoute = getDefaultRoute(user.role);
   const displayName = user.full_name || user.username || 'SmartCanteen user';
   const userInitials = getUserInitials(displayName);
@@ -745,6 +836,18 @@ export default function Layout({ children, onLogout }) {
     }
   }, [loadHighDemandAlerts, loadLowStockAlerts, syncAlertStateWithServer]);
 
+  const loadAccountNotices = useCallback(async () => {
+    setAccountNoticesLoading(true);
+    try {
+      const notices = await API.getAccountNotices();
+      setAccountNotices(Array.isArray(notices) ? notices : []);
+    } catch {
+      // Account notices are helpful, but the workspace should still load if this refresh fails.
+    } finally {
+      setAccountNoticesLoading(false);
+    }
+  }, []);
+
   const refreshOfflineData = useCallback(async ({ showSyncToast = false } = {}) => {
     setPendingSyncCount(countPendingOfflineChanges());
 
@@ -879,6 +982,7 @@ export default function Layout({ children, onLogout }) {
     try {
       await Promise.allSettled([
         loadAlertData({ notifyOnChange: false }),
+        loadAccountNotices(),
         refreshOfflineData({ showSyncToast: true }),
       ]);
 
@@ -915,6 +1019,27 @@ export default function Layout({ children, onLogout }) {
     persistAlertStateToServer(LOW_STOCK_ALERT_TYPE, 'read', signatures);
     persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, '');
     updateUnreadAlertStatus(lowStockItems, highDemandItems);
+  }
+
+  function markAccountNoticesRead() {
+    markAlertItemsRead(READ_ACCOUNT_NOTICES_KEY, accountNotices, buildAccountNoticeKey);
+    setAlertReadVersion((currentVersion) => currentVersion + 1);
+  }
+
+  function markNotificationsRead() {
+    if (lowStockItems.length > 0) {
+      markLowStockNotificationsRead();
+    }
+    if (accountNotices.length > 0) {
+      markAccountNoticesRead();
+    }
+  }
+
+  async function refreshNotifications() {
+    await Promise.allSettled([
+      loadAlertData({ notifyOnChange: false }),
+      loadAccountNotices(),
+    ]);
   }
 
   function markHighDemandRemindersRead() {
@@ -1042,6 +1167,7 @@ export default function Layout({ children, onLogout }) {
 
     loadPermission();
     loadAlertData({ notifyOnChange: false });
+    loadAccountNotices();
     refreshOfflineData();
 
     const handleStatus = () => {
@@ -1049,6 +1175,7 @@ export default function Layout({ children, onLogout }) {
       setIsSynced(online);
       if (online) {
         loadAlertData({ notifyOnChange: false });
+        loadAccountNotices();
         refreshOfflineData({ showSyncToast: true });
       }
     };
@@ -1073,6 +1200,7 @@ export default function Layout({ children, onLogout }) {
     const intervalId = window.setInterval(() => {
       if (navigator.onLine) {
         loadAlertData();
+        loadAccountNotices();
       }
     }, LOW_STOCK_POLL_MS);
     const alertStateIntervalId = window.setInterval(() => {
@@ -1091,7 +1219,7 @@ export default function Layout({ children, onLogout }) {
       window.removeEventListener(ALERT_REFRESH_EVENT, handleAlertRefreshRequest);
       disconnectRealtimeAlerts();
     };
-  }, [loadAlertData, refreshOfflineData, syncAlertStateWithServer]);
+  }, [loadAccountNotices, loadAlertData, refreshOfflineData, syncAlertStateWithServer]);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');
@@ -1326,15 +1454,15 @@ export default function Layout({ children, onLogout }) {
               <button
                 type="button"
                 onClick={() => (notificationsOpen ? setNotificationsOpen(false) : openNotifications())}
-                title={unreadLowStockAlertCount > 0 ? 'Unread low stock notifications' : 'Notifications'}
+                title={unreadNotificationCount > 0 ? 'Unread notifications' : 'Notifications'}
                 className={`relative inline-flex h-11 w-11 items-center justify-center rounded-xl border bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 ${
-                  unreadLowStockAlertCount > 0 ? 'border-red-200 shadow-sm shadow-red-100' : 'border-slate-200'
+                  unreadNotificationCount > 0 ? 'border-red-200 shadow-sm shadow-red-100' : 'border-slate-200'
                 }`}
               >
                 <BellAlertIcon className="h-5 w-5" />
-                {unreadLowStockAlertCount > 0 && (
+                {unreadNotificationCount > 0 && (
                   <span className="absolute -right-1 -top-1 flex min-h-[1.25rem] min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black text-white">
-                    {unreadLowStockAlertCount > 9 ? '9+' : unreadLowStockAlertCount}
+                    {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
                   </span>
                 )}
               </button>
@@ -1353,9 +1481,9 @@ export default function Layout({ children, onLogout }) {
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-slate-900">Notifications</div>
                           <div className="mt-1 text-xs text-slate-500">
-                            {lowStockAlertCount > 0
-                              ? `${unreadLowStockAlertCount} unread of ${lowStockAlertCount} low stock notification${lowStockAlertCount > 1 ? 's' : ''}`
-                              : 'No low stock notifications right now'}
+                            {notificationItemCount > 0
+                              ? `${unreadNotificationCount} unread of ${notificationItemCount} notification${notificationItemCount > 1 ? 's' : ''}`
+                              : 'No notifications right now'}
                           </div>
                         </div>
                         <div
@@ -1371,10 +1499,10 @@ export default function Layout({ children, onLogout }) {
                         </div>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {unreadLowStockAlertCount > 0 && (
+                        {unreadNotificationCount > 0 && (
                           <button
                             type="button"
-                            onClick={markLowStockNotificationsRead}
+                            onClick={markNotificationsRead}
                             className="notification-action rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-900"
                           >
                             Read all
@@ -1391,10 +1519,10 @@ export default function Layout({ children, onLogout }) {
                         )}
                         <button
                           type="button"
-                          onClick={() => loadAlertData({ notifyOnChange: false })}
+                          onClick={refreshNotifications}
                           className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
-                          <ArrowPathIcon className={`h-4 w-4 ${alertsLoading ? 'animate-spin' : ''}`} />
+                          <ArrowPathIcon className={`h-4 w-4 ${alertsLoading || accountNoticesLoading ? 'animate-spin' : ''}`} />
                           Refresh
                         </button>
                         <button
@@ -1412,16 +1540,84 @@ export default function Layout({ children, onLogout }) {
                     </div>
 
                     <div className="max-h-[44vh] space-y-2.5 overflow-y-auto p-3 custom-scrollbar">
-                      {alertsLoading && lowStockAlertCount === 0 ? (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                          Loading low stock notifications...
+                      {accountNoticeCount > 0 && (
+                        <div className="space-y-2.5">
+                          <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                            Account Notices
+                          </div>
+                          {accountNotices.map((notice) => {
+                            const noticeKey = buildAccountNoticeKey(notice);
+                            const isUnread = unreadAccountNoticeKeys.has(noticeKey);
+
+                            return (
+                              <div
+                                key={noticeKey}
+                                className={`notification-alert-card rounded-xl border p-3 transition ${getAccountNoticeClass(notice.status, isUnread)}`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <ShieldCheckIcon className="h-4 w-4 shrink-0 text-slate-500" />
+                                      <div className="truncate text-sm font-semibold text-slate-900">
+                                        {notice.title || 'Password reset request'}
+                                      </div>
+                                    </div>
+                                    <div className="mt-1 text-xs leading-5 text-slate-600">
+                                      {notice.message}
+                                    </div>
+                                  </div>
+                                  <div className="flex shrink-0 flex-col items-end gap-1">
+                                    {isUnread && (
+                                      <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-red-600">
+                                        Unread
+                                      </span>
+                                    )}
+                                    <span
+                                      className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${getAccountNoticeBadgeClass(notice.status)}`}
+                                    >
+                                      {formatAccountNoticeStatus(notice.status)}
+                                    </span>
+                                  </div>
+                                </div>
+                                {notice.review_note && (
+                                  <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs font-semibold text-slate-700">
+                                    Decline reason: {notice.review_note}
+                                  </div>
+                                )}
+                                {notice.appeal_review_note && (
+                                  <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs font-semibold text-slate-700">
+                                    Appeal note: {notice.appeal_review_note}
+                                  </div>
+                                )}
+                                <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+                                  <span>{formatAccountNoticeTime(notice)}</span>
+                                  {notice.can_change_password && (
+                                    <span className="font-semibold text-emerald-700">
+                                      Change password enabled
+                                    </span>
+                                  )}
+                                  {notice.can_recover_authenticator && (
+                                    <span className="font-semibold text-emerald-700">
+                                      Authenticator setup enabled
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      ) : lowStockAlertCount === 0 ? (
+                      )}
+
+                      {(alertsLoading || accountNoticesLoading) && notificationItemCount === 0 ? (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                          Loading notifications...
+                        </div>
+                      ) : notificationItemCount === 0 ? (
                         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-                          <div className="text-sm font-bold text-slate-700">No low stock notifications right now</div>
+                          <div className="text-sm font-bold text-slate-700">No notifications right now</div>
                           <div className="mt-1 text-xs text-slate-500">{formatCheckTime(lastAlertCheck)}</div>
                         </div>
-                      ) : (
+                      ) : lowStockAlertCount > 0 && (
                           <div className="space-y-2.5">
                             <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                               Low Stock
@@ -1578,10 +1774,10 @@ export default function Layout({ children, onLogout }) {
                         )}
                         <button
                           type="button"
-                          onClick={() => loadAlertData({ notifyOnChange: false })}
+                          onClick={refreshNotifications}
                           className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
-                          <ArrowPathIcon className={`h-4 w-4 ${alertsLoading ? 'animate-spin' : ''}`} />
+                          <ArrowPathIcon className={`h-4 w-4 ${alertsLoading || accountNoticesLoading ? 'animate-spin' : ''}`} />
                           Refresh
                         </button>
                         <button

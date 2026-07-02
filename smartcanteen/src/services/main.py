@@ -9,11 +9,20 @@ from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Request, Q
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from sqlalchemy import and_, func, or_, text
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List, Optional
+import base64
+import binascii
+import hashlib
+import hmac
 import ipaddress
 import os
+import secrets
+import struct
+import time
+from urllib.parse import quote
 
 import backend.models as models
 import backend.schemas as schemas
@@ -39,6 +48,576 @@ class TransactionValidationError(Exception):
     def __init__(self, message: str, status_code: int = 400):
         super().__init__(message)
         self.status_code = status_code
+
+
+CASH_PAYMENT_TYPE = "cash"
+PASSWORD_RESET_APPROVAL_EXPIRE_MINUTES = 60
+PASSWORD_RESET_REQUEST_SENT_MESSAGE = "Your password reset request has been sent. Please wait for admin approval."
+PASSWORD_RESET_DECLINED_MESSAGE = "Your password reset request was declined. You may submit an appeal if you believe this was a mistake."
+PASSWORD_RESET_APPEAL_SENT_MESSAGE = "Your appeal has been submitted. Please wait for admin review."
+PASSWORD_RESET_STATUS_MESSAGES = {
+    "pending": "Your password reset request is still pending. Please wait for admin approval.",
+    "approved": "Your password reset request has been approved. You may now change your password.",
+    "declined": PASSWORD_RESET_DECLINED_MESSAGE,
+    "appealed": PASSWORD_RESET_APPEAL_SENT_MESSAGE,
+    "appeal_approved": "Your password reset appeal has been approved. You may now change your password.",
+    "appeal_declined": "Your appeal was declined. Please contact the admin for assistance.",
+    "expired": "Your password reset approval has expired. Please send a new request.",
+    "used": "This password reset request has already been used. Please send a new request if you need another password change.",
+    "none": "No password reset request was found for this account.",
+}
+PASSWORD_RESET_APPROVED_STATUSES = {"approved", "appeal_approved"}
+PASSWORD_RESET_OPEN_STATUSES = {"pending", "approved", "appealed", "appeal_approved", "expired"}
+AUTHENTICATOR_RECOVERY_APPROVAL_EXPIRE_MINUTES = 60
+AUTHENTICATOR_RECOVERY_REQUEST_SENT_MESSAGE = "Your authenticator recovery request has been sent. Please wait for admin approval."
+AUTHENTICATOR_RECOVERY_DECLINED_MESSAGE = "Your authenticator recovery request was declined. You may submit an appeal if you believe this was a mistake."
+AUTHENTICATOR_RECOVERY_APPEAL_SENT_MESSAGE = "Your appeal has been submitted. Please wait for admin review."
+AUTHENTICATOR_RECOVERY_STATUS_MESSAGES = {
+    "pending": "Your authenticator recovery request is still pending. Please wait for admin approval.",
+    "approved": "Your authenticator recovery request has been approved. You may now set up a new authenticator.",
+    "declined": AUTHENTICATOR_RECOVERY_DECLINED_MESSAGE,
+    "appealed": AUTHENTICATOR_RECOVERY_APPEAL_SENT_MESSAGE,
+    "appeal_approved": "Your authenticator recovery request has been approved. You may now set up a new authenticator.",
+    "appeal_declined": "Your appeal was declined. Please contact the admin for assistance.",
+    "expired": "Your authenticator recovery approval has expired. Please send a new request.",
+    "used": "This authenticator recovery request has already been used. Please send a new request if you need another recovery.",
+    "none": "No authenticator recovery request was found for this account.",
+}
+AUTHENTICATOR_RECOVERY_APPROVED_STATUSES = {"approved", "appeal_approved"}
+AUTHENTICATOR_RECOVERY_OPEN_STATUSES = {"pending", "approved", "appealed", "appeal_approved", "expired"}
+AUTHENTICATOR_ISSUER = os.environ.get("SMARTCANTEEN_AUTHENTICATOR_ISSUER", "SmartCanteen")
+AUTHENTICATOR_PERIOD_SECONDS = 30
+AUTHENTICATOR_DIGITS = 6
+AUTHENTICATOR_WINDOW_STEPS = 1
+RECOVERY_CODE_COUNT = 10
+RECOVERY_CODE_GROUPS = 3
+RECOVERY_CODE_GROUP_LENGTH = 4
+RECOVERY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _normalize_transaction_payment_type(payment_type: Optional[str]) -> str:
+    normalized = str(payment_type or CASH_PAYMENT_TYPE).strip().lower()
+    if normalized != CASH_PAYMENT_TYPE:
+        raise TransactionValidationError(
+            "Only cash payment is allowed for canteen transactions"
+        )
+
+    return CASH_PAYMENT_TYPE
+
+
+def _normalize_password_reset_identifier(value: str) -> str:
+    identifier = str(value or "").strip()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Username or email is required")
+    if len(identifier) > 128:
+        raise HTTPException(status_code=400, detail="Username or email must be 128 characters or fewer")
+    return identifier
+
+
+def _password_reset_identifier_from_payload(data) -> str:
+    return _normalize_password_reset_identifier(
+        getattr(data, "identifier", None) or getattr(data, "usernameOrEmail", None)
+    )
+
+
+def _validate_user_password(password: str) -> str:
+    raw_password = str(password or "")
+    if len(raw_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    return raw_password
+
+
+def _find_user_by_reset_identifier(db: Session, identifier: str):
+    normalized_identifier = _normalize_password_reset_identifier(identifier).lower()
+    return (
+        db.query(models.User)
+        .filter(func.lower(models.User.username) == normalized_identifier)
+        .first()
+    )
+
+
+def _normalize_password_reset_status(status: str) -> str:
+    normalized_status = str(status or "pending").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized_status == "denied":
+        return "declined"
+    if normalized_status == "completed":
+        return "used"
+    if normalized_status in {"appealapproved", "appeal_approved"}:
+        return "appeal_approved"
+    if normalized_status in {"appealdeclined", "appeal_declined", "appealdenied", "appeal_denied"}:
+        return "appeal_declined"
+    return normalized_status
+
+
+def _normalize_password_reset_note(value: Optional[str]) -> Optional[str]:
+    note = str(value or "").strip()
+    if len(note) > 500:
+        raise HTTPException(status_code=400, detail="Admin note must be 500 characters or fewer")
+    return note or None
+
+
+def _password_reset_appeal_reason_from_payload(data) -> str:
+    reason = str(
+        getattr(data, "appeal_reason", None)
+        or getattr(data, "reason", None)
+        or ""
+    ).strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Appeal reason is required")
+    if len(reason) > 1000:
+        raise HTTPException(status_code=400, detail="Appeal reason must be 1000 characters or fewer")
+    return reason
+
+
+def _expire_password_reset_request_if_needed(
+    reset_request: models.PasswordResetRequest,
+    now: Optional[datetime] = None,
+) -> bool:
+    current_status = _normalize_password_reset_status(reset_request.status)
+    if current_status != reset_request.status:
+        reset_request.status = current_status
+
+    now = now or datetime.utcnow()
+    if (
+        _normalize_password_reset_status(reset_request.status) in PASSWORD_RESET_APPROVED_STATUSES
+        and reset_request.expires_at is not None
+        and reset_request.expires_at <= now
+    ):
+        reset_request.status = "expired"
+        return True
+
+    return False
+
+
+def _effective_password_reset_status(reset_request: models.PasswordResetRequest) -> str:
+    _expire_password_reset_request_if_needed(reset_request)
+    return _normalize_password_reset_status(reset_request.status)
+
+
+def _serialize_password_reset_status(reset_request: models.PasswordResetRequest) -> dict:
+    status = _effective_password_reset_status(reset_request)
+    return {
+        "status": status,
+        "message": PASSWORD_RESET_STATUS_MESSAGES.get(status, PASSWORD_RESET_STATUS_MESSAGES["none"]),
+        "can_change_password": status in PASSWORD_RESET_APPROVED_STATUSES,
+        "requested_at": reset_request.requested_at,
+        "reviewed_at": reset_request.reviewed_at,
+        "completed_at": reset_request.completed_at,
+        "expires_at": reset_request.expires_at,
+        "review_note": getattr(reset_request, "review_note", None),
+        "appeal_reason": getattr(reset_request, "appeal_reason", None),
+        "appealed_at": getattr(reset_request, "appealed_at", None),
+        "appeal_review_note": getattr(reset_request, "appeal_review_note", None),
+        "appeal_reviewed_at": getattr(reset_request, "appeal_reviewed_at", None),
+    }
+
+
+def _serialize_password_reset_account_notice(reset_request: models.PasswordResetRequest) -> dict:
+    status = _effective_password_reset_status(reset_request)
+    notice_time = (
+        getattr(reset_request, "appeal_reviewed_at", None)
+        or getattr(reset_request, "appealed_at", None)
+        or reset_request.reviewed_at
+        or reset_request.completed_at
+        or reset_request.requested_at
+    )
+    return {
+        "id": f"password-reset-{reset_request.id}-{status}",
+        "type": "password_reset",
+        "title": "Password reset request",
+        "status": status,
+        "message": PASSWORD_RESET_STATUS_MESSAGES.get(status, PASSWORD_RESET_STATUS_MESSAGES["none"]),
+        "can_change_password": status in PASSWORD_RESET_APPROVED_STATUSES,
+        "requested_at": reset_request.requested_at,
+        "reviewed_at": reset_request.reviewed_at,
+        "completed_at": reset_request.completed_at,
+        "expires_at": reset_request.expires_at,
+        "created_at": notice_time,
+        "review_note": getattr(reset_request, "review_note", None),
+        "appeal_reason": getattr(reset_request, "appeal_reason", None),
+        "appealed_at": getattr(reset_request, "appealed_at", None),
+        "appeal_review_note": getattr(reset_request, "appeal_review_note", None),
+        "appeal_reviewed_at": getattr(reset_request, "appeal_reviewed_at", None),
+    }
+
+
+def _serialize_password_reset_request(db: Session, reset_request: models.PasswordResetRequest) -> dict:
+    user = None
+    reviewer = None
+    if reset_request.user_id:
+        user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    if reset_request.reviewer_id:
+        reviewer = db.query(models.User).filter(models.User.id == reset_request.reviewer_id).first()
+
+    return {
+        "id": reset_request.id,
+        "identifier": reset_request.identifier,
+        "username": user.username if user else None,
+        "full_name": user.full_name if user else None,
+        "role": user.role if user else None,
+        "is_active": user.is_active if user else None,
+        "status": _effective_password_reset_status(reset_request),
+        "requested_at": reset_request.requested_at,
+        "reviewed_at": reset_request.reviewed_at,
+        "completed_at": reset_request.completed_at,
+        "expires_at": reset_request.expires_at,
+        "reviewer_username": reviewer.username if reviewer else None,
+        "review_note": getattr(reset_request, "review_note", None),
+        "appeal_reason": getattr(reset_request, "appeal_reason", None),
+        "appealed_at": getattr(reset_request, "appealed_at", None),
+        "appeal_review_note": getattr(reset_request, "appeal_review_note", None),
+        "appeal_reviewed_at": getattr(reset_request, "appeal_reviewed_at", None),
+    }
+
+
+def _get_latest_password_reset_request_for_identifier(db: Session, identifier: str):
+    normalized_identifier = _normalize_password_reset_identifier(identifier).lower()
+    user = _find_user_by_reset_identifier(db, identifier)
+    query = db.query(models.PasswordResetRequest)
+    if user:
+        query = query.filter(models.PasswordResetRequest.user_id == user.id)
+    else:
+        query = query.filter(models.PasswordResetRequest.normalized_identifier == normalized_identifier)
+
+    return query.order_by(models.PasswordResetRequest.requested_at.desc()).first()
+
+
+def _get_password_reset_request_or_404(db: Session, request_id: int):
+    reset_request = (
+        db.query(models.PasswordResetRequest)
+        .filter(models.PasswordResetRequest.id == request_id)
+        .first()
+    )
+    if not reset_request:
+        raise HTTPException(status_code=404, detail="Password reset request not found")
+    return reset_request
+
+
+def _authenticator_recovery_identifier_from_payload(data) -> str:
+    return _normalize_password_reset_identifier(
+        getattr(data, "identifier", None) or getattr(data, "usernameOrEmail", None)
+    )
+
+
+def _find_user_by_authenticator_recovery_identifier(db: Session, identifier: str):
+    normalized_identifier = _normalize_password_reset_identifier(identifier).lower()
+    return (
+        db.query(models.User)
+        .filter(func.lower(models.User.username) == normalized_identifier)
+        .first()
+    )
+
+
+def _normalize_authenticator_recovery_status(status: str) -> str:
+    return _normalize_password_reset_status(status)
+
+
+def _normalize_authenticator_recovery_note(value: Optional[str]) -> Optional[str]:
+    return _normalize_password_reset_note(value)
+
+
+def _authenticator_recovery_reason_from_payload(data) -> str:
+    reason = str(getattr(data, "reason", None) or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Recovery reason is required")
+    if len(reason) > 1000:
+        raise HTTPException(status_code=400, detail="Recovery reason must be 1000 characters or fewer")
+    return reason
+
+
+def _authenticator_recovery_appeal_reason_from_payload(data) -> str:
+    reason = str(
+        getattr(data, "appeal_reason", None)
+        or getattr(data, "reason", None)
+        or ""
+    ).strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Appeal reason is required")
+    if len(reason) > 1000:
+        raise HTTPException(status_code=400, detail="Appeal reason must be 1000 characters or fewer")
+    return reason
+
+
+def _expire_authenticator_recovery_request_if_needed(
+    recovery_request: models.AuthenticatorRecoveryRequest,
+    now: Optional[datetime] = None,
+) -> bool:
+    current_status = _normalize_authenticator_recovery_status(recovery_request.status)
+    if current_status != recovery_request.status:
+        recovery_request.status = current_status
+
+    now = now or datetime.utcnow()
+    if (
+        _normalize_authenticator_recovery_status(recovery_request.status)
+        in AUTHENTICATOR_RECOVERY_APPROVED_STATUSES
+        and recovery_request.expires_at is not None
+        and recovery_request.expires_at <= now
+    ):
+        recovery_request.status = "expired"
+        return True
+
+    return False
+
+
+def _effective_authenticator_recovery_status(
+    recovery_request: models.AuthenticatorRecoveryRequest,
+) -> str:
+    _expire_authenticator_recovery_request_if_needed(recovery_request)
+    return _normalize_authenticator_recovery_status(recovery_request.status)
+
+
+def _serialize_authenticator_recovery_status(
+    recovery_request: models.AuthenticatorRecoveryRequest,
+) -> dict:
+    status = _effective_authenticator_recovery_status(recovery_request)
+    return {
+        "status": status,
+        "message": AUTHENTICATOR_RECOVERY_STATUS_MESSAGES.get(
+            status,
+            AUTHENTICATOR_RECOVERY_STATUS_MESSAGES["none"],
+        ),
+        "can_recover_authenticator": status in AUTHENTICATOR_RECOVERY_APPROVED_STATUSES,
+        "reason": recovery_request.reason,
+        "requested_at": recovery_request.requested_at,
+        "reviewed_at": recovery_request.reviewed_at,
+        "completed_at": recovery_request.completed_at,
+        "expires_at": recovery_request.expires_at,
+        "review_note": getattr(recovery_request, "review_note", None),
+        "appeal_reason": getattr(recovery_request, "appeal_reason", None),
+        "appealed_at": getattr(recovery_request, "appealed_at", None),
+        "appeal_review_note": getattr(recovery_request, "appeal_review_note", None),
+        "appeal_reviewed_at": getattr(recovery_request, "appeal_reviewed_at", None),
+    }
+
+
+def _serialize_authenticator_recovery_account_notice(
+    recovery_request: models.AuthenticatorRecoveryRequest,
+) -> dict:
+    status = _effective_authenticator_recovery_status(recovery_request)
+    notice_time = (
+        getattr(recovery_request, "appeal_reviewed_at", None)
+        or getattr(recovery_request, "appealed_at", None)
+        or recovery_request.reviewed_at
+        or recovery_request.completed_at
+        or recovery_request.requested_at
+    )
+    return {
+        "id": f"authenticator-recovery-{recovery_request.id}-{status}",
+        "type": "authenticator_recovery",
+        "title": "Authenticator recovery request",
+        "status": status,
+        "message": AUTHENTICATOR_RECOVERY_STATUS_MESSAGES.get(
+            status,
+            AUTHENTICATOR_RECOVERY_STATUS_MESSAGES["none"],
+        ),
+        "can_recover_authenticator": status in AUTHENTICATOR_RECOVERY_APPROVED_STATUSES,
+        "reason": recovery_request.reason,
+        "requested_at": recovery_request.requested_at,
+        "reviewed_at": recovery_request.reviewed_at,
+        "completed_at": recovery_request.completed_at,
+        "expires_at": recovery_request.expires_at,
+        "created_at": notice_time,
+        "review_note": getattr(recovery_request, "review_note", None),
+        "appeal_reason": getattr(recovery_request, "appeal_reason", None),
+        "appealed_at": getattr(recovery_request, "appealed_at", None),
+        "appeal_review_note": getattr(recovery_request, "appeal_review_note", None),
+        "appeal_reviewed_at": getattr(recovery_request, "appeal_reviewed_at", None),
+    }
+
+
+def _serialize_authenticator_recovery_request(
+    db: Session,
+    recovery_request: models.AuthenticatorRecoveryRequest,
+) -> dict:
+    user = None
+    reviewer = None
+    if recovery_request.user_id:
+        user = db.query(models.User).filter(models.User.id == recovery_request.user_id).first()
+    if recovery_request.reviewer_id:
+        reviewer = db.query(models.User).filter(models.User.id == recovery_request.reviewer_id).first()
+
+    return {
+        "id": recovery_request.id,
+        "identifier": recovery_request.identifier,
+        "username": user.username if user else None,
+        "full_name": user.full_name if user else None,
+        "role": user.role if user else None,
+        "is_active": user.is_active if user else None,
+        "reason": recovery_request.reason,
+        "status": _effective_authenticator_recovery_status(recovery_request),
+        "requested_at": recovery_request.requested_at,
+        "reviewed_at": recovery_request.reviewed_at,
+        "completed_at": recovery_request.completed_at,
+        "expires_at": recovery_request.expires_at,
+        "reviewer_username": reviewer.username if reviewer else None,
+        "review_note": getattr(recovery_request, "review_note", None),
+        "appeal_reason": getattr(recovery_request, "appeal_reason", None),
+        "appealed_at": getattr(recovery_request, "appealed_at", None),
+        "appeal_review_note": getattr(recovery_request, "appeal_review_note", None),
+        "appeal_reviewed_at": getattr(recovery_request, "appeal_reviewed_at", None),
+    }
+
+
+def _get_latest_authenticator_recovery_request_for_identifier(db: Session, identifier: str):
+    normalized_identifier = _normalize_password_reset_identifier(identifier).lower()
+    user = _find_user_by_authenticator_recovery_identifier(db, identifier)
+    query = db.query(models.AuthenticatorRecoveryRequest)
+    if user:
+        query = query.filter(models.AuthenticatorRecoveryRequest.user_id == user.id)
+    else:
+        query = query.filter(
+            models.AuthenticatorRecoveryRequest.normalized_identifier == normalized_identifier
+        )
+    return query.order_by(models.AuthenticatorRecoveryRequest.requested_at.desc()).first()
+
+
+def _get_authenticator_recovery_request_or_404(db: Session, request_id: int):
+    recovery_request = (
+        db.query(models.AuthenticatorRecoveryRequest)
+        .filter(models.AuthenticatorRecoveryRequest.id == request_id)
+        .first()
+    )
+    if not recovery_request:
+        raise HTTPException(status_code=404, detail="Authenticator recovery request not found")
+    return recovery_request
+
+
+def _generate_authenticator_secret() -> str:
+    return base64.b32encode(os.urandom(20)).decode("ascii").rstrip("=")
+
+
+def _format_authenticator_secret(secret: str) -> str:
+    compact = "".join(str(secret or "").upper().split())
+    return " ".join(compact[index:index + 4] for index in range(0, len(compact), 4))
+
+
+def _normalize_authenticator_code(code: str) -> str:
+    return "".join(character for character in str(code or "") if character.isdigit())
+
+
+def _decode_authenticator_secret(secret: str) -> bytes:
+    normalized = "".join(str(secret or "").upper().split())
+    padding = "=" * ((8 - len(normalized) % 8) % 8)
+    try:
+        return base64.b32decode(f"{normalized}{padding}", casefold=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Authenticator setup is invalid. Sign in again.")
+
+
+def _authenticator_code_for_counter(secret: str, counter: int) -> str:
+    key = _decode_authenticator_secret(secret)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    truncated = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    code = truncated % (10 ** AUTHENTICATOR_DIGITS)
+    return str(code).zfill(AUTHENTICATOR_DIGITS)
+
+
+def _verify_authenticator_code(secret: str, code: str, last_counter: Optional[int] = None) -> int:
+    normalized_code = _normalize_authenticator_code(code)
+    if len(normalized_code) != AUTHENTICATOR_DIGITS:
+        raise HTTPException(status_code=400, detail="Enter the 6-digit authenticator code")
+
+    current_counter = int(time.time() // AUTHENTICATOR_PERIOD_SECONDS)
+    for offset in range(-AUTHENTICATOR_WINDOW_STEPS, AUTHENTICATOR_WINDOW_STEPS + 1):
+        counter = current_counter + offset
+        if last_counter is not None and counter <= last_counter:
+            continue
+        expected = _authenticator_code_for_counter(secret, counter)
+        if hmac.compare_digest(normalized_code, expected):
+            return counter
+
+    raise HTTPException(status_code=401, detail="Invalid authenticator code")
+
+
+def _authenticator_otpauth_url(user: models.User, secret: str) -> str:
+    label = f"{AUTHENTICATOR_ISSUER}:{user.username}"
+    return (
+        f"otpauth://totp/{quote(label)}"
+        f"?secret={quote(secret)}"
+        f"&issuer={quote(AUTHENTICATOR_ISSUER)}"
+        f"&algorithm=SHA1"
+        f"&digits={AUTHENTICATOR_DIGITS}"
+        f"&period={AUTHENTICATOR_PERIOD_SECONDS}"
+    )
+
+
+def _normalize_recovery_code(code: str) -> str:
+    return "".join(character for character in str(code or "").upper() if character.isalnum())
+
+
+def _recovery_code_hash(code: str) -> str:
+    normalized = _normalize_recovery_code(code)
+    if not normalized:
+        return ""
+    return hmac.new(
+        auth.SECRET_KEY.encode("utf-8"),
+        f"recovery-code:{normalized}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _generate_recovery_code() -> str:
+    character_count = RECOVERY_CODE_GROUPS * RECOVERY_CODE_GROUP_LENGTH
+    raw_code = "".join(secrets.choice(RECOVERY_CODE_ALPHABET) for _ in range(character_count))
+    return "-".join(
+        raw_code[index:index + RECOVERY_CODE_GROUP_LENGTH]
+        for index in range(0, len(raw_code), RECOVERY_CODE_GROUP_LENGTH)
+    )
+
+
+def _replace_user_recovery_codes(db: Session, user: models.User) -> list[str]:
+    db.query(models.UserRecoveryCode).filter(
+        models.UserRecoveryCode.user_id == user.id
+    ).delete(synchronize_session=False)
+
+    codes = []
+    code_hashes = set()
+    while len(codes) < RECOVERY_CODE_COUNT:
+        code = _generate_recovery_code()
+        code_hash = _recovery_code_hash(code)
+        if not code_hash or code_hash in code_hashes:
+            continue
+        code_hashes.add(code_hash)
+        codes.append(code)
+        db.add(models.UserRecoveryCode(user_id=user.id, code_hash=code_hash))
+    return codes
+
+
+def _build_authenticator_user_hint(user: models.User, enabled: bool) -> dict:
+    return {
+        "username": user.username,
+        "full_name": user.full_name,
+        "authenticator_mfa_enabled": enabled,
+    }
+
+
+def _begin_authenticator_setup(user: models.User, extra: Optional[dict] = None):
+    secret = _generate_authenticator_secret()
+    token_extra = {"totp_secret": secret}
+    if extra:
+        token_extra.update(extra)
+    mfa_token, _token_id = auth.create_mfa_token(
+        user.username,
+        purpose="authenticator_setup",
+        extra=token_extra,
+    )
+    return {
+        "authenticator_setup_required": True,
+        "mfa_required": True,
+        "mfa_type": "authenticator_setup",
+        "mfa_token": mfa_token,
+        "authenticator": {
+            "issuer": AUTHENTICATOR_ISSUER,
+            "account": user.username,
+            "secret": secret,
+            "secret_formatted": _format_authenticator_secret(secret),
+            "otpauth_url": _authenticator_otpauth_url(user, secret),
+            "digits": AUTHENTICATOR_DIGITS,
+            "period": AUTHENTICATOR_PERIOD_SECONDS,
+        },
+        "user": _build_authenticator_user_hint(user, False),
+    }
 
 
 def _get_client_ip(request: Optional[Request] = None):
@@ -221,6 +800,7 @@ def _persist_transaction(
     synced: bool = True,
 ):
     normalized_items = _normalize_transaction_items(items)
+    normalized_payment_type = _normalize_transaction_payment_type(payment_type)
     discount_value = float(discount or 0)
     subtotal = sum(item["quantity"] * item["unit_price"] for item in normalized_items)
     total = max(0.0, subtotal - discount_value)
@@ -229,7 +809,7 @@ def _persist_transaction(
         "user_id": user_id,
         "total": total,
         "discount": discount_value,
-        "payment_type": payment_type or "cash",
+        "payment_type": normalized_payment_type,
         "notes": notes,
         "synced": synced,
     }
@@ -271,6 +851,133 @@ def _persist_transaction(
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_password_reset_request_columns():
+    try:
+        with engine.begin() as connection:
+            existing_columns = {
+                row["name"]
+                for row in connection.execute(text("PRAGMA table_info(password_reset_requests)")).mappings()
+            }
+            if "review_note" not in existing_columns:
+                connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN review_note TEXT"))
+            if "appeal_reason" not in existing_columns:
+                connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appeal_reason TEXT"))
+            if "appealed_at" not in existing_columns:
+                connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appealed_at DATETIME"))
+            if "appeal_review_note" not in existing_columns:
+                connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appeal_review_note TEXT"))
+            if "appeal_reviewed_at" not in existing_columns:
+                connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appeal_reviewed_at DATETIME"))
+            connection.execute(text(
+                "UPDATE password_reset_requests SET status = 'declined' WHERE status = 'denied'"
+            ))
+            connection.execute(text(
+                "UPDATE password_reset_requests SET status = 'used' WHERE status = 'completed'"
+            ))
+    except Exception:
+        try:
+            with engine.begin() as connection:
+                try:
+                    connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN review_note TEXT"))
+                except Exception:
+                    pass
+                try:
+                    connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appeal_reason TEXT"))
+                except Exception:
+                    pass
+                try:
+                    connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appealed_at DATETIME"))
+                except Exception:
+                    pass
+                try:
+                    connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appeal_review_note TEXT"))
+                except Exception:
+                    pass
+                try:
+                    connection.execute(text("ALTER TABLE password_reset_requests ADD COLUMN appeal_reviewed_at DATETIME"))
+                except Exception:
+                    pass
+                try:
+                    connection.execute(text(
+                        "UPDATE password_reset_requests SET status = 'declined' WHERE status = 'denied'"
+                    ))
+                except Exception:
+                    pass
+                try:
+                    connection.execute(text(
+                        "UPDATE password_reset_requests SET status = 'used' WHERE status = 'completed'"
+                    ))
+                except Exception:
+                    pass
+        except Exception as exc:
+            print(f"Password reset request column setup skipped: {exc}")
+
+
+def _ensure_authenticator_recovery_request_columns():
+    try:
+        with engine.begin() as connection:
+            existing_columns = {
+                row["name"]
+                for row in connection.execute(text("PRAGMA table_info(authenticator_recovery_requests)")).mappings()
+            }
+            if not existing_columns:
+                return
+            if "reason" not in existing_columns:
+                connection.execute(text(
+                    "ALTER TABLE authenticator_recovery_requests ADD COLUMN reason TEXT DEFAULT '' NOT NULL"
+                ))
+            if "review_note" not in existing_columns:
+                connection.execute(text("ALTER TABLE authenticator_recovery_requests ADD COLUMN review_note TEXT"))
+            if "appeal_reason" not in existing_columns:
+                connection.execute(text("ALTER TABLE authenticator_recovery_requests ADD COLUMN appeal_reason TEXT"))
+            if "appealed_at" not in existing_columns:
+                connection.execute(text("ALTER TABLE authenticator_recovery_requests ADD COLUMN appealed_at DATETIME"))
+            if "appeal_review_note" not in existing_columns:
+                connection.execute(text("ALTER TABLE authenticator_recovery_requests ADD COLUMN appeal_review_note TEXT"))
+            if "appeal_reviewed_at" not in existing_columns:
+                connection.execute(text("ALTER TABLE authenticator_recovery_requests ADD COLUMN appeal_reviewed_at DATETIME"))
+            connection.execute(text(
+                "UPDATE authenticator_recovery_requests SET status = 'declined' WHERE status = 'denied'"
+            ))
+            connection.execute(text(
+                "UPDATE authenticator_recovery_requests SET status = 'used' WHERE status = 'completed'"
+            ))
+    except Exception:
+        try:
+            with engine.begin() as connection:
+                for statement in (
+                    "ALTER TABLE authenticator_recovery_requests ADD COLUMN reason TEXT DEFAULT '' NOT NULL",
+                    "ALTER TABLE authenticator_recovery_requests ADD COLUMN review_note TEXT",
+                    "ALTER TABLE authenticator_recovery_requests ADD COLUMN appeal_reason TEXT",
+                    "ALTER TABLE authenticator_recovery_requests ADD COLUMN appealed_at DATETIME",
+                    "ALTER TABLE authenticator_recovery_requests ADD COLUMN appeal_review_note TEXT",
+                    "ALTER TABLE authenticator_recovery_requests ADD COLUMN appeal_reviewed_at DATETIME",
+                ):
+                    try:
+                        connection.execute(text(statement))
+                    except Exception:
+                        pass
+                try:
+                    connection.execute(text(
+                        "UPDATE authenticator_recovery_requests SET status = 'declined' WHERE status = 'denied'"
+                    ))
+                except Exception:
+                    pass
+                try:
+                    connection.execute(text(
+                        "UPDATE authenticator_recovery_requests SET status = 'used' WHERE status = 'completed'"
+                    ))
+                except Exception:
+                    pass
+        except Exception as exc:
+            print(f"Authenticator recovery request column setup skipped: {exc}")
+
+
+_ensure_password_reset_request_columns()
+_ensure_authenticator_recovery_request_columns()
+
 
 app = FastAPI(
     title="SmartCanteen",
@@ -432,6 +1139,459 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
     }
 
 
+@app.post("/auth/authenticator/verify", include_in_schema=False)
+@app.post("/api/auth/authenticator/verify", tags=["Auth"])
+def authenticator_authentication_verify(
+    data: schemas.AuthenticatorAuthenticationFinishRequest,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    token_payload = auth.decode_mfa_token(data.mfa_token, purpose="authenticator_setup")
+    user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+    secret = token_payload.get("totp_secret")
+    if not secret:
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+    recovery_request_id = token_payload.get("authenticator_recovery_request_id")
+    recovery_request = None
+    if recovery_request_id is not None:
+        try:
+            recovery_request_pk = int(recovery_request_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Invalid or expired authenticator recovery approval")
+        recovery_request = (
+            db.query(models.AuthenticatorRecoveryRequest)
+            .filter(models.AuthenticatorRecoveryRequest.id == recovery_request_pk)
+            .first()
+        )
+        if not recovery_request or recovery_request.user_id != user.id:
+            raise HTTPException(status_code=401, detail="Invalid or expired authenticator recovery approval")
+        if _expire_authenticator_recovery_request_if_needed(recovery_request):
+            db.commit()
+            raise HTTPException(status_code=400, detail="This authenticator recovery approval has expired")
+        if _effective_authenticator_recovery_status(recovery_request) not in AUTHENTICATOR_RECOVERY_APPROVED_STATUSES:
+            raise HTTPException(status_code=400, detail="No approved authenticator recovery request is available")
+
+    counter = _verify_authenticator_code(secret, data.code)
+    now = datetime.utcnow()
+    user.authenticator_secret = secret
+    user.authenticator_enabled = True
+    user.authenticator_last_counter = counter
+    recovery_codes = _replace_user_recovery_codes(db, user)
+
+    if recovery_request:
+        recovery_request.status = "used"
+        recovery_request.completed_at = now
+        recovery_request.expires_at = None
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="AUTHENTICATOR_RECOVERY_COMPLETED",
+            details="User successfully re-enrolled authenticator after admin approval",
+            request=req,
+        )
+
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="LOGIN",
+        details="Successful login after authenticator recovery setup",
+        request=req,
+    )
+    db.commit()
+
+    token = auth.create_access_token({"sub": user.username})
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "authenticator_mfa_verified": True,
+        "recovery_codes": recovery_codes,
+        "recovery_codes_remaining": len(recovery_codes),
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "role": user.role,
+            "authenticator_mfa_enabled": True,
+            "recovery_codes_remaining": len(recovery_codes),
+            "remembered_devices_active": 0,
+        },
+    }
+
+
+@app.post("/auth/authenticator-recovery/request", include_in_schema=False)
+@app.post("/api/auth/authenticator-recovery/request", tags=["Auth"])
+def request_authenticator_recovery(
+    data: schemas.AuthenticatorRecoveryRequestCreate,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _authenticator_recovery_identifier_from_payload(data)
+    reason = _authenticator_recovery_reason_from_payload(data)
+    normalized_identifier = identifier.lower()
+    user = _find_user_by_authenticator_recovery_identifier(db, identifier)
+    response_payload = {"message": AUTHENTICATOR_RECOVERY_REQUEST_SENT_MESSAGE}
+
+    if user and user.is_active:
+        existing_request = (
+            db.query(models.AuthenticatorRecoveryRequest)
+            .filter(
+                models.AuthenticatorRecoveryRequest.user_id == user.id,
+                models.AuthenticatorRecoveryRequest.status.in_(
+                    tuple(AUTHENTICATOR_RECOVERY_OPEN_STATUSES | {"declined", "appeal_declined"})
+                ),
+            )
+            .order_by(models.AuthenticatorRecoveryRequest.requested_at.desc())
+            .first()
+        )
+
+        existing_status = _effective_authenticator_recovery_status(existing_request) if existing_request else None
+        if existing_request and existing_status in (
+            AUTHENTICATOR_RECOVERY_APPROVED_STATUSES | {"pending", "appealed", "declined", "appeal_declined"}
+        ):
+            existing_request.identifier = identifier
+            existing_request.normalized_identifier = normalized_identifier
+            response_payload = _serialize_authenticator_recovery_status(existing_request)
+        elif existing_request:
+            existing_request.identifier = identifier
+            existing_request.normalized_identifier = normalized_identifier
+            existing_request.reason = reason
+            existing_request.status = "pending"
+            existing_request.requested_at = datetime.utcnow()
+            existing_request.reviewed_at = None
+            existing_request.completed_at = None
+            existing_request.expires_at = None
+            existing_request.reviewer_id = None
+            existing_request.review_note = None
+            existing_request.appeal_reason = None
+            existing_request.appealed_at = None
+            existing_request.appeal_review_note = None
+            existing_request.appeal_reviewed_at = None
+        else:
+            db.add(models.AuthenticatorRecoveryRequest(
+                user_id=user.id,
+                identifier=identifier,
+                normalized_identifier=normalized_identifier,
+                reason=reason,
+                status="pending",
+            ))
+
+    _add_audit_log(
+        db,
+        user_id=user.id if user else None,
+        action="AUTHENTICATOR_RECOVERY_REQUESTED",
+        details=f"Authenticator recovery requested for identifier: {identifier}",
+        request=req,
+    )
+    db.commit()
+    return response_payload
+
+
+@app.post(
+    "/auth/authenticator-recovery/status",
+    include_in_schema=False,
+    response_model=schemas.AuthenticatorRecoveryStatusResponse,
+)
+@app.post(
+    "/api/auth/authenticator-recovery/status",
+    response_model=schemas.AuthenticatorRecoveryStatusResponse,
+    tags=["Auth"],
+)
+def check_authenticator_recovery_status(
+    data: schemas.AuthenticatorRecoveryStatusCheck,
+    db: Session = Depends(get_db),
+):
+    identifier = _authenticator_recovery_identifier_from_payload(data)
+    recovery_request = _get_latest_authenticator_recovery_request_for_identifier(db, identifier)
+    if not recovery_request:
+        raise HTTPException(
+            status_code=404,
+            detail=AUTHENTICATOR_RECOVERY_STATUS_MESSAGES["none"],
+        )
+    if _expire_authenticator_recovery_request_if_needed(recovery_request):
+        db.commit()
+        db.refresh(recovery_request)
+    return _serialize_authenticator_recovery_status(recovery_request)
+
+
+@app.post("/auth/authenticator-recovery/appeal", include_in_schema=False)
+@app.post(
+    "/api/auth/authenticator-recovery/appeal",
+    response_model=schemas.AuthenticatorRecoveryStatusResponse,
+    tags=["Auth"],
+)
+def appeal_authenticator_recovery(
+    data: schemas.AuthenticatorRecoveryAppealCreate,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _authenticator_recovery_identifier_from_payload(data)
+    recovery_request = _get_latest_authenticator_recovery_request_for_identifier(db, identifier)
+    if not recovery_request:
+        raise HTTPException(status_code=404, detail=AUTHENTICATOR_RECOVERY_STATUS_MESSAGES["none"])
+
+    status = _effective_authenticator_recovery_status(recovery_request)
+    if status == "appealed":
+        raise HTTPException(status_code=400, detail="An appeal is already pending admin review")
+    if status != "declined":
+        raise HTTPException(status_code=400, detail="Only declined authenticator recovery requests can be appealed")
+
+    recovery_request.identifier = identifier
+    recovery_request.normalized_identifier = identifier.lower()
+    recovery_request.status = "appealed"
+    recovery_request.appeal_reason = _authenticator_recovery_appeal_reason_from_payload(data)
+    recovery_request.appealed_at = datetime.utcnow()
+    recovery_request.appeal_review_note = None
+    recovery_request.appeal_reviewed_at = None
+    recovery_request.expires_at = None
+
+    _add_audit_log(
+        db,
+        user_id=recovery_request.user_id,
+        action="AUTHENTICATOR_RECOVERY_APPEALED",
+        details=f"Authenticator recovery appeal submitted for identifier: {identifier}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(recovery_request)
+    return _serialize_authenticator_recovery_status(recovery_request)
+
+
+@app.post("/auth/authenticator-recovery/setup", include_in_schema=False)
+@app.post("/api/auth/authenticator-recovery/setup", tags=["Auth"])
+def start_authenticator_recovery_setup(
+    data: schemas.AuthenticatorRecoverySetupStart,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _authenticator_recovery_identifier_from_payload(data)
+    user = _find_user_by_authenticator_recovery_identifier(db, identifier)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="No approved authenticator recovery request is available")
+
+    recovery_request = (
+        db.query(models.AuthenticatorRecoveryRequest)
+        .filter(
+            models.AuthenticatorRecoveryRequest.user_id == user.id,
+            models.AuthenticatorRecoveryRequest.status.in_(tuple(AUTHENTICATOR_RECOVERY_APPROVED_STATUSES)),
+        )
+        .order_by(
+            models.AuthenticatorRecoveryRequest.appeal_reviewed_at.desc(),
+            models.AuthenticatorRecoveryRequest.reviewed_at.desc(),
+            models.AuthenticatorRecoveryRequest.requested_at.desc(),
+        )
+        .first()
+    )
+    if not recovery_request:
+        raise HTTPException(status_code=400, detail="No approved authenticator recovery request is available")
+    if _expire_authenticator_recovery_request_if_needed(recovery_request):
+        db.commit()
+        raise HTTPException(status_code=400, detail="This authenticator recovery approval has expired")
+
+    response = _begin_authenticator_setup(
+        user,
+        extra={
+            "authenticator_recovery": True,
+            "authenticator_recovery_request_id": recovery_request.id,
+        },
+    )
+    response["message"] = AUTHENTICATOR_RECOVERY_STATUS_MESSAGES[_effective_authenticator_recovery_status(recovery_request)]
+
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="AUTHENTICATOR_RECOVERY_SETUP_STARTED",
+        details="User started approved authenticator recovery setup",
+        request=req,
+    )
+    db.commit()
+    return response
+
+
+@app.post("/auth/password-reset/request", include_in_schema=False)
+@app.post("/api/auth/password-reset/request", tags=["Auth"])
+def request_password_reset(
+    data: schemas.PasswordResetRequestCreate,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _password_reset_identifier_from_payload(data)
+    normalized_identifier = identifier.lower()
+    user = _find_user_by_reset_identifier(db, identifier)
+    response_payload = {"message": PASSWORD_RESET_REQUEST_SENT_MESSAGE}
+
+    if user and user.is_active:
+        existing_request = (
+            db.query(models.PasswordResetRequest)
+            .filter(
+                models.PasswordResetRequest.user_id == user.id,
+                models.PasswordResetRequest.status.in_(
+                    tuple(PASSWORD_RESET_OPEN_STATUSES | {"declined", "appeal_declined"})
+                ),
+            )
+            .order_by(models.PasswordResetRequest.requested_at.desc())
+            .first()
+        )
+
+        existing_status = _effective_password_reset_status(existing_request) if existing_request else None
+        if existing_request and existing_status in PASSWORD_RESET_APPROVED_STATUSES:
+            existing_request.identifier = identifier
+            existing_request.normalized_identifier = normalized_identifier
+            response_payload = _serialize_password_reset_status(existing_request)
+        elif existing_request and existing_status in {"declined", "appealed", "appeal_declined"}:
+            existing_request.identifier = identifier
+            existing_request.normalized_identifier = normalized_identifier
+            response_payload = _serialize_password_reset_status(existing_request)
+        elif existing_request:
+            existing_request.identifier = identifier
+            existing_request.normalized_identifier = normalized_identifier
+            existing_request.status = "pending"
+            existing_request.requested_at = datetime.utcnow()
+            existing_request.reviewed_at = None
+            existing_request.completed_at = None
+            existing_request.expires_at = None
+            existing_request.reviewer_id = None
+            existing_request.review_note = None
+            existing_request.appeal_reason = None
+            existing_request.appealed_at = None
+            existing_request.appeal_review_note = None
+            existing_request.appeal_reviewed_at = None
+        else:
+            db.add(models.PasswordResetRequest(
+                user_id=user.id,
+                identifier=identifier,
+                normalized_identifier=normalized_identifier,
+                status="pending",
+            ))
+
+    _add_audit_log(
+        db,
+        user_id=user.id if user else None,
+        action="PASSWORD_RESET_REQUESTED",
+        details=f"Password reset requested for identifier: {identifier}",
+        request=req,
+    )
+    db.commit()
+    return response_payload
+
+
+@app.post(
+    "/auth/password-reset/status",
+    include_in_schema=False,
+    response_model=schemas.PasswordResetStatusResponse,
+)
+@app.post(
+    "/api/auth/password-reset/status",
+    response_model=schemas.PasswordResetStatusResponse,
+    tags=["Auth"],
+)
+def check_password_reset_status(
+    data: schemas.PasswordResetRequestCreate,
+    db: Session = Depends(get_db),
+):
+    identifier = _password_reset_identifier_from_payload(data)
+    reset_request = _get_latest_password_reset_request_for_identifier(db, identifier)
+    if not reset_request:
+        raise HTTPException(
+            status_code=404,
+            detail=PASSWORD_RESET_STATUS_MESSAGES["none"],
+        )
+    if _expire_password_reset_request_if_needed(reset_request):
+        db.commit()
+        db.refresh(reset_request)
+    return _serialize_password_reset_status(reset_request)
+
+
+@app.post("/auth/password-reset/appeal", include_in_schema=False)
+@app.post(
+    "/api/auth/password-reset/appeal",
+    response_model=schemas.PasswordResetStatusResponse,
+    tags=["Auth"],
+)
+def appeal_password_reset(
+    data: schemas.PasswordResetAppealCreate,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _password_reset_identifier_from_payload(data)
+    reset_request = _get_latest_password_reset_request_for_identifier(db, identifier)
+    if not reset_request:
+        raise HTTPException(status_code=404, detail=PASSWORD_RESET_STATUS_MESSAGES["none"])
+
+    status = _effective_password_reset_status(reset_request)
+    if status == "appealed":
+        raise HTTPException(status_code=400, detail="An appeal is already pending admin review")
+    if status != "declined":
+        raise HTTPException(status_code=400, detail="Only declined password reset requests can be appealed")
+
+    reset_request.identifier = identifier
+    reset_request.normalized_identifier = identifier.lower()
+    reset_request.status = "appealed"
+    reset_request.appeal_reason = _password_reset_appeal_reason_from_payload(data)
+    reset_request.appealed_at = datetime.utcnow()
+    reset_request.appeal_review_note = None
+    reset_request.appeal_reviewed_at = None
+    reset_request.expires_at = None
+
+    _add_audit_log(
+        db,
+        user_id=reset_request.user_id,
+        action="PASSWORD_RESET_APPEALED",
+        details=f"Password reset appeal submitted for identifier: {identifier}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(reset_request)
+    return _serialize_password_reset_status(reset_request)
+
+
+@app.post("/auth/password-reset/complete", include_in_schema=False)
+@app.post("/api/auth/password-reset/complete", tags=["Auth"])
+def complete_password_reset(
+    data: schemas.PasswordResetComplete,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    identifier = _password_reset_identifier_from_payload(data)
+    user = _find_user_by_reset_identifier(db, identifier)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="No approved password reset request is available")
+
+    reset_request = (
+        db.query(models.PasswordResetRequest)
+        .filter(
+            models.PasswordResetRequest.user_id == user.id,
+            models.PasswordResetRequest.status.in_(tuple(PASSWORD_RESET_APPROVED_STATUSES)),
+        )
+        .order_by(models.PasswordResetRequest.reviewed_at.desc(), models.PasswordResetRequest.requested_at.desc())
+        .first()
+    )
+    if not reset_request:
+        raise HTTPException(status_code=400, detail="No approved password reset request is available")
+    if _expire_password_reset_request_if_needed(reset_request):
+        db.commit()
+        raise HTTPException(status_code=400, detail="This password reset approval has expired")
+
+    password = _validate_user_password(data.new_password)
+    user.password_hash = auth.get_password_hash(password)
+    reset_request.status = "used"
+    reset_request.completed_at = datetime.utcnow()
+    reset_request.expires_at = None
+
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="PASSWORD_RESET_COMPLETED",
+        details="User changed password after admin approval",
+        request=req,
+    )
+    db.commit()
+    return {"message": "Password changed. Sign in with your new password."}
+
+
 @app.post("/auth/register", include_in_schema=False)
 @app.post("/api/auth/register", tags=["Auth"])
 def register(
@@ -470,7 +1630,442 @@ def me(current: models.User = Depends(auth.get_current_user)):
             "full_name": current.full_name, "role": current.role}
 
 
+@app.get("/account/notices", include_in_schema=False)
+@app.get("/api/account/notices", tags=["Account"])
+def get_account_notices(
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    reset_request = (
+        db.query(models.PasswordResetRequest)
+        .filter(models.PasswordResetRequest.user_id == current.id)
+        .order_by(models.PasswordResetRequest.requested_at.desc())
+        .first()
+    )
+    recovery_request = (
+        db.query(models.AuthenticatorRecoveryRequest)
+        .filter(models.AuthenticatorRecoveryRequest.user_id == current.id)
+        .order_by(models.AuthenticatorRecoveryRequest.requested_at.desc())
+        .first()
+    )
+
+    notices = []
+    changed = False
+    if reset_request and _expire_password_reset_request_if_needed(reset_request):
+        changed = True
+    if recovery_request and _expire_authenticator_recovery_request_if_needed(recovery_request):
+        changed = True
+    if changed:
+        db.commit()
+        if reset_request:
+            db.refresh(reset_request)
+        if recovery_request:
+            db.refresh(recovery_request)
+
+    if reset_request:
+        notices.append(_serialize_password_reset_account_notice(reset_request))
+    if recovery_request:
+        notices.append(_serialize_authenticator_recovery_account_notice(recovery_request))
+
+    return notices
+
+
+@app.get(
+    "/api/admin/password-reset-requests",
+    response_model=List[schemas.PasswordResetRequestResponse],
+    tags=["Admin"],
+)
+def list_password_reset_requests(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_admin),
+):
+    query = db.query(models.PasswordResetRequest)
+    normalized_status = _normalize_password_reset_status(status or "")
+    if normalized_status and normalized_status != "all":
+        if normalized_status == "expired":
+            query = query.filter(or_(
+                models.PasswordResetRequest.status == "expired",
+                and_(
+                    models.PasswordResetRequest.status.in_(tuple(PASSWORD_RESET_APPROVED_STATUSES)),
+                    models.PasswordResetRequest.expires_at <= datetime.utcnow(),
+                ),
+            ))
+        else:
+            query = query.filter(models.PasswordResetRequest.status == normalized_status)
+
+    reset_requests = (
+        query
+        .order_by(models.PasswordResetRequest.requested_at.desc())
+        .limit(100)
+        .all()
+    )
+
+    expired_changed = False
+    for reset_request in reset_requests:
+        expired_changed = _expire_password_reset_request_if_needed(reset_request) or expired_changed
+    if expired_changed:
+        db.commit()
+
+    return [_serialize_password_reset_request(db, reset_request) for reset_request in reset_requests]
+
+
+@app.post(
+    "/api/admin/password-reset-requests/{request_id}/approve",
+    response_model=schemas.PasswordResetRequestResponse,
+    tags=["Admin"],
+)
+def approve_password_reset_request(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    reset_request = _get_password_reset_request_or_404(db, request_id)
+    _expire_password_reset_request_if_needed(reset_request)
+    if reset_request.status not in {"pending", "expired"}:
+        raise HTTPException(status_code=400, detail="Only open reset requests can be approved")
+
+    user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="This account is not active")
+
+    now = datetime.utcnow()
+    reset_request.status = "approved"
+    reset_request.reviewed_at = now
+    reset_request.completed_at = None
+    reset_request.expires_at = now + timedelta(minutes=PASSWORD_RESET_APPROVAL_EXPIRE_MINUTES)
+    reset_request.reviewer_id = current.id
+    reset_request.review_note = _normalize_password_reset_note(data.note if data else None)
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PASSWORD_RESET_APPROVED",
+        details=f"Approved password reset for {user.username}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(reset_request)
+    return _serialize_password_reset_request(db, reset_request)
+
+
+@app.post(
+    "/api/admin/password-reset-requests/{request_id}/appeal/approve",
+    response_model=schemas.PasswordResetRequestResponse,
+    tags=["Admin"],
+)
+def approve_password_reset_appeal(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    reset_request = _get_password_reset_request_or_404(db, request_id)
+    _expire_password_reset_request_if_needed(reset_request)
+    if _normalize_password_reset_status(reset_request.status) != "appealed":
+        raise HTTPException(status_code=400, detail="Only appealed reset requests can be appeal-approved")
+
+    user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="This account is not active")
+
+    now = datetime.utcnow()
+    reset_request.status = "appeal_approved"
+    reset_request.appeal_reviewed_at = now
+    reset_request.appeal_review_note = _normalize_password_reset_note(data.note if data else None)
+    reset_request.completed_at = None
+    reset_request.expires_at = now + timedelta(minutes=PASSWORD_RESET_APPROVAL_EXPIRE_MINUTES)
+    reset_request.reviewer_id = current.id
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PASSWORD_RESET_APPEAL_APPROVED",
+        details=f"Approved password reset appeal for {user.username}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(reset_request)
+    return _serialize_password_reset_request(db, reset_request)
+
+
+@app.post(
+    "/api/admin/password-reset-requests/{request_id}/appeal/deny",
+    response_model=schemas.PasswordResetRequestResponse,
+    tags=["Admin"],
+)
+def deny_password_reset_appeal(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    reset_request = _get_password_reset_request_or_404(db, request_id)
+    _expire_password_reset_request_if_needed(reset_request)
+    if _normalize_password_reset_status(reset_request.status) != "appealed":
+        raise HTTPException(status_code=400, detail="Only appealed reset requests can be appeal-declined")
+
+    user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    now = datetime.utcnow()
+    reset_request.status = "appeal_declined"
+    reset_request.appeal_reviewed_at = now
+    reset_request.appeal_review_note = _normalize_password_reset_note(data.note if data else None)
+    reset_request.expires_at = None
+    reset_request.reviewer_id = current.id
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PASSWORD_RESET_APPEAL_DECLINED",
+        details=f"Declined password reset appeal for {user.username if user else reset_request.identifier}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(reset_request)
+    return _serialize_password_reset_request(db, reset_request)
+
+
+@app.post(
+    "/api/admin/password-reset-requests/{request_id}/deny",
+    response_model=schemas.PasswordResetRequestResponse,
+    tags=["Admin"],
+)
+def deny_password_reset_request(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    reset_request = _get_password_reset_request_or_404(db, request_id)
+    _expire_password_reset_request_if_needed(reset_request)
+    if reset_request.status not in {"pending", "approved", "expired"}:
+        raise HTTPException(status_code=400, detail="This reset request has already been closed")
+
+    user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
+    now = datetime.utcnow()
+    reset_request.status = "declined"
+    reset_request.reviewed_at = now
+    reset_request.expires_at = None
+    reset_request.reviewer_id = current.id
+    reset_request.review_note = _normalize_password_reset_note(data.note if data else None)
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PASSWORD_RESET_DECLINED",
+        details=f"Declined password reset for {user.username if user else reset_request.identifier}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(reset_request)
+    return _serialize_password_reset_request(db, reset_request)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
+@app.get(
+    "/api/admin/authenticator-recovery-requests",
+    response_model=List[schemas.AuthenticatorRecoveryRequestResponse],
+    tags=["Admin"],
+)
+def list_authenticator_recovery_requests(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_admin),
+):
+    query = db.query(models.AuthenticatorRecoveryRequest)
+    normalized_status = _normalize_authenticator_recovery_status(status or "")
+    if normalized_status and normalized_status != "all":
+        if normalized_status == "expired":
+            query = query.filter(or_(
+                models.AuthenticatorRecoveryRequest.status == "expired",
+                and_(
+                    models.AuthenticatorRecoveryRequest.status.in_(tuple(AUTHENTICATOR_RECOVERY_APPROVED_STATUSES)),
+                    models.AuthenticatorRecoveryRequest.expires_at <= datetime.utcnow(),
+                ),
+            ))
+        else:
+            query = query.filter(models.AuthenticatorRecoveryRequest.status == normalized_status)
+
+    recovery_requests = (
+        query
+        .order_by(models.AuthenticatorRecoveryRequest.requested_at.desc())
+        .limit(100)
+        .all()
+    )
+
+    expired_changed = False
+    for recovery_request in recovery_requests:
+        expired_changed = _expire_authenticator_recovery_request_if_needed(recovery_request) or expired_changed
+    if expired_changed:
+        db.commit()
+
+    return [
+        _serialize_authenticator_recovery_request(db, recovery_request)
+        for recovery_request in recovery_requests
+    ]
+
+
+@app.post(
+    "/api/admin/authenticator-recovery-requests/{request_id}/approve",
+    response_model=schemas.AuthenticatorRecoveryRequestResponse,
+    tags=["Admin"],
+)
+def approve_authenticator_recovery_request(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    recovery_request = _get_authenticator_recovery_request_or_404(db, request_id)
+    _expire_authenticator_recovery_request_if_needed(recovery_request)
+    if recovery_request.status not in {"pending", "expired"}:
+        raise HTTPException(status_code=400, detail="Only open authenticator recovery requests can be approved")
+
+    user = db.query(models.User).filter(models.User.id == recovery_request.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="This account is not active")
+
+    now = datetime.utcnow()
+    recovery_request.status = "approved"
+    recovery_request.reviewed_at = now
+    recovery_request.completed_at = None
+    recovery_request.expires_at = now + timedelta(minutes=AUTHENTICATOR_RECOVERY_APPROVAL_EXPIRE_MINUTES)
+    recovery_request.reviewer_id = current.id
+    recovery_request.review_note = _normalize_authenticator_recovery_note(data.note if data else None)
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="AUTHENTICATOR_RECOVERY_APPROVED",
+        details=f"Approved authenticator recovery for {user.username}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(recovery_request)
+    return _serialize_authenticator_recovery_request(db, recovery_request)
+
+
+@app.post(
+    "/api/admin/authenticator-recovery-requests/{request_id}/deny",
+    response_model=schemas.AuthenticatorRecoveryRequestResponse,
+    tags=["Admin"],
+)
+def deny_authenticator_recovery_request(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    recovery_request = _get_authenticator_recovery_request_or_404(db, request_id)
+    _expire_authenticator_recovery_request_if_needed(recovery_request)
+    if recovery_request.status not in {"pending", "approved", "expired"}:
+        raise HTTPException(status_code=400, detail="This authenticator recovery request has already been closed")
+
+    user = db.query(models.User).filter(models.User.id == recovery_request.user_id).first()
+    now = datetime.utcnow()
+    recovery_request.status = "declined"
+    recovery_request.reviewed_at = now
+    recovery_request.expires_at = None
+    recovery_request.reviewer_id = current.id
+    recovery_request.review_note = _normalize_authenticator_recovery_note(data.note if data else None)
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="AUTHENTICATOR_RECOVERY_DECLINED",
+        details=f"Declined authenticator recovery for {user.username if user else recovery_request.identifier}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(recovery_request)
+    return _serialize_authenticator_recovery_request(db, recovery_request)
+
+
+@app.post(
+    "/api/admin/authenticator-recovery-requests/{request_id}/appeal/approve",
+    response_model=schemas.AuthenticatorRecoveryRequestResponse,
+    tags=["Admin"],
+)
+def approve_authenticator_recovery_appeal(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    recovery_request = _get_authenticator_recovery_request_or_404(db, request_id)
+    _expire_authenticator_recovery_request_if_needed(recovery_request)
+    if _normalize_authenticator_recovery_status(recovery_request.status) != "appealed":
+        raise HTTPException(status_code=400, detail="Only appealed authenticator recovery requests can be appeal-approved")
+
+    user = db.query(models.User).filter(models.User.id == recovery_request.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="This account is not active")
+
+    now = datetime.utcnow()
+    recovery_request.status = "appeal_approved"
+    recovery_request.appeal_reviewed_at = now
+    recovery_request.appeal_review_note = _normalize_authenticator_recovery_note(data.note if data else None)
+    recovery_request.completed_at = None
+    recovery_request.expires_at = now + timedelta(minutes=AUTHENTICATOR_RECOVERY_APPROVAL_EXPIRE_MINUTES)
+    recovery_request.reviewer_id = current.id
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="AUTHENTICATOR_RECOVERY_APPEAL_APPROVED",
+        details=f"Approved authenticator recovery appeal for {user.username}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(recovery_request)
+    return _serialize_authenticator_recovery_request(db, recovery_request)
+
+
+@app.post(
+    "/api/admin/authenticator-recovery-requests/{request_id}/appeal/deny",
+    response_model=schemas.AuthenticatorRecoveryRequestResponse,
+    tags=["Admin"],
+)
+def deny_authenticator_recovery_appeal(
+    request_id: int,
+    req: Request,
+    data: Optional[schemas.PasswordResetReviewUpdate] = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    recovery_request = _get_authenticator_recovery_request_or_404(db, request_id)
+    _expire_authenticator_recovery_request_if_needed(recovery_request)
+    if _normalize_authenticator_recovery_status(recovery_request.status) != "appealed":
+        raise HTTPException(status_code=400, detail="Only appealed authenticator recovery requests can be appeal-declined")
+
+    user = db.query(models.User).filter(models.User.id == recovery_request.user_id).first()
+    now = datetime.utcnow()
+    recovery_request.status = "appeal_declined"
+    recovery_request.appeal_reviewed_at = now
+    recovery_request.appeal_review_note = _normalize_authenticator_recovery_note(data.note if data else None)
+    recovery_request.expires_at = None
+    recovery_request.reviewer_id = current.id
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="AUTHENTICATOR_RECOVERY_APPEAL_DECLINED",
+        details=f"Declined authenticator recovery appeal for {user.username if user else recovery_request.identifier}",
+        request=req,
+    )
+    db.commit()
+    db.refresh(recovery_request)
+    return _serialize_authenticator_recovery_request(db, recovery_request)
+
+
 # PRODUCTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

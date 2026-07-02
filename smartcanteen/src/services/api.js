@@ -1113,16 +1113,52 @@ export const API = {
   verifyAuthenticatorLogin,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
-  requestPasswordReset: (identifier) => request('POST', '/auth/password-reset/request', { identifier }),
+  requestPasswordReset: (usernameOrEmail) => request('POST', '/auth/password-reset/request', { usernameOrEmail }),
+  checkPasswordResetStatus: (usernameOrEmail) =>
+    request('POST', '/auth/password-reset/status', { usernameOrEmail }),
+  appealPasswordReset: ({ usernameOrEmail, identifier, reason, appeal_reason }) =>
+    request('POST', '/auth/password-reset/appeal', {
+      usernameOrEmail: usernameOrEmail || identifier,
+      reason: reason || appeal_reason,
+    }),
   completePasswordReset: (data) => request('POST', '/auth/password-reset/complete', data),
+  requestAuthenticatorRecovery: ({ usernameOrEmail, identifier, reason }) =>
+    request('POST', '/auth/authenticator-recovery/request', {
+      usernameOrEmail: usernameOrEmail || identifier,
+      reason,
+    }),
+  checkAuthenticatorRecoveryStatus: (usernameOrEmail) =>
+    request('POST', '/auth/authenticator-recovery/status', { usernameOrEmail }),
+  appealAuthenticatorRecovery: ({ usernameOrEmail, identifier, reason, appeal_reason }) =>
+    request('POST', '/auth/authenticator-recovery/appeal', {
+      usernameOrEmail: usernameOrEmail || identifier,
+      reason: reason || appeal_reason,
+    }),
+  startAuthenticatorRecoverySetup: (usernameOrEmail) =>
+    request('POST', '/auth/authenticator-recovery/setup', { usernameOrEmail }),
+  getAccountNotices: () => request('GET', '/account/notices'),
   regenerateRecoveryCodes: () => request('POST', '/auth/recovery-codes/regenerate'),
   getAdminUsers: () => request('GET', '/admin/users'),
   getPasswordResetRequests: (status = 'all') =>
     request('GET', `/admin/password-reset-requests${toQuery({ status })}`),
-  approvePasswordResetRequest: (requestId) =>
-    request('POST', `/admin/password-reset-requests/${requestId}/approve`),
-  denyPasswordResetRequest: (requestId) =>
-    request('POST', `/admin/password-reset-requests/${requestId}/deny`),
+  approvePasswordResetRequest: (requestId, data = {}) =>
+    request('POST', `/admin/password-reset-requests/${requestId}/approve`, data),
+  denyPasswordResetRequest: (requestId, data = {}) =>
+    request('POST', `/admin/password-reset-requests/${requestId}/deny`, data),
+  approvePasswordResetAppeal: (requestId, data = {}) =>
+    request('POST', `/admin/password-reset-requests/${requestId}/appeal/approve`, data),
+  denyPasswordResetAppeal: (requestId, data = {}) =>
+    request('POST', `/admin/password-reset-requests/${requestId}/appeal/deny`, data),
+  getAuthenticatorRecoveryRequests: (status = 'all') =>
+    request('GET', `/admin/authenticator-recovery-requests${toQuery({ status })}`),
+  approveAuthenticatorRecoveryRequest: (requestId, data = {}) =>
+    request('POST', `/admin/authenticator-recovery-requests/${requestId}/approve`, data),
+  denyAuthenticatorRecoveryRequest: (requestId, data = {}) =>
+    request('POST', `/admin/authenticator-recovery-requests/${requestId}/deny`, data),
+  approveAuthenticatorRecoveryAppeal: (requestId, data = {}) =>
+    request('POST', `/admin/authenticator-recovery-requests/${requestId}/appeal/approve`, data),
+  denyAuthenticatorRecoveryAppeal: (requestId, data = {}) =>
+    request('POST', `/admin/authenticator-recovery-requests/${requestId}/appeal/deny`, data),
   createAdminUser: (data) => request('POST', '/admin/users', data),
   updateAdminUser: (userId, data) => request('PUT', `/admin/users/${userId}`, data),
   deleteAdminUser: (userId) => request('DELETE', `/admin/users/${userId}`),

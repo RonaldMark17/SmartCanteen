@@ -107,27 +107,16 @@ def get_payment_summary(
     revenue_total = func.coalesce(func.sum(models.Transaction.total), 0).label("revenue")
     order_count = func.count(models.Transaction.id).label("count")
 
-    query = db.query(
-        func.coalesce(models.Transaction.payment_type, "cash").label("key"),
-        order_count,
-        revenue_total,
-    )
+    query = db.query(order_count, revenue_total)
     query = _apply_transaction_range(query, days, start_date, end_date)
+    row = query.one()
 
-    by_key = {
-        row.key if row.key in {"cash", "gcash"} else "cash": {
-            "key": row.key if row.key in {"cash", "gcash"} else "cash",
-            "label": "GCash" if row.key == "gcash" else "Cash",
-            "count": int(row.count or 0),
-            "revenue": round(float(row.revenue or 0), 2),
-        }
-        for row in query.group_by(func.coalesce(models.Transaction.payment_type, "cash")).all()
-    }
-
-    return [
-        by_key.get("cash", {"key": "cash", "label": "Cash", "count": 0, "revenue": 0.0}),
-        by_key.get("gcash", {"key": "gcash", "label": "GCash", "count": 0, "revenue": 0.0}),
-    ]
+    return [{
+        "key": "cash",
+        "label": "Cash",
+        "count": int(row.count or 0),
+        "revenue": round(float(row.revenue or 0), 2),
+    }]
 
 
 def get_hourly_heatmap(
