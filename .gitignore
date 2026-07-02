@@ -16,3 +16,4 @@ dist/
 smartcanteen/dist/
 
 *.log
+*.pyc
