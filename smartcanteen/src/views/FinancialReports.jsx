@@ -4,6 +4,7 @@ import {
   BanknotesIcon,
   CalendarDaysIcon,
   CheckIcon,
+  CircleStackIcon,
   ExclamationTriangleIcon,
   PencilSquareIcon,
   PlusIcon,
@@ -64,9 +65,31 @@ function downloadBlob(blob, filename) {
   window.URL.revokeObjectURL(url);
 }
 
+function getPhilippineYearMonth(now = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: 'numeric',
+    }).formatToParts(now);
+    const year = Number(parts.find((part) => part.type === 'year')?.value);
+    const month = Number(parts.find((part) => part.type === 'month')?.value);
+
+    if (Number.isFinite(year) && Number.isFinite(month)) {
+      return { year, month };
+    }
+  } catch {
+    // Fall back to the browser clock if the timezone formatter is unavailable.
+  }
+
+  return {
+    year: now.getFullYear(),
+    month: now.getMonth() + 1,
+  };
+}
+
 function buildSchoolYearSuggestion(now = new Date()) {
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
+  const { year, month } = getPhilippineYearMonth(now);
   const startYear = month >= 6 ? year : year - 1;
   return {
     startYear,
@@ -75,26 +98,53 @@ function buildSchoolYearSuggestion(now = new Date()) {
   };
 }
 
-function getNextSchoolYearStartYear(schoolYears, fallbackStartYear) {
-  const latestEndYear = Math.max(
-    0,
-    ...(schoolYears || []).map((schoolYear) => {
-      const endYear = Number(schoolYear.end_year);
-      const startYear = Number(schoolYear.start_year);
+const FUTURE_FINANCIAL_REPORT_MESSAGE = 'You cannot add a financial report for a future school year.';
+const CURRENT_FINANCIAL_REPORT_MESSAGE = 'Financial reports can only be saved for the current active school year.';
 
-      if (Number.isFinite(endYear) && endYear > 0) {
-        return endYear;
-      }
+function getSchoolYearBounds(schoolYear) {
+  const startYear = Number(schoolYear?.start_year ?? schoolYear?.startYear);
+  const rawEndYear = Number(schoolYear?.end_year ?? schoolYear?.endYear);
+  const endYear = Number.isFinite(rawEndYear) && rawEndYear > 0 ? rawEndYear : startYear + 1;
 
-      if (Number.isFinite(startYear) && startYear > 0) {
-        return startYear + 1;
-      }
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) {
+    return null;
+  }
 
-      return 0;
-    })
-  );
+  return { startYear, endYear };
+}
 
-  return latestEndYear || fallbackStartYear;
+function compareSchoolYears(schoolYear, currentSchoolYear) {
+  const selectedBounds = getSchoolYearBounds(schoolYear);
+  const currentBounds = getSchoolYearBounds(currentSchoolYear);
+
+  if (!selectedBounds || !currentBounds) {
+    return 0;
+  }
+
+  if (selectedBounds.startYear !== currentBounds.startYear) {
+    return selectedBounds.startYear > currentBounds.startYear ? 1 : -1;
+  }
+
+  if (selectedBounds.endYear !== currentBounds.endYear) {
+    return selectedBounds.endYear > currentBounds.endYear ? 1 : -1;
+  }
+
+  return 0;
+}
+
+function isCurrentSchoolYear(schoolYear, currentSchoolYear) {
+  return compareSchoolYears(schoolYear, currentSchoolYear) === 0;
+}
+
+function getSchoolYearValidationMessage(schoolYear, currentSchoolYear) {
+  const comparison = compareSchoolYears(schoolYear, currentSchoolYear);
+  if (comparison > 0) {
+    return FUTURE_FINANCIAL_REPORT_MESSAGE;
+  }
+  if (comparison < 0) {
+    return CURRENT_FINANCIAL_REPORT_MESSAGE;
+  }
+  return '';
 }
 
 const OPERATION_EXPENSE_FIELDS = [
@@ -372,12 +422,26 @@ export default function FinancialReports() {
   const [fundMonitoringEditing, setFundMonitoringEditing] = useState(false);
   const [creatingSchoolYear, setCreatingSchoolYear] = useState(false);
   const [deletingSchoolYear, setDeletingSchoolYear] = useState(false);
-  const nextSchoolYearStartYear = getNextSchoolYearStartYear(schoolYears, schoolYearSuggestion.startYear);
-  const nextSchoolYearLabel = `${nextSchoolYearStartYear}-${nextSchoolYearStartYear + 1}`;
+  const [backingUpDatabase, setBackingUpDatabase] = useState(false);
+  const currentSchoolYearLabel = schoolYearSuggestion.label;
+  const currentSchoolYearExists = schoolYears.some((schoolYear) =>
+    isCurrentSchoolYear(schoolYear, schoolYearSuggestion)
+  );
 
   const selectedReport =
     detail?.reports?.find((report) => report.id === selectedReportId) || detail?.reports?.[0] || null;
+  const selectedSchoolYear =
+    detail?.school_year ||
+    schoolYears.find((schoolYear) => Number(schoolYear.id) === Number(selectedSchoolYearId)) ||
+    null;
+  const selectedSchoolYearValidationMessage = getSchoolYearValidationMessage(
+    selectedSchoolYear,
+    schoolYearSuggestion
+  );
+  const canSaveSelectedSchoolYear = !selectedSchoolYearValidationMessage;
   const isJuneReport = Number(selectedReport?.month_index ?? -1) === 0;
+  const beginningCashLocked = Boolean(selectedReport?.beginning_cash_locked);
+  const beginningCashSource = selectedReport?.beginning_cash_source || '';
   const draftOperationExpensesTotal = sumOperationExpenseDraft(expenseDraft);
   const draftGrossIncome = toMoney(reportDraft.current_sales) - toMoney(reportDraft.cost_of_sales);
   const draftNetProfit = draftGrossIncome - draftOperationExpensesTotal;
@@ -441,11 +505,15 @@ export default function FinancialReports() {
       const normalizedSchoolYears = Array.isArray(schoolYearList) ? schoolYearList : [];
       const findSchoolYearId = (schoolYearId) =>
         normalizedSchoolYears.find((schoolYear) => Number(schoolYear.id) === Number(schoolYearId))?.id || null;
+      const currentSchoolYearId =
+        normalizedSchoolYears.find((schoolYear) => isCurrentSchoolYear(schoolYear, schoolYearSuggestion))?.id ||
+        null;
       setSchoolYears(normalizedSchoolYears);
 
       const nextSchoolYearId =
         findSchoolYearId(preferredSchoolYearId) ||
         findSchoolYearId(selectedSchoolYearId) ||
+        currentSchoolYearId ||
         normalizedSchoolYears.find((schoolYear) => schoolYear.is_active)?.id ||
         normalizedSchoolYears[0]?.id ||
         null;
@@ -521,9 +589,27 @@ export default function FinancialReports() {
   }
 
   async function handleCreateSchoolYear() {
+    if (!isAdmin) {
+      return;
+    }
+    if (currentSchoolYearExists) {
+      window.showToast?.(`School year ${currentSchoolYearLabel} already exists.`, 'warning');
+      return;
+    }
+
+    const startYear = schoolYearSuggestion.startYear;
+    const schoolYearToCreate = {
+      start_year: startYear,
+      end_year: startYear + 1,
+    };
+    const validationMessage = getSchoolYearValidationMessage(schoolYearToCreate, schoolYearSuggestion);
+    if (validationMessage) {
+      window.showToast?.(validationMessage, 'error');
+      return;
+    }
+
     setCreatingSchoolYear(true);
     try {
-      const startYear = nextSchoolYearStartYear;
       const response = await API.createFinancialSchoolYear({
         start_year: startYear,
         end_year: startYear + 1,
@@ -535,6 +621,27 @@ export default function FinancialReports() {
       window.showToast?.(error.message || 'Unable to create the school year.', 'error');
     } finally {
       setCreatingSchoolYear(false);
+    }
+  }
+
+  async function handleBackupDatabase() {
+    if (!isAdmin) {
+      return;
+    }
+
+    setBackingUpDatabase(true);
+    try {
+      const response = await API.backupFinancialDatabase();
+      window.showToast?.(
+        response?.filename
+          ? `Backup created: ${response.filename}`
+          : response?.message || 'Database backup created.',
+        'success'
+      );
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to create a database backup.', 'error');
+    } finally {
+      setBackingUpDatabase(false);
     }
   }
 
@@ -578,35 +685,102 @@ export default function FinancialReports() {
     if (!selectedReport?.id) {
       return;
     }
+    if (!canSaveSelectedSchoolYear) {
+      window.showToast?.(selectedSchoolYearValidationMessage, 'error');
+      return;
+    }
 
     setSavingReport(true);
     try {
-      await API.updateFinancialReport(selectedReport.id, {
-        beginning_cash_on_hand: toMoney(reportDraft.beginning_cash_on_hand),
+      const nextBeginningCash = beginningCashLocked
+        ? toMoney(selectedReport.default_inputs?.beginning_cash_on_hand ?? selectedReport.beginning_cash_on_hand)
+        : toMoney(reportDraft.beginning_cash_on_hand);
+      const reportPayload = {
         current_sales: toMoney(reportDraft.current_sales),
         other_income: 0,
         purchases: 0,
         inventory_used: 0,
         product_cost: toMoney(reportDraft.cost_of_sales),
-      });
-      await API.updateFinancialReportExpenses(
+      };
+
+      if (!beginningCashLocked) {
+        reportPayload.beginning_cash_on_hand = nextBeginningCash;
+      }
+
+      const reportResponse = await API.updateFinancialReport(selectedReport.id, reportPayload);
+      const nextExpenses = OPERATION_EXPENSE_FIELDS.map((field, index) => ({
+        category: field.category,
+        amount: toMoney(expenseDraft[field.key]),
+        sort_order: index,
+      }));
+      const expenseResponse = await API.updateFinancialReportExpenses(
         selectedReport.id,
-        OPERATION_EXPENSE_FIELDS.map((field, index) => ({
-          category: field.category,
-          amount: toMoney(expenseDraft[field.key]),
-          sort_order: index,
-        }))
+        nextExpenses
       );
-      await API.updateFinancialFundMonitoring(
+      const nextFundEntries = allocationDrafts.map((allocation) => ({
+        category_key: allocation.category_key,
+        expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
+        others: 0,
+      }));
+      const fundResponse = await API.updateFinancialFundMonitoring(
         selectedReport.id,
-        allocationDrafts.map((allocation) => ({
-          category_key: allocation.category_key,
-          expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
-          others: 0,
-        }))
+        nextFundEntries
       );
-      window.showToast?.(`${selectedReport.month_label} saved.`, 'success');
-      await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
+      const savedOffline = [reportResponse, expenseResponse, fundResponse].some(
+        (response) => response?.offline_queued
+      );
+
+      if (savedOffline) {
+        const nextEndingCash = nextBeginningCash + draftNetProfit;
+        const nextDetail = {
+          ...detail,
+          reports: (detail?.reports || []).map((report) => {
+            if (report.id !== selectedReport.id) {
+              return report;
+            }
+
+            return {
+              ...report,
+              beginning_cash_on_hand: nextBeginningCash,
+              current_sales: toMoney(reportDraft.current_sales),
+              other_income: 0,
+              purchases: 0,
+              inventory_used: 0,
+              product_cost: toMoney(reportDraft.cost_of_sales),
+              cost_of_sales: toMoney(reportDraft.cost_of_sales),
+              total_operating_expenses: draftOperationExpensesTotal,
+              total_expenses: draftTotalExpenses,
+              gross_income: draftGrossIncome,
+              net_profit: draftNetProfit,
+              ending_cash: nextEndingCash,
+              expenses: nextExpenses,
+              default_inputs: {
+                ...(report.default_inputs || {}),
+                beginning_cash_on_hand: nextBeginningCash,
+                current_sales: toMoney(reportDraft.current_sales),
+                cost_of_sales: toMoney(reportDraft.cost_of_sales),
+              },
+              allocations: (report.allocations || []).map((allocation) => ({
+                ...allocation,
+                amount:
+                  (draftNetProfit * toMoney(allocation.percentage)) / 100,
+                fund_expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
+                fund_others: 0,
+              })),
+            };
+          }),
+        };
+
+        setDetail(nextDetail);
+        API.cacheFinancialSchoolYearDetail(selectedSchoolYearId, nextDetail);
+        window.showToast?.(
+          `${selectedReport.month_label} saved on this device. It will sync when online.`,
+          'success'
+        );
+      } else {
+        window.showToast?.(`${selectedReport.month_label} saved.`, 'success');
+        await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
+      }
     } catch (error) {
       window.showToast?.(error.message || 'Unable to save report values.', 'error');
     } finally {
@@ -616,6 +790,10 @@ export default function FinancialReports() {
 
   async function handleSaveFundMonitoring() {
     if (!selectedReport?.id) {
+      return;
+    }
+    if (!canSaveSelectedSchoolYear) {
+      window.showToast?.(selectedSchoolYearValidationMessage, 'error');
       return;
     }
 
@@ -634,18 +812,44 @@ export default function FinancialReports() {
         );
       }
 
-      await API.updateFinancialFundMonitoring(
+      const nextFundEntries = allocationDrafts.map((allocation) => ({
+        category_key: allocation.category_key,
+        expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
+        others: 0,
+      }));
+      const fundResponse = await API.updateFinancialFundMonitoring(
         selectedReport.id,
-        allocationDrafts.map((allocation) => ({
-          category_key: allocation.category_key,
-          expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
-          others: 0,
-        }))
+        nextFundEntries
       );
 
-      window.showToast?.('Fund monitoring saved.', 'success');
       setFundMonitoringEditing(false);
-      await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
+      if (fundResponse?.offline_queued) {
+        const nextDetail = {
+          ...detail,
+          reports: (detail?.reports || []).map((report) =>
+            report.id === selectedReport.id
+              ? {
+                  ...report,
+                  allocations: (report.allocations || []).map((allocation) => ({
+                    ...allocation,
+                    fund_expenses: toMoney(fundExpenseDrafts[allocation.category_key]),
+                    fund_others: 0,
+                  })),
+                }
+              : report
+          ),
+        };
+
+        setDetail(nextDetail);
+        API.cacheFinancialSchoolYearDetail(selectedSchoolYearId, nextDetail);
+        window.showToast?.(
+          'Fund monitoring saved on this device. It will sync when online.',
+          'success'
+        );
+      } else {
+        window.showToast?.('Fund monitoring saved.', 'success');
+        await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
+      }
     } catch (error) {
       window.showToast?.(error.message || 'Unable to save fund monitoring values.', 'error');
     } finally {
@@ -726,7 +930,7 @@ export default function FinancialReports() {
                 className="primary-action-button"
               >
                 <PlusIcon className="h-4 w-4" />
-                {creatingSchoolYear ? 'Creating...' : `Create ${nextSchoolYearLabel}`}
+                {creatingSchoolYear ? 'Creating...' : `Create ${currentSchoolYearLabel}`}
               </button>
             ) : null
           }
@@ -747,7 +951,7 @@ export default function FinancialReports() {
         </div>
 
         <div className="panel-card">
-          <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${isAdmin ? 'xl:grid-cols-[minmax(0,1fr)_170px_160px_170px_150px]' : 'xl:grid-cols-[1fr_170px_160px]'}`}>
+          <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${isAdmin ? 'xl:grid-cols-[minmax(0,1fr)_170px_160px_170px_160px_150px]' : 'xl:grid-cols-[1fr_170px_160px]'}`}>
             <label className="flex min-w-0 flex-col gap-2">
               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">School Year</span>
               <select
@@ -767,12 +971,16 @@ export default function FinancialReports() {
               <button
                 type="button"
                 onClick={handleCreateSchoolYear}
-                disabled={creatingSchoolYear}
+                disabled={creatingSchoolYear || currentSchoolYearExists}
                 className="action-button h-11 w-full self-end whitespace-nowrap"
-                title={`Create ${nextSchoolYearLabel}`}
+                title={
+                  currentSchoolYearExists
+                    ? `School year ${currentSchoolYearLabel} already exists`
+                    : `Create ${currentSchoolYearLabel}`
+                }
               >
                 <PlusIcon className="h-4 w-4" />
-                {creatingSchoolYear ? 'Creating...' : 'New School Year'}
+                {creatingSchoolYear ? 'Creating...' : currentSchoolYearExists ? 'Current Year Exists' : 'New School Year'}
               </button>
             ) : null}
             <button
@@ -792,6 +1000,18 @@ export default function FinancialReports() {
               <PrinterIcon className="h-4 w-4" />
               Print Report
             </button>
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={handleBackupDatabase}
+                disabled={backingUpDatabase}
+                className="action-button h-11 w-full self-end whitespace-nowrap"
+                title="Create a local database backup"
+              >
+                <CircleStackIcon className="h-4 w-4" />
+                {backingUpDatabase ? 'Backing Up...' : 'Create Backup'}
+              </button>
+            ) : null}
             {isAdmin ? (
               <button
                 type="button"
@@ -846,6 +1066,18 @@ export default function FinancialReports() {
 
             {selectedReport ? (
               <div className="space-y-5">
+                {selectedSchoolYearValidationMessage ? (
+                  <div className="rounded-[16px] border border-red-200 bg-red-50/80 px-4 py-3 text-red-700 shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" />
+                      <div>
+                        <div className="text-sm font-black">School year not available for saving</div>
+                        <div className="mt-1 text-sm">{selectedSchoolYearValidationMessage}</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
                 {draftExpensesExceedSales ? (
                   <div className="rounded-[16px] border border-red-200 bg-red-50/80 px-4 py-3 text-red-700 shadow-sm">
                     <div className="flex items-start gap-3">
@@ -869,7 +1101,7 @@ export default function FinancialReports() {
                     <button
                       type="button"
                       onClick={handleSaveReport}
-                      disabled={savingReport}
+                      disabled={savingReport || !canSaveSelectedSchoolYear}
                       className="primary-action-button"
                     >
                       <ScaleIcon className="h-4 w-4" />
@@ -896,18 +1128,26 @@ export default function FinancialReports() {
                       label="Beginning Cash"
                       value={reportDraft.beginning_cash_on_hand}
                       onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
+                      disabled={!canSaveSelectedSchoolYear || beginningCashLocked}
                     />
                     <FormField
                       label="Current Sales"
                       value={reportDraft.current_sales}
                       onChange={(event) => updateReportDraft('current_sales', event.target.value)}
+                      disabled={!canSaveSelectedSchoolYear}
                     />
                     <FormField
                       label="Cost of Sales"
                       value={reportDraft.cost_of_sales}
                       onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
+                      disabled={!canSaveSelectedSchoolYear}
                     />
                   </div>
+                  {beginningCashLocked && beginningCashSource ? (
+                    <div className="mt-2 text-xs font-semibold text-slate-500">
+                      {beginningCashSource}
+                    </div>
+                  ) : null}
 
                   <div className="mt-6 rounded-[16px] border border-slate-200 bg-slate-50/70 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -924,6 +1164,7 @@ export default function FinancialReports() {
                           label={field.label}
                           value={expenseDraft[field.key]}
                           onChange={(event) => updateExpenseDraft(field.key, event.target.value)}
+                          disabled={!canSaveSelectedSchoolYear}
                         />
                       ))}
                     </div>
@@ -942,7 +1183,7 @@ export default function FinancialReports() {
                       <button
                         type="button"
                         onClick={() => setFundMonitoringEditing(true)}
-                        disabled={fundMonitoringEditing || savingFundMonitoring}
+                        disabled={fundMonitoringEditing || savingFundMonitoring || !canSaveSelectedSchoolYear}
                         className="action-button w-full sm:w-auto"
                       >
                         <PencilSquareIcon className="h-4 w-4" />
@@ -951,7 +1192,7 @@ export default function FinancialReports() {
                       <button
                         type="button"
                         onClick={handleSaveFundMonitoring}
-                        disabled={!fundMonitoringEditing || savingFundMonitoring}
+                        disabled={!fundMonitoringEditing || savingFundMonitoring || !canSaveSelectedSchoolYear}
                         className="primary-action-button w-full sm:w-auto"
                       >
                         <CheckIcon className="h-4 w-4" />
@@ -989,8 +1230,10 @@ export default function FinancialReports() {
                                 isJuneReport &&
                                 isAdmin &&
                                 fundMonitoringEditing &&
-                                allocationIndex >= 0;
-                              const canEditFundExpense = row.editableFundExpense && fundMonitoringEditing;
+                                allocationIndex >= 0 &&
+                                canSaveSelectedSchoolYear;
+                              const canEditFundExpense =
+                                row.editableFundExpense && fundMonitoringEditing && canSaveSelectedSchoolYear;
 
                               return (
                                 <div key={`${row.key}-mobile-${fund.category_key}`} className="py-3">
@@ -1059,8 +1302,13 @@ export default function FinancialReports() {
                             </td>
                             {fundMonitoringFunds.map((fund) => {
                               const canEditJuneOpeningBalance =
-                                row.editableForJuneOpeningBalance && isJuneReport && isAdmin && fundMonitoringEditing;
-                              const canEditFundExpense = row.editableFundExpense && fundMonitoringEditing;
+                                row.editableForJuneOpeningBalance &&
+                                isJuneReport &&
+                                isAdmin &&
+                                fundMonitoringEditing &&
+                                canSaveSelectedSchoolYear;
+                              const canEditFundExpense =
+                                row.editableFundExpense && fundMonitoringEditing && canSaveSelectedSchoolYear;
 
                               return (
                                 <td

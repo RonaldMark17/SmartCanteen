@@ -1,11 +1,16 @@
 import { Capacitor } from '@capacitor/core';
 import {
+  countOfflineFinancialMutations,
   countOfflineTransactions,
+  countPendingOfflineChanges,
   getApiCacheEntry,
   getLatestApiCacheEntry,
+  getOfflineFinancialMutations,
   getOfflineTransactions,
+  removeOfflineFinancialMutations,
   removeOfflineTransactions,
   saveApiCacheEntry,
+  saveOfflineFinancialMutation,
   saveOfflineLoginProfile,
 } from './offlineStore';
 import { safeLocalStorageSetItem, safeLocalStorageSetJson } from './storage';
@@ -401,6 +406,24 @@ function isCacheableRequest(method, path) {
   );
 }
 
+function isOfflineQueueableFinancialMutation(method, path) {
+  const normalizedMethod = String(method || '').toUpperCase();
+  const normalizedPath = String(path || '');
+
+  return (
+    normalizedMethod === 'PUT' &&
+    /^\/financial-reports\/reports\/\d+(?:\/expenses|\/fund-monitoring)?$/.test(normalizedPath)
+  );
+}
+
+function queueOfflineFinancialMutation(method, path, body) {
+  saveOfflineFinancialMutation({ method, path, body });
+  return {
+    offline_queued: true,
+    message: 'Saved on this device and queued for synchronization.',
+  };
+}
+
 function canUseLatestCacheFallback(path) {
   const normalizedPath = String(path || '');
   const isDateFilteredAnalytics =
@@ -591,6 +614,10 @@ async function performRequest(method, path, body = null) {
       }
     }
 
+    if (isOfflineQueueableFinancialMutation(method, path)) {
+      return queueOfflineFinancialMutation(method, path, body);
+    }
+
     throw new OfflineError(
       cacheable
         ? 'Offline mode is active. Connect once to refresh this data.'
@@ -604,6 +631,10 @@ async function performRequest(method, path, body = null) {
       if (cached !== null) {
         return cached;
       }
+    }
+
+    if (isOfflineQueueableFinancialMutation(method, path)) {
+      return queueOfflineFinancialMutation(method, path, body);
     }
 
     throw new OfflineError(
@@ -653,6 +684,10 @@ async function performRequest(method, path, body = null) {
         if (cached !== null) {
           return cached;
         }
+      }
+
+      if (isOfflineQueueableFinancialMutation(method, path)) {
+        return queueOfflineFinancialMutation(method, path, body);
       }
 
       throw buildConnectionError(apiBase, error);
@@ -891,6 +926,19 @@ async function primeOfflineData({ role } = {}) {
       ),
   ];
 
+  if (role === 'admin' || role === 'staff') {
+    jobs.push(async () => {
+      const schoolYears = await request('GET', '/financial-reports/school-years');
+      const availableSchoolYears = Array.isArray(schoolYears) ? schoolYears : [];
+      await Promise.all(
+        availableSchoolYears.map((schoolYear) =>
+          request('GET', `/financial-reports/school-years/${schoolYear.id}`)
+        )
+      );
+      return availableSchoolYears.length;
+    });
+  }
+
   if (role === 'admin') {
     jobs.push(() => request('GET', '/audit-logs'));
   }
@@ -934,6 +982,57 @@ async function syncPendingOfflineTransactions() {
   }
 
   return { synced, queued: countOfflineTransactions(), errors };
+}
+
+async function syncPendingOfflineFinancialMutations() {
+  if (!isOnline()) {
+    return {
+      synced: 0,
+      queued: countOfflineFinancialMutations(),
+      errors: [],
+    };
+  }
+
+  const queue = getOfflineFinancialMutations();
+  if (queue.length === 0) {
+    return { synced: 0, queued: 0, errors: [] };
+  }
+
+  let synced = 0;
+  const errors = [];
+
+  for (const entry of queue) {
+    try {
+      const result = await performRequest(entry.method, entry.path, entry.body);
+      if (result === null || result?.offline_queued) {
+        break;
+      }
+      removeOfflineFinancialMutations([entry.id]);
+      synced += 1;
+    } catch (error) {
+      errors.push(error.message || 'Offline financial report sync failed.');
+      break;
+    }
+  }
+
+  return {
+    synced,
+    queued: countOfflineFinancialMutations(),
+    errors,
+  };
+}
+
+async function syncPendingOfflineChanges() {
+  const transactionResult = await syncPendingOfflineTransactions();
+  const financialResult = await syncPendingOfflineFinancialMutations();
+
+  return {
+    synced: transactionResult.synced + financialResult.synced,
+    queued: countPendingOfflineChanges(),
+    transactionSynced: transactionResult.synced,
+    financialSynced: financialResult.synced,
+    errors: [...transactionResult.errors, ...financialResult.errors],
+  };
 }
 
 async function completeAuthenticatedLoginResponse(response, password, { rememberDevice = false, username = '' } = {}) {
@@ -1078,6 +1177,12 @@ export const API = {
   createFinancialSchoolYear: (data) => request('POST', '/financial-reports/school-years', data),
   deleteFinancialSchoolYear: (schoolYearId) => request('DELETE', `/financial-reports/school-years/${schoolYearId}`),
   getFinancialSchoolYearDetail: (schoolYearId) => request('GET', `/financial-reports/school-years/${schoolYearId}`),
+  cacheFinancialSchoolYearDetail: (schoolYearId, data) =>
+    saveApiCacheEntry({
+      method: 'GET',
+      path: `/financial-reports/school-years/${schoolYearId}`,
+      data,
+    }),
   updateFinancialReport: (reportId, data) => request('PUT', `/financial-reports/reports/${reportId}`, data),
   updateFinancialReportExpenses: (reportId, expenses) =>
     request('PUT', `/financial-reports/reports/${reportId}/expenses`, { expenses }),
@@ -1095,4 +1200,5 @@ export const API = {
   health: () => request('GET', '/health'),
   primeOfflineData,
   syncPendingTransactions: syncPendingOfflineTransactions,
+  syncPendingChanges: syncPendingOfflineChanges,
 };

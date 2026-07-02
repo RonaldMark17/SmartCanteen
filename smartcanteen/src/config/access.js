@@ -1,6 +1,6 @@
 export const ROLE_DEFAULT_ROUTES = {
   admin: '/dashboard',
-  staff: '/inventory',
+  staff: '/financial-reports',
   cashier: '/pos',
 };
 

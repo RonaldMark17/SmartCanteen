@@ -37,7 +37,7 @@ import {
   sendLowStockDeviceAlert,
   stopBackgroundAlertChecks,
 } from '../services/deviceAlerts';
-import { OFFLINE_QUEUE_EVENT, countOfflineTransactions } from '../services/offlineStore';
+import { OFFLINE_QUEUE_EVENT, countPendingOfflineChanges } from '../services/offlineStore';
 import { ALERT_REFRESH_EVENT, connectRealtimeAlertStream } from '../services/realtimeAlerts';
 import { getAllowedRolesForPath, getDefaultRoute } from '../config/access';
 
@@ -428,7 +428,7 @@ export default function Layout({ children, onLogout }) {
   const [alertReadVersion, setAlertReadVersion] = useState(0);
   const [alertPermission, setAlertPermission] = useState('prompt');
   const [lastAlertCheck, setLastAlertCheck] = useState(null);
-  const [pendingSyncCount, setPendingSyncCount] = useState(countOfflineTransactions());
+  const [pendingSyncCount, setPendingSyncCount] = useState(countPendingOfflineChanges());
   const [workspaceRefreshing, setWorkspaceRefreshing] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const alertsRequestInFlightRef = useRef(false);
@@ -438,7 +438,7 @@ export default function Layout({ children, onLogout }) {
 
   const user = getStoredUser();
 
-  const navItems = [
+  const baseNavItems = [
     { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
@@ -449,6 +449,13 @@ export default function Layout({ children, onLogout }) {
     { name: 'Audit Log', path: '/audit', icon: ShieldCheckIcon },
     { name: 'Manage Accounts', path: '/accounts', icon: UserGroupIcon },
   ];
+  const navItems =
+    user.role === 'staff'
+      ? [
+          baseNavItems.find((item) => item.path === '/financial-reports'),
+          ...baseNavItems.filter((item) => item.path !== '/financial-reports'),
+        ]
+      : baseNavItems;
 
   const visibleNavItems = navItems.filter((item) =>
     getAllowedRolesForPath(item.path).includes(user.role)
@@ -739,18 +746,18 @@ export default function Layout({ children, onLogout }) {
   }, [loadHighDemandAlerts, loadLowStockAlerts, syncAlertStateWithServer]);
 
   const refreshOfflineData = useCallback(async ({ showSyncToast = false } = {}) => {
-    setPendingSyncCount(countOfflineTransactions());
+    setPendingSyncCount(countPendingOfflineChanges());
 
     if (!navigator.onLine) {
       return;
     }
 
     try {
-      const syncResult = await API.syncPendingTransactions();
+      const syncResult = await API.syncPendingChanges();
       setPendingSyncCount(syncResult.queued);
 
       if (showSyncToast && syncResult.synced > 0) {
-        window.showToast?.(`Synced ${syncResult.synced} offline transaction(s).`, 'success');
+        window.showToast?.(`Synced ${syncResult.synced} offline change(s).`, 'success');
       }
 
       await API.primeOfflineData({ role: user.role });
@@ -758,7 +765,7 @@ export default function Layout({ children, onLogout }) {
         await loadAlertData({ notifyOnChange: true });
       }
     } catch {
-      setPendingSyncCount(countOfflineTransactions());
+      setPendingSyncCount(countPendingOfflineChanges());
     }
   }, [loadAlertData, user.role]);
 
@@ -1047,7 +1054,7 @@ export default function Layout({ children, onLogout }) {
     };
 
     const handleOfflineQueueChange = (event) => {
-      setPendingSyncCount(event.detail?.count ?? countOfflineTransactions());
+      setPendingSyncCount(event.detail?.count ?? countPendingOfflineChanges());
     };
 
     const handleAlertRefreshRequest = () => {
@@ -2020,7 +2027,7 @@ export default function Layout({ children, onLogout }) {
               >
                 <>
                   The app is showing the last synced data saved on this device.
-                  {pendingSyncCount > 0 ? ` ${pendingSyncCount} transaction(s) are waiting to sync.` : ''}
+                  {pendingSyncCount > 0 ? ` ${pendingSyncCount} change(s) are waiting to sync.` : ''}
                 </>
               </DismissibleAlert>
             )}

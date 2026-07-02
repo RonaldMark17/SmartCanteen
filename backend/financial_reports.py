@@ -65,6 +65,11 @@ EXPENSE_CELL_BY_CATEGORY = {
 }
 FUND_MONITORING_COLUMNS = ("B", "C", "D", "E", "F", "G")
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+FUTURE_FINANCIAL_REPORT_ERROR = "You cannot add a financial report for a future school year."
+CURRENT_FINANCIAL_REPORT_ERROR = "Financial reports can only be saved for the current active school year."
+BEGINNING_CASH_CARRY_FORWARD_ERROR = (
+    "Beginning cash is system-generated from the previous school year's final current balance."
+)
 DEMO_BEGINNING_CASH_ON_HAND = 11834.59
 DEMO_MONTHLY_REPORT_ROWS = [
     {
@@ -222,6 +227,40 @@ def _format_school_year_name(start_year: int, end_year: int) -> str:
     return f"{int(start_year)}-{int(end_year)}"
 
 
+def _resolve_current_active_school_year_bounds() -> tuple[int, int]:
+    today = get_ph_today()
+    start_year = today.year if today.month >= 6 else today.year - 1
+    return start_year, start_year + 1
+
+
+def _compare_school_year_to_current(start_year: int, end_year: int) -> int:
+    current_start_year, current_end_year = _resolve_current_active_school_year_bounds()
+    selected_bounds = (int(start_year), int(end_year))
+    current_bounds = (current_start_year, current_end_year)
+
+    if selected_bounds > current_bounds:
+        return 1
+    if selected_bounds < current_bounds:
+        return -1
+    return 0
+
+
+def _validate_current_active_school_year(start_year: int, end_year: int) -> None:
+    comparison = _compare_school_year_to_current(start_year, end_year)
+    if comparison > 0:
+        raise HTTPException(status_code=400, detail=FUTURE_FINANCIAL_REPORT_ERROR)
+    if comparison < 0:
+        raise HTTPException(status_code=400, detail=CURRENT_FINANCIAL_REPORT_ERROR)
+
+
+def _validate_school_year_write_allowed(school_year: models.SchoolYear) -> None:
+    _validate_current_active_school_year(school_year.start_year, school_year.end_year)
+
+
+def _school_year_is_future(school_year: models.SchoolYear) -> bool:
+    return _compare_school_year_to_current(school_year.start_year, school_year.end_year) > 0
+
+
 def _round_money(value) -> float:
     return round(float(value or 0.0), 2)
 
@@ -305,6 +344,9 @@ def _ensure_school_year_defaults(db: Session, school_year: models.SchoolYear) ->
         if _create_default_expenses(db, report):
             changed = True
 
+    if _apply_beginning_cash_carry_forward(db, school_year):
+        changed = True
+
     if changed:
         db.flush()
 
@@ -337,17 +379,11 @@ def clear_financial_reporting_tables(db: Session) -> None:
     db.flush()
 
 
-def _resolve_demo_school_year_bounds() -> tuple[int, int]:
-    today = get_ph_today()
-    start_year = today.year if today.month >= 6 else today.year - 1
-    return start_year, start_year + 1
-
-
 def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
     if reset:
         clear_financial_reporting_tables(db)
 
-    start_year, end_year = _resolve_demo_school_year_bounds()
+    start_year, end_year = _resolve_current_active_school_year_bounds()
     school_year_name = _format_school_year_name(start_year, end_year)
     existing_school_years = int(db.query(models.SchoolYear).count())
     school_year = (
@@ -371,12 +407,24 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
         .order_by(models.SchoolYear.updated_at.desc(), models.SchoolYear.id.desc())
         .first()
     )
+    active_school_year_is_current = (
+        bool(active_school_year)
+        and _compare_school_year_to_current(
+            active_school_year.start_year,
+            active_school_year.end_year,
+        )
+        == 0
+    )
 
-    if not reset and active_school_year and not _school_year_has_report_values(active_school_year):
+    if not reset and active_school_year_is_current and not _school_year_has_report_values(active_school_year):
         school_year = active_school_year
         school_year_name = active_school_year.name
     elif school_year and not reset and _school_year_has_report_values(school_year):
-        if active_school_year and active_school_year.id != school_year.id and not _school_year_has_report_values(active_school_year):
+        if (
+            active_school_year_is_current
+            and active_school_year.id != school_year.id
+            and not _school_year_has_report_values(active_school_year)
+        ):
             school_year = active_school_year
             school_year_name = active_school_year.name
         else:
@@ -827,6 +875,7 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
         )
         for report in reports
     ]
+    beginning_cash_carry_forward = _get_beginning_cash_carry_forward(db, school_year)
 
     previous_report = None
     previous_fund_balances: dict[str, float] = {
@@ -850,6 +899,24 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
         report["default_inputs"] = default_inputs
         report["auto_fill_applied_by_default"] = False
         report["fund_previous_balance_total"] = previous_balance_total
+        report["beginning_cash_locked"] = False
+        report["beginning_cash_source"] = None
+        report["beginning_cash_carry_forward"] = None
+
+        if int(report["month_index"]) == 0 and beginning_cash_carry_forward:
+            carry_forward_amount = _round_money(beginning_cash_carry_forward["amount"])
+            carry_forward_source = (
+                f'Auto-carried from {beginning_cash_carry_forward["source_school_year_name"]} '
+                f'final Current Balance total ({beginning_cash_carry_forward["source_month_label"]})'
+            )
+            report["beginning_cash_locked"] = True
+            report["beginning_cash_source"] = carry_forward_source
+            report["beginning_cash_carry_forward"] = beginning_cash_carry_forward
+            auto_inputs["beginning_cash_on_hand"] = {
+                "value": carry_forward_amount,
+                "source": carry_forward_source,
+            }
+            default_inputs["beginning_cash_on_hand"] = carry_forward_amount
 
         if previous_report:
             report["comparison"] = {
@@ -882,6 +949,156 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
         "reports": serialized_reports,
         "dashboard": _build_dashboard(serialized_reports, allocations),
     }
+
+
+def _load_previous_school_year(
+    db: Session,
+    school_year: models.SchoolYear,
+) -> Optional[models.SchoolYear]:
+    previous_school_year = (
+        db.query(models.SchoolYear)
+        .options(
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.fund_entries),
+            joinedload(models.SchoolYear.allocations),
+        )
+        .filter(
+            models.SchoolYear.start_year == int(school_year.start_year) - 1,
+            models.SchoolYear.end_year == int(school_year.start_year),
+        )
+        .first()
+    )
+    if previous_school_year:
+        return previous_school_year
+
+    return (
+        db.query(models.SchoolYear)
+        .options(
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.expenses),
+            joinedload(models.SchoolYear.monthly_reports).joinedload(models.MonthlyReport.fund_entries),
+            joinedload(models.SchoolYear.allocations),
+        )
+        .filter(
+            models.SchoolYear.id != school_year.id,
+            models.SchoolYear.end_year <= int(school_year.start_year),
+        )
+        .order_by(
+            models.SchoolYear.end_year.desc(),
+            models.SchoolYear.start_year.desc(),
+            models.SchoolYear.id.desc(),
+        )
+        .first()
+    )
+
+
+def _calculate_school_year_final_current_balance(
+    db: Session,
+    school_year: models.SchoolYear,
+) -> Optional[dict]:
+    reports = sorted(school_year.monthly_reports, key=lambda item: item.month_index)
+    if not reports:
+        return None
+
+    allocations = sorted(school_year.allocations, key=lambda item: (item.sort_order, item.id))
+    last_report_payload = None
+
+    if not allocations:
+        for report in reports:
+            last_report_payload = _serialize_report(
+                report,
+                allocations,
+                current_sales_override=_get_report_transaction_sales(db, report),
+            )
+        if not last_report_payload:
+            return None
+        return {
+            "amount": _round_money(last_report_payload["ending_cash"]),
+            "month_label": last_report_payload["month_label"],
+            "school_year_name": school_year.name,
+        }
+
+    previous_fund_balances: dict[str, float] = {
+        str(allocation.category_key or "").strip(): _round_money(
+            getattr(allocation, "opening_balance", 0.0)
+        )
+        for allocation in allocations
+    }
+    final_balance = 0.0
+
+    for report in reports:
+        report_payload = _serialize_report(
+            report,
+            allocations,
+            current_sales_override=_get_report_transaction_sales(db, report),
+        )
+        previous_fund_balances = _calculate_next_fund_balances(
+            report_payload,
+            allocations,
+            previous_fund_balances,
+        )
+        final_balance = _fund_balance_total(allocations, previous_fund_balances)
+        last_report_payload = report_payload
+
+    if not last_report_payload:
+        return None
+
+    return {
+        "amount": _round_money(final_balance),
+        "month_label": last_report_payload["month_label"],
+        "school_year_name": school_year.name,
+    }
+
+
+def _get_beginning_cash_carry_forward(
+    db: Session,
+    school_year: models.SchoolYear,
+) -> Optional[dict]:
+    previous_school_year = _load_previous_school_year(db, school_year)
+    if not previous_school_year:
+        return None
+
+    carry_forward = _calculate_school_year_final_current_balance(db, previous_school_year)
+    if not carry_forward:
+        return None
+
+    return {
+        "amount": _round_money(carry_forward["amount"]),
+        "source_school_year_name": carry_forward["school_year_name"],
+        "source_month_label": carry_forward["month_label"],
+    }
+
+
+def _apply_beginning_cash_carry_forward(
+    db: Session,
+    school_year: models.SchoolYear,
+) -> bool:
+    carry_forward = _get_beginning_cash_carry_forward(db, school_year)
+    if not carry_forward:
+        return False
+
+    first_report = next(
+        (report for report in school_year.monthly_reports if int(report.month_index or 0) == 0),
+        None,
+    )
+    if not first_report:
+        return False
+
+    carry_forward_amount = _round_money(carry_forward["amount"])
+    if _round_money(first_report.beginning_cash_on_hand) == carry_forward_amount:
+        return False
+
+    first_report.beginning_cash_on_hand = carry_forward_amount
+    return True
+
+
+def _get_report_beginning_cash_carry_forward(
+    db: Session,
+    report: models.MonthlyReport,
+) -> Optional[dict]:
+    if int(report.month_index or 0) != 0 or not report.school_year:
+        return None
+
+    return _get_beginning_cash_carry_forward(db, report.school_year)
 
 
 def _build_school_year_summary(db: Session, school_year: models.SchoolYear) -> dict:
@@ -929,7 +1146,7 @@ def _ensure_and_reload_school_year(db: Session, school_year_id: int) -> models.S
     if not school_year:
         raise HTTPException(status_code=404, detail="School year not found")
 
-    if _ensure_school_year_defaults(db, school_year):
+    if not _school_year_is_future(school_year) and _ensure_school_year_defaults(db, school_year):
         db.commit()
         school_year = _load_school_year(db, school_year_id)
 
@@ -1186,7 +1403,7 @@ def list_school_years(
 
     summaries = []
     for school_year in school_years:
-        if _ensure_school_year_defaults(db, school_year):
+        if not _school_year_is_future(school_year) and _ensure_school_year_defaults(db, school_year):
             db.commit()
             school_year = _load_school_year(db, school_year.id)
         summaries.append(_build_school_year_summary(db, school_year))
@@ -1206,6 +1423,8 @@ def create_school_year(
 
     if end_year <= start_year:
         raise HTTPException(status_code=400, detail="End year must be after the start year")
+
+    _validate_current_active_school_year(start_year, end_year)
 
     school_year_name = _format_school_year_name(start_year, end_year)
     existing = db.query(models.SchoolYear).filter(models.SchoolYear.name == school_year_name).first()
@@ -1312,13 +1531,23 @@ def update_report(
     )
     if not report:
         raise HTTPException(status_code=404, detail="Monthly report not found")
+    _validate_school_year_write_allowed(report.school_year)
 
+    carry_forward = _get_report_beginning_cash_carry_forward(db, report)
     updates = payload.model_dump(exclude_unset=True)
+    if carry_forward and "beginning_cash_on_hand" in updates:
+        if _round_money(updates["beginning_cash_on_hand"]) != _round_money(carry_forward["amount"]):
+            raise HTTPException(status_code=400, detail=BEGINNING_CASH_CARRY_FORWARD_ERROR)
+        updates.pop("beginning_cash_on_hand", None)
+
     for field_name, value in updates.items():
         if field_name == "notes":
             setattr(report, field_name, value or "")
         else:
             setattr(report, field_name, _round_money(value))
+
+    if carry_forward:
+        report.beginning_cash_on_hand = _round_money(carry_forward["amount"])
 
     _audit_log(
         db,
@@ -1370,6 +1599,7 @@ def replace_report_expenses(
     )
     if not report:
         raise HTTPException(status_code=404, detail="Monthly report not found")
+    _validate_school_year_write_allowed(report.school_year)
 
     for expense in list(report.expenses):
         db.delete(expense)
@@ -1450,6 +1680,7 @@ def replace_report_fund_monitoring(
     )
     if not report:
         raise HTTPException(status_code=404, detail="Monthly report not found")
+    _validate_school_year_write_allowed(report.school_year)
 
     for entry in list(report.fund_entries):
         db.delete(entry)
@@ -1512,6 +1743,7 @@ def replace_allocations(
     current: models.User = Depends(auth.require_admin),
 ):
     school_year = _ensure_and_reload_school_year(db, school_year_id)
+    _validate_school_year_write_allowed(school_year)
 
     for allocation in list(school_year.allocations):
         db.delete(allocation)

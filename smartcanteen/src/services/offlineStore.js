@@ -2,6 +2,7 @@ import { safeLocalStorageSetJson } from './storage';
 
 const API_CACHE_STORAGE_KEY = 'sc_api_cache_v1';
 const OFFLINE_TRANSACTIONS_STORAGE_KEY = 'sc_offline_transactions_v1';
+const OFFLINE_FINANCIAL_MUTATIONS_STORAGE_KEY = 'sc_offline_financial_mutations_v1';
 const OFFLINE_LOGIN_STORAGE_KEY = 'sc_offline_login_v1';
 export const OFFLINE_QUEUE_EVENT = 'sc-offline-queue-changed';
 
@@ -77,7 +78,11 @@ function emitOfflineQueueChanged() {
 
   window.dispatchEvent(
     new CustomEvent(OFFLINE_QUEUE_EVENT, {
-      detail: { count: countOfflineTransactions() },
+      detail: {
+        count: countPendingOfflineChanges(),
+        transactions: countOfflineTransactions(),
+        financialChanges: countOfflineFinancialMutations(),
+      },
     })
   );
 }
@@ -218,6 +223,78 @@ export function removeOfflineTransactions(ids) {
 
 export function countOfflineTransactions() {
   return readJson(OFFLINE_TRANSACTIONS_STORAGE_KEY, []).length;
+}
+
+export function saveOfflineFinancialMutation({ method, path, body }) {
+  const queue = readJson(OFFLINE_FINANCIAL_MUTATIONS_STORAGE_KEY, []);
+  const normalizedMethod = String(method || 'PUT').toUpperCase();
+  const normalizedPath = String(path || '');
+  const namespace = getCurrentUserNamespace();
+  const now = new Date().toISOString();
+  const existingEntry = queue.find(
+    (entry) =>
+      entry.namespace === namespace &&
+      entry.method === normalizedMethod &&
+      entry.path === normalizedPath
+  );
+  const id =
+    existingEntry?.id ||
+    (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `financial-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+
+  const nextEntry = {
+    id,
+    namespace,
+    method: normalizedMethod,
+    path: normalizedPath,
+    body,
+    createdAt: existingEntry?.createdAt || now,
+    updatedAt: now,
+  };
+  const nextQueue = [
+    ...queue.filter(
+      (entry) =>
+        !(
+          entry.namespace === namespace &&
+          entry.method === normalizedMethod &&
+          entry.path === normalizedPath
+        )
+    ),
+    nextEntry,
+  ].sort(
+    (left, right) =>
+      new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+  );
+
+  writeJson(OFFLINE_FINANCIAL_MUTATIONS_STORAGE_KEY, nextQueue);
+  emitOfflineQueueChanged();
+  return nextEntry;
+}
+
+export function getOfflineFinancialMutations() {
+  const namespace = getCurrentUserNamespace();
+  return readJson(OFFLINE_FINANCIAL_MUTATIONS_STORAGE_KEY, []).filter(
+    (entry) => entry.namespace === namespace
+  );
+}
+
+export function removeOfflineFinancialMutations(ids) {
+  const idSet = new Set(ids);
+  const queue = readJson(OFFLINE_FINANCIAL_MUTATIONS_STORAGE_KEY, []);
+  writeJson(
+    OFFLINE_FINANCIAL_MUTATIONS_STORAGE_KEY,
+    queue.filter((entry) => !idSet.has(entry.id))
+  );
+  emitOfflineQueueChanged();
+}
+
+export function countOfflineFinancialMutations() {
+  return getOfflineFinancialMutations().length;
+}
+
+export function countPendingOfflineChanges() {
+  return countOfflineTransactions() + countOfflineFinancialMutations();
 }
 
 export async function saveOfflineLoginProfile({ user, password }) {
