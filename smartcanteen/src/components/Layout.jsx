@@ -1257,7 +1257,7 @@ export default function Layout({ children, onLogout }) {
     ? 'border-slate-900/80 bg-slate-950 text-slate-300 shadow-slate-950/20'
     : 'border-slate-200 bg-white text-slate-600 shadow-slate-200/70';
   const sidebarBrandTitleClass = darkMode ? 'text-white' : 'text-slate-950';
-  const sidebarBrandMetaClass = darkMode ? 'text-violet-300' : 'text-primary';
+  const sidebarBrandMetaClass = darkMode ? 'text-teal-300' : 'text-primary';
   const sidebarSectionLabelClass = darkMode ? 'text-slate-500' : 'text-slate-400';
   const sidebarFooterClass = darkMode ? 'border-slate-800/70' : 'border-slate-200';
   const sidebarLogoutClass = darkMode
@@ -1270,26 +1270,26 @@ export default function Layout({ children, onLogout }) {
   const getSidebarNavLinkClass = (active) => {
     if (active) {
       return darkMode
-        ? 'border-white/10 bg-gradient-to-r from-violet-600 to-primary text-white shadow-lg shadow-primary/25'
+        ? 'border-teal-400/45 bg-teal-400/[0.12] text-white shadow-none'
         : 'border-primary/20 bg-fuchsia-50 text-slate-950 shadow-sm shadow-primary/10';
     }
 
     return darkMode
-      ? 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+      ? 'border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-800 hover:text-slate-50'
       : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
   };
 
   const getSidebarIconClass = (active) => {
     if (active) {
-      return darkMode ? 'text-white' : 'text-primary';
+      return darkMode ? 'text-teal-300' : 'text-primary';
     }
 
-    return darkMode ? 'text-slate-500 group-hover:text-violet-300' : 'text-slate-400 group-hover:text-primary';
+    return darkMode ? 'text-slate-500 group-hover:text-teal-300' : 'text-slate-400 group-hover:text-primary';
   };
 
   const getSidebarDescriptionClass = (active) => {
     if (active) {
-      return darkMode ? 'text-violet-100/80' : 'text-primary/80';
+      return darkMode ? 'text-teal-200' : 'text-primary/80';
     }
 
     return darkMode ? 'text-slate-500' : 'text-slate-400';
@@ -1359,12 +1359,13 @@ export default function Layout({ children, onLogout }) {
                   key={item.name}
                   to={item.path}
                   title={sidebarCollapsed ? item.name : undefined}
-                  className={`group relative flex items-center rounded-2xl border py-3 transition-all duration-200 ${getSidebarNavLinkClass(active)} ${
-                    sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-3.5'
+                  aria-current={active ? 'page' : undefined}
+                  className={`sidebar-item ${active ? 'sidebar-item-active' : ''} group relative flex items-center rounded-2xl border py-3 transition-all duration-200 ${getSidebarNavLinkClass(active)} ${
+                    sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-3.5 pr-8'
                   }`}
                 >
                   <item.icon
-                    className={`h-5 w-5 shrink-0 stroke-[1.8] ${
+                    className={`sidebar-icon h-5 w-5 shrink-0 stroke-[1.8] ${
                       getSidebarIconClass(active)
                     }`}
                   />
@@ -1376,10 +1377,14 @@ export default function Layout({ children, onLogout }) {
                           {getNavDescription(item.path)}
                         </span>
                       </span>
-                      {active && (
-                        <span className={`h-2 w-2 rounded-full ${darkMode ? 'bg-white/80' : 'bg-primary'}`} />
-                      )}
                     </>
+                  )}
+                  {active && (
+                    <span
+                      className={`sidebar-active-dot absolute h-2 w-2 rounded-full ${
+                        sidebarCollapsed ? 'right-2 top-2' : 'right-3 top-1/2 -translate-y-1/2'
+                      } ${darkMode ? 'bg-teal-400 shadow-[0_0_0_4px_rgba(20,184,166,0.14)]' : 'bg-primary'}`}
+                    />
                   )}
                 </Link>
               );
@@ -1937,72 +1942,58 @@ export default function Layout({ children, onLogout }) {
               type="button"
               aria-label="Close profile menu"
               onClick={() => setProfileOpen(false)}
-              className="fixed inset-0 z-[80] cursor-default bg-slate-950/10 backdrop-blur-[1px]"
+              className="notification-dismiss-layer profile-dismiss-layer fixed inset-x-0 bottom-0 top-16 z-[80] cursor-default bg-transparent"
             />
             <div
-              className={`profile-popover fixed right-4 top-16 z-[90] w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border shadow-2xl sm:right-6 ${
-                darkMode
-                  ? 'border-slate-800 bg-slate-950 text-slate-100 shadow-black/50'
-                  : 'border-slate-200 bg-white text-slate-900'
-              }`}
+              className="profile-dropdown profile-popover fixed inset-x-3 top-16 z-[90] overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 md:inset-x-auto md:right-6 md:w-80"
             >
-              <div
-                className={`profile-popover-head border-b px-3 py-3 ${
-                  darkMode ? 'border-slate-800 bg-slate-900' : 'border-slate-100 bg-slate-50'
-                }`}
-              >
+              <div className="profile-popover-head notification-panel-head border-b border-slate-100 px-4 py-3">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-white">
+                  <div className="profile-menu-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
                     {userInitials}
                   </div>
                   <div className="min-w-0">
-                    <div className={`truncate text-sm font-black ${darkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+                    <div className="truncate text-sm font-semibold text-slate-900">
                       {displayName}
                     </div>
-                    <div className="mt-1 text-[10px] font-black uppercase tracking-widest text-primary">
+                    <div className="mt-1 text-xs font-medium capitalize text-slate-500">
                       {user.role || 'staff'}
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="p-1.5">
+              <div className="space-y-2 p-3">
                 <button
                   type="button"
                   onClick={() => {
                     setProfileOpen(false);
                     navigate(defaultRoute);
                   }}
-                  className={`profile-action flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
-                    darkMode ? 'text-slate-100 hover:bg-slate-800/80' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
+                  className="profile-action profile-menu-item flex w-full items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
-                  <HomeIcon className={`h-5 w-5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                  <HomeIcon className="h-4 w-4 text-slate-400" />
                   Home workspace
                 </button>
                 <button
                   type="button"
                   onClick={openRecoveryCodes}
-                  className={`profile-action flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
-                    darkMode ? 'text-slate-100 hover:bg-slate-800/80' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
+                  className="profile-action profile-menu-item flex w-full items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
-                  <ShieldCheckIcon className={`h-5 w-5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                  <ShieldCheckIcon className="h-4 w-4 text-slate-400" />
                   Recovery codes
                 </button>
                 <button
                   type="button"
                   onClick={() => setDarkMode((value) => !value)}
-                  className={`profile-action flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
-                    darkMode ? 'text-slate-100 hover:bg-slate-800/80' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
+                  className="profile-action profile-menu-item flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
                   <span className="inline-flex items-center gap-3">
-                    <MoonIcon className={`h-5 w-5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                    <MoonIcon className="h-4 w-4 text-slate-400" />
                     Dark Mode
                   </span>
                   <span
-                    className={`h-5 w-9 rounded-full p-0.5 transition ${
+                    className={`profile-toggle-track h-5 w-9 shrink-0 rounded-full p-0.5 transition ${
                       darkMode ? 'bg-primary' : 'bg-slate-200'
                     }`}
                   >
@@ -2013,14 +2004,15 @@ export default function Layout({ children, onLogout }) {
                     />
                   </span>
                 </button>
+              </div>
+
+              <div className="profile-menu-divider border-t border-slate-100 p-3 pt-2">
                 <button
                   type="button"
                   onClick={requestLogout}
-                  className={`profile-action mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold transition ${
-                    darkMode ? 'text-red-300 hover:bg-red-950/30' : 'text-red-600 hover:bg-red-50'
-                  }`}
+                  className="profile-action profile-menu-item profile-menu-item-danger flex w-full items-center gap-3 rounded-lg border border-red-100 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
                 >
-                  <ArrowRightOnRectangleIcon className="h-5 w-5" />
+                  <ArrowRightOnRectangleIcon className="h-4 w-4" />
                   Logout
                 </button>
               </div>

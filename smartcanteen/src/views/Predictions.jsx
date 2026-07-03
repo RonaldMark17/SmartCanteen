@@ -260,26 +260,22 @@ const SALES_OUTLOOK_SOURCE_LABELS = {
 };
 const SALES_WEEK_CLASS_META = {
   high: {
-    label: 'High Tomorrow Sales',
-    chip: 'bg-emerald-100 text-emerald-700',
+    label: 'High',
     card: 'bg-emerald-50/70 ring-emerald-100',
     description: 'Tomorrow demand is above the same-day benchmark.',
   },
   normal: {
-    label: 'Normal Tomorrow Sales',
-    chip: 'bg-sky-100 text-sky-700',
+    label: 'Normal',
     card: 'bg-sky-50/70 ring-sky-100',
     description: 'Tomorrow demand is close to the same-day benchmark.',
   },
   low: {
-    label: 'Low Tomorrow Sales',
-    chip: 'bg-amber-100 text-amber-700',
+    label: 'Low',
     card: 'bg-amber-50/70 ring-amber-100',
     description: 'Tomorrow demand is below the same-day benchmark.',
   },
   unavailable: {
     label: 'Waiting for Transaction Data',
-    chip: 'bg-slate-200 text-slate-700',
     card: 'bg-slate-50/70 ring-slate-100',
     description: 'Add more sales records to generate a tomorrow outlook.',
   },
@@ -2232,7 +2228,7 @@ function TomorrowSalesOutlookInputs({
         <p className="prediction-control-copy max-w-3xl text-sm leading-6 text-slate-600">
           Auto-filled from transactions, inventory, weather, school-day context, and forecasted product demand.
         </p>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
           <button
             type="button"
             onClick={onUpdatePlan}
@@ -2260,19 +2256,6 @@ function TomorrowSalesOutlookInputs({
           >
             Reset
           </button>
-          <span
-            className={`prediction-mode-chip inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${
-              manualMode ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
-            }`}
-          >
-            {manualMode ? 'Manual Override' : 'App Data + Staff Inputs'}
-          </span>
-          <span
-            className={`prediction-state-chip inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${predictionMeta.chip}`}
-          >
-            <ChartBarIcon className="h-4 w-4" />
-            {predictionMeta.label}
-          </span>
         </div>
       </div>
 
@@ -3036,7 +3019,7 @@ export default function Predictions() {
         subtitle: `${formatCount(forecast.summary.total_products)} products checked`,
         accent: 'bg-white',
         icon: ShoppingBagIcon,
-        iconTone: 'bg-violet-50 text-violet-700 ring-violet-100',
+        iconTone: 'bg-teal-50 text-teal-700 ring-teal-100',
       },
       {
         title: 'Need Restock',
@@ -3133,7 +3116,7 @@ export default function Predictions() {
       },
       {
         title: 'Tomorrow Outlook',
-        value: tomorrowOutlookMeta.label.replace('Tomorrow Sales', '').trim() || tomorrowOutlookMeta.label,
+        value: tomorrowOutlookMeta.label,
         detail: formatCurrency(tomorrowSalesPrediction.estimatedSales),
         tone: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
       },
@@ -3141,7 +3124,7 @@ export default function Predictions() {
         title: 'Prediction Status',
         value: tomorrowSalesPrediction.level === 'unavailable' ? 'Waiting for Transaction Data' : 'Ready for Planning',
         detail: `${formatCount(forecast.summary.total_products)} products checked`,
-        tone: 'bg-violet-50 text-violet-700 ring-violet-100',
+        tone: 'bg-teal-50 text-teal-700 ring-teal-100',
       },
     ],
     [
@@ -3155,11 +3138,11 @@ export default function Predictions() {
   );
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto bg-slate-50/40 pb-6 pr-2 custom-scrollbar">
+    <div className="demand-forecast-view flex h-full flex-col gap-4 overflow-y-auto bg-slate-50/40 pb-6 pr-2 custom-scrollbar">
       <div className="rounded-[20px] bg-white/95 p-4 shadow-md ring-1 ring-slate-100 sm:p-5">
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr),minmax(340px,0.72fr)] xl:items-start">
           <div className="max-w-2xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-violet-100 bg-violet-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-violet-700 shadow-sm">
+            <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-teal-700 shadow-sm">
               <SparklesIcon className="h-4 w-4" />
               Tomorrow Plan
             </div>
@@ -3566,7 +3549,7 @@ export default function Predictions() {
                     onClick={() => setPrepViewMode(mode.value)}
                     className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-black transition ${
                       selected
-                        ? 'bg-white text-violet-700 shadow-sm'
+                        ? 'bg-white text-teal-700 shadow-sm'
                         : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
                     }`}
                   >
@@ -3682,7 +3665,7 @@ export default function Predictions() {
                         return (
                           <tr
                             key={item.product_id}
-                            className={`transition hover:bg-violet-50/50 ${
+                            className={`transition hover:bg-teal-50/50 ${
                               isHighlighted ? 'bg-sky-50/70' : 'bg-white'
                             }`}
                           >

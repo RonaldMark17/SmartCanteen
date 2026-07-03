@@ -16,6 +16,14 @@
   --sc-focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.12);
   --sc-soft-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
   --sc-modal-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
+  --dark-bg: #0f172a;
+  --dark-surface: #111827;
+  --dark-card: #1e293b;
+  --dark-border: #334155;
+  --dark-text: #f8fafc;
+  --dark-muted-text: #94a3b8;
+  --dark-primary: #14b8a6;
+  --dark-primary-hover: #0f766e;
 }
 
 /* 2. Your base styles */
@@ -1709,17 +1717,10 @@ html.dark .app-shell .prediction-control-copy {
   color: #cbd5e1;
 }
 
-html.dark .app-shell .prediction-model-chip,
 html.dark .app-shell .prediction-secondary-action {
   background: #111827;
   border-color: #334155;
   color: #cbd5e1;
-}
-
-html.dark .app-shell .prediction-model-name {
-  background: rgba(59, 130, 246, 0.14);
-  border-color: rgba(96, 165, 250, 0.25);
-  color: #93c5fd;
 }
 
 html.dark .app-shell .prediction-primary-action {
@@ -1737,32 +1738,910 @@ html.dark .app-shell .prediction-secondary-action.is-active {
   color: #86efac;
 }
 
-html.dark .app-shell .prediction-mode-chip.bg-emerald-100 {
-  background: rgba(16, 185, 129, 0.14);
-  color: #86efac;
+/* Dark theme normalization */
+html.dark {
+  --dark-bg: #0f172a;
+  --dark-surface: #111827;
+  --dark-card: #1e293b;
+  --dark-border: #334155;
+  --dark-text: #f8fafc;
+  --dark-muted-text: #94a3b8;
+  --dark-primary: #14b8a6;
+  --dark-primary-hover: #0f766e;
+  --sc-page: var(--dark-bg);
+  --sc-surface: var(--dark-surface);
+  --sc-surface-soft: var(--dark-card);
+  --sc-border-soft: var(--dark-border);
+  --sc-text: var(--dark-text);
+  --sc-heading: var(--dark-text);
+  --sc-muted: var(--dark-muted-text);
+  --sc-primary: var(--dark-primary);
+  --sc-primary-strong: var(--dark-primary-hover);
+  --sc-primary-soft: rgba(20, 184, 166, 0.12);
+  --sc-dark-bg: var(--dark-bg);
+  --sc-dark-shell: var(--dark-bg);
+  --sc-dark-panel: var(--dark-surface);
+  --sc-dark-card: var(--dark-card);
+  --sc-dark-card-soft: rgba(30, 41, 59, 0.72);
+  --sc-dark-border: var(--dark-border);
+  --sc-dark-border-strong: color-mix(in srgb, var(--dark-border) 82%, white 18%);
+  --sc-dark-heading: var(--dark-text);
+  --sc-dark-body: #cbd5e1;
+  --sc-dark-muted: var(--dark-muted-text);
+  --sc-dark-cyan: var(--dark-primary);
+  --sc-dark-pink: #fda4af;
+  --sc-dark-green: #5eead4;
+  --sc-dark-primary: var(--dark-primary);
+  --sc-dark-primary-hover: var(--dark-primary-hover);
+  --sc-sidebar-item-bg: var(--dark-surface);
+  --sc-sidebar-item-border: var(--dark-border);
+  --sc-sidebar-hover-bg: var(--dark-card);
+  --sc-sidebar-hover-border: color-mix(in srgb, var(--dark-border) 76%, var(--dark-primary) 24%);
+  --sc-sidebar-hover-text: var(--dark-text);
+  --sc-disabled-bg: rgba(30, 41, 59, 0.52);
+  --sc-disabled-border: rgba(51, 65, 85, 0.72);
+  --sc-disabled-text: #64748b;
+  --sc-focus-ring: 0 0 0 3px rgba(20, 184, 166, 0.2);
+  --sc-soft-shadow: 0 14px 34px rgba(2, 6, 23, 0.28);
+  --sc-modal-shadow: 0 28px 70px rgba(2, 6, 23, 0.56);
+  --sc-success-bg: rgba(20, 184, 166, 0.14);
+  --sc-success-text: #5eead4;
+  --sc-success-border: rgba(20, 184, 166, 0.32);
+  --sc-warning-bg: rgba(245, 158, 11, 0.15);
+  --sc-warning-text: #fbbf24;
+  --sc-warning-border: rgba(245, 158, 11, 0.34);
+  --sc-danger-bg: rgba(248, 113, 113, 0.15);
+  --sc-danger-text: #fca5a5;
+  --sc-danger-border: rgba(248, 113, 113, 0.34);
+  --sc-info-bg: rgba(56, 189, 248, 0.13);
+  --sc-info-text: #7dd3fc;
+  --sc-info-border: rgba(56, 189, 248, 0.32);
+  --sc-neutral-bg: rgba(51, 65, 85, 0.52);
+  --sc-neutral-text: #cbd5e1;
+  --sc-neutral-border: rgba(71, 85, 105, 0.72);
 }
 
-html.dark .app-shell .prediction-mode-chip.bg-amber-100 {
-  background: rgba(245, 158, 11, 0.14);
-  color: #fcd34d;
+html.dark body,
+html.dark #root {
+  background: var(--dark-bg) !important;
+  color: var(--dark-text);
 }
 
-html.dark .app-shell .prediction-state-chip.bg-emerald-100 {
-  background: rgba(16, 185, 129, 0.14);
-  color: #86efac;
+html.dark :is(.app-shell, .login-view),
+html.dark .app-shell main.ui-uniform,
+html.dark .app-shell .ui-uniform,
+html.dark .app-shell .view-shell,
+html.dark .app-shell .view-shell-static {
+  background: var(--dark-bg) !important;
+  color: var(--dark-text);
 }
 
-html.dark .app-shell .prediction-state-chip.bg-sky-100 {
-  background: rgba(14, 165, 233, 0.14);
-  color: #7dd3fc;
+html.dark :is(.app-shell, .login-view) :is(
+  .bg-white,
+  .bg-white\/95,
+  .bg-white\/90,
+  .bg-white\/80,
+  .bg-white\/70,
+  .bg-white\/60,
+  .bg-white\/50
+),
+html.dark .app-shell :is(header, nav, .panel-card, .data-card, .control-surface, .notification-popover, .profile-popover, .mobile-sidebar),
+html.dark .login-view > div > div {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
 }
 
-html.dark .app-shell .prediction-state-chip.bg-amber-100 {
-  background: rgba(245, 158, 11, 0.14);
-  color: #fcd34d;
+html.dark :is(.app-shell, .login-view) :is(
+  .bg-slate-50,
+  .bg-slate-50\/40,
+  .bg-slate-50\/50,
+  .bg-slate-50\/60,
+  .bg-slate-50\/70,
+  .bg-slate-50\/80,
+  .bg-slate-50\/90,
+  .bg-slate-100,
+  .bg-slate-200,
+  .bg-slate-900
+) {
+  background: var(--dark-card) !important;
+  color: var(--dark-text) !important;
 }
 
-html.dark .app-shell .prediction-state-chip.bg-slate-200 {
-  background: #e2e8f0;
-  color: #334155;
+html.dark :is(.app-shell, .login-view) :is(.text-slate-950, .text-slate-900, .text-slate-800, .text-black, .view-title) {
+  color: var(--dark-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.text-slate-700, .text-slate-600, .text-slate-500, .view-subtitle) {
+  color: #cbd5e1 !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.text-slate-400, .text-slate-300) {
+  color: var(--dark-muted-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(
+  .border-slate-100,
+  .border-slate-200,
+  .border-slate-200\/70,
+  .border-slate-300,
+  .border-white\/70,
+  .border-white\/10,
+  .ring-slate-100,
+  .ring-slate-200,
+  .divide-slate-100,
+  .divide-slate-200
+) {
+  border-color: var(--dark-border) !important;
+  --tw-ring-color: var(--dark-border) !important;
+  --tw-divide-color: var(--dark-border) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(input, select, textarea, .field-control) {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+  caret-color: var(--dark-primary);
+  box-shadow: none !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(input, select, textarea, .field-control)::placeholder {
+  color: var(--dark-muted-text) !important;
+  opacity: 1;
+}
+
+html.dark :is(.app-shell, .login-view) :is(input, select, textarea, .field-control):focus,
+html.dark :is(.app-shell, .login-view) :is(button, a, [role="button"], summary):focus-visible {
+  border-color: var(--dark-primary) !important;
+  outline: none;
+  box-shadow: var(--sc-focus-ring) !important;
+}
+
+html.dark :is(.app-shell, .login-view) select option {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+}
+
+html.dark :is(.app-shell, .login-view) :is(input, select, textarea, button):disabled,
+html.dark :is(.app-shell, .login-view) [aria-disabled="true"] {
+  background: var(--sc-disabled-bg) !important;
+  border-color: var(--sc-disabled-border) !important;
+  color: var(--sc-disabled-text) !important;
+  opacity: 1 !important;
+  box-shadow: none !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(button, a, [role="button"], summary) {
+  color: inherit;
+}
+
+html.dark :is(.app-shell, .login-view) :is(button.bg-white, button.border, a.bg-white, a.border, .action-button, .notification-action) {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(button.bg-white, button.border, a.bg-white, a.border, .action-button, .notification-action):not(:disabled):hover,
+html.dark :is(.app-shell, .login-view) :is(.hover\:bg-slate-50, .hover\:bg-slate-100, .hover\:bg-white):hover,
+html.dark .app-shell :is(nav a, .mobile-sidebar-link, .profile-action, [class*="dropdown"] button, [class*="popover"] button):not(:disabled):hover {
+  background: var(--dark-card) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  color: var(--dark-text) !important;
+  box-shadow: none !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.bg-primary, .primary-action-button, button[type="submit"], .pos-complete-button, .prediction-primary-action) {
+  background: var(--dark-primary) !important;
+  color: #042f2e !important;
+  border-color: var(--dark-primary) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.bg-primary, .primary-action-button, button[type="submit"], .pos-complete-button, .prediction-primary-action):not(:disabled):hover {
+  background: var(--dark-primary-hover) !important;
+  border-color: var(--dark-primary-hover) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(
+  .bg-primary\/5,
+  .bg-primary\/10,
+  .bg-teal-50,
+  .bg-teal-100,
+  .bg-emerald-50,
+  .bg-emerald-50\/70,
+  .bg-emerald-50\/80,
+  .bg-emerald-100
+) {
+  background: var(--sc-success-bg) !important;
+  color: var(--sc-success-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.text-primary, .text-primary\/80, .text-teal-700, .text-teal-600, .text-teal-500, .text-emerald-700, .text-emerald-600, .text-emerald-500) {
+  color: var(--sc-success-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.border-primary, .border-primary\/20, .border-teal-100, .border-teal-200, .border-emerald-100, .border-emerald-200, .ring-teal-100, .ring-teal-200, .ring-emerald-100, .ring-emerald-200) {
+  border-color: var(--sc-success-border) !important;
+  --tw-ring-color: var(--sc-success-border) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.bg-red-50, .bg-red-50\/50, .bg-red-50\/60, .bg-red-50\/70, .bg-red-50\/80, .bg-red-100, .bg-rose-50, .bg-rose-50\/70, .bg-rose-50\/80, .bg-rose-100) {
+  background: var(--sc-danger-bg) !important;
+  color: var(--sc-danger-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.text-red-700, .text-red-600, .text-red-500, .text-rose-700, .text-rose-600, .text-rose-500) {
+  color: var(--sc-danger-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.border-red-100, .border-red-200, .border-red-300, .border-rose-100, .border-rose-200, .ring-red-100, .ring-red-200, .ring-rose-100, .ring-rose-200) {
+  border-color: var(--sc-danger-border) !important;
+  --tw-ring-color: var(--sc-danger-border) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.bg-amber-50, .bg-amber-50\/70, .bg-amber-50\/80, .bg-amber-100, .bg-orange-50, .bg-orange-100) {
+  background: var(--sc-warning-bg) !important;
+  color: var(--sc-warning-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.text-amber-800, .text-amber-700, .text-amber-600, .text-amber-500, .text-orange-700, .text-orange-600, .text-orange-500) {
+  color: var(--sc-warning-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.border-amber-100, .border-amber-200, .border-amber-300, .border-orange-100, .border-orange-200, .ring-amber-100, .ring-amber-200, .ring-orange-100, .ring-orange-200) {
+  border-color: var(--sc-warning-border) !important;
+  --tw-ring-color: var(--sc-warning-border) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.bg-sky-50, .bg-sky-50\/70, .bg-sky-100, .bg-blue-50, .bg-blue-50\/70, .bg-blue-100, .bg-indigo-50, .bg-indigo-50\/70, .bg-indigo-100) {
+  background: var(--sc-info-bg) !important;
+  color: var(--sc-info-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.text-sky-700, .text-sky-600, .text-sky-500, .text-blue-700, .text-blue-600, .text-blue-500, .text-indigo-700, .text-indigo-600, .text-indigo-500) {
+  color: var(--sc-info-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.border-sky-100, .border-sky-200, .border-sky-300, .border-blue-100, .border-blue-200, .border-indigo-100, .border-indigo-200, .ring-sky-100, .ring-sky-200, .ring-blue-100, .ring-blue-200, .ring-indigo-100, .ring-indigo-200) {
+  border-color: var(--sc-info-border) !important;
+  --tw-ring-color: var(--sc-info-border) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.bg-fuchsia-50, .bg-fuchsia-50\/70, .bg-fuchsia-100, .bg-fuchsia-200, .bg-fuchsia-300, .bg-violet-50, .bg-violet-50\/40, .bg-violet-50\/70, .bg-violet-100) {
+  background: var(--sc-primary-soft) !important;
+  color: var(--sc-success-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.text-fuchsia-300, .text-fuchsia-600, .text-fuchsia-700, .text-fuchsia-800, .text-fuchsia-900, .text-violet-300, .text-violet-600, .text-violet-700) {
+  color: var(--sc-success-text) !important;
+}
+
+html.dark :is(.app-shell, .login-view) :is(.border-fuchsia-100, .border-fuchsia-200, .border-violet-100, .border-violet-200, .ring-fuchsia-100, .ring-fuchsia-200, .ring-violet-100, .ring-violet-200) {
+  border-color: var(--sc-success-border) !important;
+  --tw-ring-color: var(--sc-success-border) !important;
+}
+
+html.dark .app-shell table {
+  color: var(--dark-text);
+}
+
+html.dark .app-shell :is(thead, thead.bg-slate-50, thead.border-b.border-slate-200.bg-slate-50, th.bg-slate-50) {
+  background: var(--dark-card) !important;
+  color: var(--dark-muted-text) !important;
+  border-color: var(--dark-border) !important;
+}
+
+html.dark .app-shell :is(tbody, tbody.bg-white, tr, td, td.bg-white) {
+  border-color: var(--dark-border) !important;
+}
+
+html.dark .app-shell tbody tr:not([class*="bg-"]):hover,
+html.dark .app-shell tbody tr.transition:hover,
+html.dark .app-shell .hover\:bg-teal-50\/50:hover {
+  background: rgba(20, 184, 166, 0.08) !important;
+}
+
+html.dark .app-shell tbody tr[class*="bg-red"],
+html.dark .app-shell tr[class*="bg-red"] td {
+  background: rgba(248, 113, 113, 0.11) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell tbody tr[class*="bg-amber"],
+html.dark .app-shell tr[class*="bg-amber"] td {
+  background: rgba(245, 158, 11, 0.11) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell tbody tr[class*="bg-emerald"],
+html.dark .app-shell tr[class*="bg-emerald"] td {
+  background: rgba(20, 184, 166, 0.11) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell :is(.notification-popover, .profile-popover, .mobile-sidebar, [class*="dropdown"], [class*="popover"]) {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+  box-shadow: var(--sc-modal-shadow) !important;
+}
+
+html.dark .app-shell :is(.notification-panel-head, .notification-footer, .profile-popover-head) {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+}
+
+html.dark .app-shell :is(.notification-alert-card, .notification-alert-metric, .notification-action, .profile-action, .mobile-sidebar-link) {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell :is(.notification-alert-card, .notification-alert-metric, .notification-action, .profile-action, .mobile-sidebar-link):hover {
+  background: var(--dark-card) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell :is(.pos-product-card, .notification-alert-card, .panel-card.cursor-pointer, .data-card.cursor-pointer):hover {
+  background: var(--dark-card) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  box-shadow: var(--sc-soft-shadow) !important;
+}
+
+html.dark .app-shell :is(.pos-product-card, .pos-qty-stepper, .pos-qty-button, .pos-order-review-trigger) {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell .pos-product-card.border-primary,
+html.dark .app-shell .pos-product-card.bg-primary\/5 {
+  background: var(--sc-success-bg) !important;
+  border-color: var(--sc-success-border) !important;
+  --tw-ring-color: var(--sc-success-border) !important;
+}
+
+html.dark .app-shell :is(.pos-qty-button, .pos-order-review-trigger):not(:disabled):hover {
+  background: var(--dark-card) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  color: var(--sc-success-text) !important;
+}
+
+html.dark .app-shell .pos-qty-input {
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell .pos-selected-qty {
+  background: var(--dark-primary) !important;
+  color: #042f2e !important;
+}
+
+html.dark .app-shell .pos-selected-chip,
+html.dark .app-shell .pos-product-icon {
+  background: var(--sc-success-bg) !important;
+  color: var(--sc-success-text) !important;
+}
+
+html.dark .app-shell .fixed.inset-0:not(.notification-dismiss-layer),
+html.dark .login-view .fixed.inset-0 {
+  background: rgba(2, 6, 23, 0.74) !important;
+  backdrop-filter: blur(12px);
+}
+
+html.dark .app-shell .notification-dismiss-layer,
+html.dark .app-shell .notification-dismiss-layer:hover {
+  background: transparent !important;
+  backdrop-filter: none;
+}
+
+html.dark :is(.app-shell, .login-view) [role="dialog"][aria-modal="true"],
+html.dark .app-shell .fixed.inset-0:not(.notification-dismiss-layer) > div,
+html.dark .login-view .fixed.inset-0 > div {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+  box-shadow: var(--sc-modal-shadow) !important;
+}
+
+html.dark :is(.app-shell, .login-view) [role="dialog"][aria-modal="true"] :is(.border-b, .border-t),
+html.dark .app-shell .fixed.inset-0:not(.notification-dismiss-layer) > div :is(.border-b, .border-t),
+html.dark .login-view .fixed.inset-0 > div :is(.border-b, .border-t) {
+  border-color: var(--dark-border) !important;
+}
+
+html.dark :is(.app-shell, .login-view) [role="dialog"][aria-modal="true"] :is(.bg-slate-50, .bg-white),
+html.dark .app-shell .fixed.inset-0:not(.notification-dismiss-layer) > div :is(.bg-slate-50, .bg-white),
+html.dark .login-view .fixed.inset-0 > div :is(.bg-slate-50, .bg-white) {
+  background: var(--dark-card) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .prediction-control-strip {
+  background: var(--dark-card) !important;
+  border-color: var(--dark-border) !important;
+}
+
+html.dark .prediction-control-copy {
+  color: #cbd5e1 !important;
+}
+
+html.dark .prediction-secondary-action {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+}
+
+html.dark .prediction-secondary-action:not(:disabled):hover,
+html.dark .prediction-secondary-action.is-active {
+  background: var(--sc-success-bg) !important;
+  border-color: var(--sc-success-border) !important;
+  color: var(--sc-success-text) !important;
+}
+
+html.dark .brand-logo-mark {
+  background: var(--dark-primary) !important;
+  color: #042f2e !important;
+}
+
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--dark-border);
+}
+
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--dark-muted-text);
+}
+
+html.dark .smart-toast {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+  box-shadow: var(--sc-modal-shadow) !important;
+}
+
+html.dark .app-shell nav a.sidebar-item {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: var(--sc-motion-fast);
+  transition-timing-function: var(--sc-motion-ease);
+}
+
+html.dark .app-shell nav a.sidebar-item:not(.sidebar-item-active):hover {
+  background: var(--dark-card) !important;
+  border-color: var(--dark-border) !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+html.dark .app-shell nav a.sidebar-item-active,
+html.dark .app-shell nav a.sidebar-item-active:not(:disabled):hover {
+  background: rgba(20, 184, 166, 0.1) !important;
+  border-color: rgba(20, 184, 166, 0.45) !important;
+  color: #ffffff !important;
+  box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.72) !important;
+}
+
+html.dark .app-shell nav a.sidebar-item-active .sidebar-icon {
+  color: #5eead4 !important;
+}
+
+html.dark .app-shell nav a.sidebar-item-active .sidebar-active-dot {
+  background: var(--dark-primary) !important;
+  box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.14) !important;
+}
+
+.app-shell .profile-dropdown {
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.1) !important;
+}
+
+.app-shell .profile-popover-head,
+.app-shell .profile-menu-item,
+.app-shell .profile-menu-divider {
+  box-shadow: none !important;
+}
+
+.app-shell .profile-menu-item {
+  transition:
+    background-color var(--sc-motion-fast) var(--sc-motion-ease),
+    border-color var(--sc-motion-fast) var(--sc-motion-ease),
+    color var(--sc-motion-fast) var(--sc-motion-ease);
+}
+
+.app-shell .profile-menu-item:not(:disabled):hover {
+  border-color: #cbd5e1;
+}
+
+html.dark .app-shell .profile-dropdown {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: var(--dark-text) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28) !important;
+}
+
+html.dark .app-shell .profile-popover-head,
+html.dark .app-shell .profile-menu-divider {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+}
+
+html.dark .app-shell .profile-popover-head .text-slate-900 {
+  color: var(--dark-text) !important;
+}
+
+html.dark .app-shell .profile-popover-head .text-slate-500 {
+  color: var(--dark-muted-text) !important;
+}
+
+html.dark .app-shell .profile-menu-avatar {
+  background: var(--dark-primary) !important;
+  color: #042f2e !important;
+}
+
+html.dark .app-shell .profile-menu-item {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  color: #cbd5e1 !important;
+}
+
+html.dark .app-shell .profile-menu-item svg {
+  color: var(--dark-muted-text) !important;
+}
+
+html.dark .app-shell .profile-menu-item:not(:disabled):hover {
+  background: var(--dark-card) !important;
+  border-color: var(--sc-sidebar-hover-border) !important;
+  color: #ffffff !important;
+}
+
+html.dark .app-shell .profile-menu-item:not(:disabled):hover svg {
+  color: var(--dark-primary) !important;
+}
+
+html.dark .app-shell .profile-menu-item-danger {
+  border-color: rgba(248, 113, 113, 0.24) !important;
+  color: #fca5a5 !important;
+}
+
+html.dark .app-shell .profile-menu-item-danger:not(:disabled):hover {
+  background: rgba(248, 113, 113, 0.12) !important;
+  border-color: rgba(248, 113, 113, 0.34) !important;
+  color: #fecaca !important;
+}
+
+html.dark .app-shell .profile-menu-item-danger:not(:disabled):hover svg {
+  color: #fecaca !important;
+}
+
+html.dark .app-shell .profile-toggle-track {
+  background: var(--dark-primary) !important;
+}
+
+html.dark .app-shell .profile-toggle-track > span {
+  background: var(--dark-text) !important;
+}
+
+/* demand-forecast-dark-theme */
+html.dark .app-shell .demand-forecast-view {
+  --df-bg: var(--dark-bg);
+  --df-surface: var(--dark-surface);
+  --df-card: var(--dark-card);
+  --df-card-soft: rgba(30, 41, 59, 0.72);
+  --df-border: var(--dark-border);
+  --df-text: var(--dark-text);
+  --df-muted: var(--dark-muted-text);
+  --df-accent: var(--dark-primary);
+  --df-warning: #f59e0b;
+  --df-info: #38bdf8;
+  --df-success: #22c55e;
+  --df-danger: #f87171;
+  --df-info-bg: rgba(56, 189, 248, 0.09);
+  --df-success-bg: rgba(20, 184, 166, 0.1);
+  --df-warning-bg: rgba(245, 158, 11, 0.1);
+  --df-danger-bg: rgba(248, 113, 113, 0.1);
+  background: var(--df-bg) !important;
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view > section,
+html.dark .app-shell .demand-forecast-view :is(
+  .bg-white,
+  .bg-white\/95,
+  .bg-white\/90,
+  .bg-white\/80,
+  .bg-white\/70
+) {
+  background: var(--df-surface) !important;
+  border-color: var(--df-border) !important;
+  color: var(--df-text) !important;
+  --tw-ring-color: var(--df-border) !important;
+  box-shadow: none !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(
+  .bg-slate-50,
+  .bg-slate-50\/40,
+  .bg-slate-50\/50,
+  .bg-slate-50\/60,
+  .bg-slate-50\/70,
+  .bg-slate-50\/80,
+  .bg-slate-50\/90,
+  .bg-slate-100,
+  .bg-slate-200
+) {
+  background: var(--df-card) !important;
+  color: var(--df-text) !important;
+  border-color: var(--df-border) !important;
+  --tw-ring-color: var(--df-border) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(
+  .rounded-\[20px\],
+  .rounded-2xl,
+  .rounded-xl,
+  article,
+  section
+) {
+  border-color: var(--df-border) !important;
+  --tw-ring-color: var(--df-border) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.text-slate-950, .text-slate-900, .text-slate-800) {
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.text-slate-700, .text-slate-600, .text-slate-500) {
+  color: #cbd5e1 !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.text-slate-400, .text-slate-300) {
+  color: var(--df-muted) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(
+  .border-slate-100,
+  .border-slate-200,
+  .border-slate-300,
+  .ring-slate-100,
+  .ring-slate-200,
+  .divide-slate-100,
+  .divide-slate-200
+) {
+  border-color: var(--df-border) !important;
+  --tw-ring-color: var(--df-border) !important;
+  --tw-divide-color: var(--df-border) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(input, select, textarea, .field-control) {
+  background: var(--df-surface) !important;
+  border-color: var(--df-border) !important;
+  color: var(--df-text) !important;
+  caret-color: var(--df-accent);
+  box-shadow: none !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(input, select, textarea, .field-control)::placeholder {
+  color: var(--df-muted) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(input, select, textarea, .field-control):focus,
+html.dark .app-shell .demand-forecast-view :is(button, [role="button"]):focus-visible {
+  border-color: var(--df-accent) !important;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.18) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(input, select, textarea, button):disabled {
+  background: rgba(30, 41, 59, 0.54) !important;
+  border-color: rgba(51, 65, 85, 0.74) !important;
+  color: #64748b !important;
+  opacity: 1 !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.prediction-control-strip, .control-surface) {
+  background: var(--df-card) !important;
+  border: 1px solid var(--df-border) !important;
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view .prediction-control-copy {
+  color: var(--df-muted) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.prediction-secondary-action, .action-button, button.border, button.bg-white) {
+  background: var(--df-surface) !important;
+  border-color: var(--df-border) !important;
+  color: #cbd5e1 !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.prediction-secondary-action, .action-button, button.border, button.bg-white):not(:disabled):hover {
+  background: var(--df-card) !important;
+  border-color: rgba(20, 184, 166, 0.36) !important;
+  color: var(--df-text) !important;
+  transform: translateY(-1px);
+}
+
+html.dark .app-shell .demand-forecast-view :is(.prediction-primary-action, .bg-primary) {
+  background: var(--df-accent) !important;
+  border-color: var(--df-accent) !important;
+  color: #042f2e !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.prediction-primary-action, .bg-primary):not(:disabled):hover {
+  background: var(--dark-primary-hover) !important;
+  border-color: var(--dark-primary-hover) !important;
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(
+  .bg-blue-50,
+  .bg-blue-50\/70,
+  .bg-blue-100,
+  .bg-sky-50,
+  .bg-sky-50\/70,
+  .bg-sky-100,
+  .bg-indigo-50,
+  .bg-indigo-100
+) {
+  background: var(--df-info-bg) !important;
+  border-color: rgba(56, 189, 248, 0.24) !important;
+  color: #bae6fd !important;
+  --tw-ring-color: rgba(56, 189, 248, 0.24) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.text-blue-700, .text-blue-600, .text-sky-800, .text-sky-700, .text-sky-600, .text-indigo-700) {
+  color: #7dd3fc !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(
+  .bg-emerald-50,
+  .bg-emerald-50\/70,
+  .bg-emerald-50\/80,
+  .bg-emerald-100,
+  .bg-teal-50,
+  .bg-teal-100,
+  .bg-primary\/5,
+  .bg-primary\/10
+) {
+  background: var(--df-success-bg) !important;
+  border-color: rgba(20, 184, 166, 0.24) !important;
+  color: #ccfbf1 !important;
+  --tw-ring-color: rgba(20, 184, 166, 0.24) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.text-primary, .text-teal-700, .text-teal-600, .text-emerald-700, .text-emerald-600, .text-emerald-500) {
+  color: #5eead4 !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(
+  .bg-amber-50,
+  .bg-amber-50\/70,
+  .bg-amber-50\/80,
+  .bg-amber-100,
+  .bg-orange-50,
+  .bg-orange-100
+) {
+  background: var(--df-warning-bg) !important;
+  border-color: rgba(245, 158, 11, 0.26) !important;
+  color: #fde68a !important;
+  --tw-ring-color: rgba(245, 158, 11, 0.26) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.text-amber-800, .text-amber-700, .text-amber-600, .text-orange-700, .text-orange-600) {
+  color: #fbbf24 !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(
+  .bg-red-50,
+  .bg-red-50\/70,
+  .bg-red-100,
+  .bg-rose-50,
+  .bg-rose-100
+) {
+  background: var(--df-danger-bg) !important;
+  border-color: rgba(248, 113, 113, 0.28) !important;
+  color: #fecaca !important;
+  --tw-ring-color: rgba(248, 113, 113, 0.28) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(.text-red-700, .text-red-600, .text-red-500, .text-rose-700, .text-rose-600) {
+  color: #fca5a5 !important;
+}
+
+html.dark .app-shell .demand-forecast-view > :is(.border-amber-200, .border-sky-200, .border-red-200, .border-emerald-200),
+html.dark .app-shell .demand-forecast-view :is(.notification-focus, .forecast-notice) {
+  background: linear-gradient(90deg, rgba(30, 41, 59, 0.92), rgba(17, 24, 39, 0.98)) !important;
+  border-color: var(--df-border) !important;
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view > .border-amber-200 {
+  border-left: 3px solid var(--df-warning) !important;
+}
+
+html.dark .app-shell .demand-forecast-view > .border-sky-200 {
+  border-left: 3px solid var(--df-info) !important;
+}
+
+html.dark .app-shell .demand-forecast-view > .border-red-200 {
+  border-left: 3px solid var(--df-danger) !important;
+}
+
+html.dark .app-shell .demand-forecast-view > .border-emerald-200 {
+  border-left: 3px solid var(--df-success) !important;
+}
+
+html.dark .app-shell .demand-forecast-view .prediction-control-strip + .grid > div,
+html.dark .app-shell .demand-forecast-view .prediction-control-strip + .grid > div > div,
+html.dark .app-shell .demand-forecast-view .prediction-control-strip + .grid > div:last-child {
+  background: var(--df-card-soft) !important;
+  border-color: var(--df-border) !important;
+  --tw-ring-color: var(--df-border) !important;
+  box-shadow: none !important;
+}
+
+html.dark .app-shell .demand-forecast-view .prediction-control-strip + .grid > div:last-child {
+  background: var(--df-card) !important;
+}
+
+html.dark .app-shell .demand-forecast-view .prediction-control-strip + .grid > div:last-child > .inline-flex {
+  background: rgba(17, 24, 39, 0.82) !important;
+  color: var(--df-muted) !important;
+}
+
+html.dark .app-shell .demand-forecast-view .prediction-control-strip + .grid .rounded-2xl.bg-white\/90 {
+  background: var(--df-surface) !important;
+  border: 1px solid var(--df-border) !important;
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view .prediction-control-strip + .grid .rounded-lg.bg-white\/80 {
+  background: var(--df-card) !important;
+}
+
+html.dark .app-shell .demand-forecast-view section:first-of-type article {
+  background: var(--df-card-soft) !important;
+  border: 1px solid var(--df-border) !important;
+  box-shadow: none !important;
+}
+
+html.dark .app-shell .demand-forecast-view section:first-of-type article:hover,
+html.dark .app-shell .demand-forecast-view :is(.rounded-\[20px\], article, tr):hover {
+  border-color: rgba(20, 184, 166, 0.28) !important;
+}
+
+html.dark .app-shell .demand-forecast-view section:first-of-type article .grid .rounded-xl {
+  background: var(--df-surface) !important;
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view table {
+  color: var(--df-text) !important;
+}
+
+html.dark .app-shell .demand-forecast-view :is(thead, thead.bg-slate-50) {
+  background: var(--df-card) !important;
+  color: var(--df-muted) !important;
+}
+
+html.dark .app-shell .demand-forecast-view tbody tr {
+  background: var(--df-surface) !important;
+  border-color: var(--df-border) !important;
+}
+
+html.dark .app-shell .demand-forecast-view tbody tr:hover,
+html.dark .app-shell .demand-forecast-view .hover\:bg-teal-50\/50:hover {
+  background: rgba(20, 184, 166, 0.08) !important;
+}
+
+html.dark .app-shell .demand-forecast-view .inline-flex.rounded-\[14px\].bg-slate-100 {
+  background: var(--df-card) !important;
+  border: 1px solid var(--df-border) !important;
+  --tw-ring-color: transparent !important;
+}
+
+html.dark .app-shell .demand-forecast-view .inline-flex.rounded-\[14px\].bg-slate-100 button {
+  color: var(--df-muted) !important;
+}
+
+html.dark .app-shell .demand-forecast-view .inline-flex.rounded-\[14px\].bg-slate-100 button.bg-white {
+  background: var(--df-surface) !important;
+  color: #5eead4 !important;
 }
