@@ -139,6 +139,20 @@ export default function POS() {
     API.getProducts().then(setProducts).catch(console.error);
   }, []);
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 768px)');
+    const closeMobileOrderModal = (event) => {
+      if (event.matches) {
+        setShowOrderModal(false);
+      }
+    };
+
+    closeMobileOrderModal(mediaQuery);
+    mediaQuery.addEventListener('change', closeMobileOrderModal);
+
+    return () => mediaQuery.removeEventListener('change', closeMobileOrderModal);
+  }, []);
+
   // --- Cart Logic ---
   const addToCart = (product) => {
     setCart((prev) => {
@@ -347,7 +361,7 @@ export default function POS() {
           type="button"
           onClick={() => hasCartItems && setShowOrderModal(true)}
           disabled={!hasCartItems}
-          className={`pos-order-review-trigger inline-flex min-w-[220px] items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+          className={`pos-order-review-trigger inline-flex w-full min-w-0 items-center gap-3 rounded-2xl border px-4 py-3 text-left transition sm:w-auto sm:min-w-[220px] md:hidden ${
             hasCartItems
               ? 'border-slate-200 bg-white text-slate-900 shadow-sm hover:border-primary hover:shadow-md'
               : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
@@ -370,7 +384,8 @@ export default function POS() {
       </div>
 
       <div className="custom-scrollbar flex-1 overflow-y-auto pb-4">
-        <div className="flex min-h-0 flex-col gap-4">
+        <div className="pos-workspace-grid grid min-h-full gap-4 md:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)]">
+          <div className="pos-products-section flex min-h-0 flex-col gap-4">
           <div className="control-surface shrink-0 space-y-3">
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
@@ -407,7 +422,7 @@ export default function POS() {
             </div>
           </div>
 
-          <div className="pos-product-grid custom-scrollbar grid grid-cols-2 content-start gap-3 pb-4 pr-0 md:min-h-0 md:flex-1 md:grid-cols-3 md:overflow-y-auto md:pr-2 lg:grid-cols-4">
+          <div className="pos-product-grid custom-scrollbar grid grid-cols-2 content-start gap-3 pb-4 pr-0 sm:grid-cols-2 md:min-h-0 md:flex-1 md:grid-cols-2 md:overflow-y-auto md:pr-2 xl:grid-cols-3 2xl:grid-cols-4">
             {paginatedProducts.map((product) => {
               const selectedQty = cartQtyByProductId[product.id] || 0;
               const isSelected = selectedQty > 0;
@@ -573,16 +588,200 @@ export default function POS() {
               )}
             </div>
           )}
+          </div>
+
+          <aside className="pos-cart-sidebar hidden min-h-0 md:block" aria-live="polite">
+            <div className="pos-cart-panel sticky top-0 flex max-h-[calc(100dvh-9rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="pos-cart-header shrink-0 border-b border-slate-200 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                      Cart / Order Review
+                    </div>
+                    <div className="pos-cart-title mt-1 truncate text-lg font-black text-slate-900">
+                      {hasCartItems ? 'Current order' : 'Pick products first'}
+                    </div>
+                    <div className="pos-cart-meta mt-1 text-xs font-semibold text-slate-500">
+                      {hasCartItems
+                        ? `${cart.length} item(s) | ${totalUnits} unit(s)`
+                        : 'Selected products will appear here.'}
+                    </div>
+                  </div>
+
+                  <div className="pos-cart-icon flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                    <ShoppingCartIcon className="h-5 w-5" />
+                  </div>
+                </div>
+
+                {hasCartItems && (
+                  <button
+                    type="button"
+                    onClick={clearCart}
+                    className="pos-cart-clear-button mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-100 px-3 py-2 text-xs font-bold text-red-600 transition hover:bg-red-50"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                    Clear Order
+                  </button>
+                )}
+              </div>
+
+              {hasCartItems ? (
+                <>
+                  <div className="pos-cart-items custom-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/70 p-3">
+                    {cart.map((item) => (
+                      <div
+                        key={`cart-panel-item-${item.id}`}
+                        className="pos-cart-item rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-black text-slate-900" title={item.name}>
+                              {item.name}
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
+                              <span>{item.category || 'General'}</span>
+                              <span>{formatCurrency(item.price)} each</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => updateQty(item.id, 0)}
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                            aria-label={`Remove ${item.name} from current order`}
+                          >
+                            <XMarkIcon className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                          <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-1">
+                            <button
+                              type="button"
+                              onClick={() => updateQty(item.id, item.qty - 1)}
+                              className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-slate-600 shadow-sm transition hover:text-primary"
+                              aria-label={`Decrease ${item.name} quantity`}
+                            >
+                              <MinusSmallIcon className="h-5 w-5" />
+                            </button>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={item.qty}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onChange={(event) => handleQuantityInputChange(item.id, event.target.value)}
+                              onKeyDown={preventInvalidQuantityKey}
+                              aria-label={`Set ${item.name} quantity`}
+                              className="mx-1 h-9 w-11 rounded-md border border-transparent bg-transparent text-center text-base font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateQty(item.id, item.qty + 1)}
+                              disabled={item.qty >= item.stock}
+                              className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-slate-600 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                              aria-label={`Increase ${item.name} quantity`}
+                            >
+                              <PlusSmallIcon className="h-5 w-5" />
+                            </button>
+                          </div>
+
+                          <div className="text-right">
+                            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                              Line Total
+                            </div>
+                            <div className="mt-1 text-sm font-black text-slate-900">
+                              {formatCurrency(item.price * item.qty)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pos-cart-checkout shrink-0 space-y-3 border-t border-slate-200 bg-white p-4">
+                    <div className="pos-cart-cash-card rounded-lg border border-emerald-100 bg-emerald-50/80 p-3">
+                      <label className="text-xs font-black text-slate-900" htmlFor="pos-desktop-cash-received">
+                        Cash received
+                      </label>
+                      <input
+                        id="pos-desktop-cash-received"
+                        type="text"
+                        inputMode="decimal"
+                        pattern="[0-9]*[.]?[0-9]*"
+                        min={cartTotal}
+                        step="0.01"
+                        value={amountReceived}
+                        onChange={handleAmountReceivedChange}
+                        onKeyDown={preventInvalidMoneyKey}
+                        className="mt-2 w-full rounded-lg border border-emerald-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-700 outline-none transition focus:border-emerald-400"
+                        placeholder="0.00"
+                      />
+
+                      <div className="pos-cart-payment-grid mt-3 grid grid-cols-2 gap-2">
+                        <div className="rounded-lg border border-white/70 bg-white px-3 py-2">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                            Change
+                          </div>
+                          <div className={`mt-1 text-sm font-black ${change > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                            {formatCurrency(change)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-white/70 bg-white px-3 py-2">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                            Balance
+                          </div>
+                          <div className={`mt-1 text-sm font-black ${remainingBalance > 0 ? 'text-red-600' : 'text-slate-700'}`}>
+                            {formatCurrency(remainingBalance)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pos-cart-total-card rounded-lg bg-slate-950 p-4 text-white">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                        Total Due
+                      </div>
+                      <div className="pos-cart-total-amount mt-1 text-2xl font-black tracking-tight">
+                        {formatCurrency(cartTotal)}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCheckout}
+                      disabled={isCheckoutDisabled}
+                      className="pos-complete-button pos-cart-complete-button flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
+                    >
+                      <CheckCircleIcon className="h-5 w-5" />
+                      Complete Transaction
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="pos-cart-empty flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+                  <div className="pos-cart-empty-icon flex h-14 w-14 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
+                    <ShoppingCartIcon className="h-7 w-7" />
+                  </div>
+                  <div className="mt-4 text-sm font-black uppercase tracking-[0.22em] text-slate-400">
+                    Pick Products First
+                  </div>
+                  <p className="mt-2 max-w-[16rem] text-sm leading-6 text-slate-500">
+                    Add items from the product list to start reviewing the order here.
+                  </p>
+                </div>
+              )}
+            </div>
+          </aside>
         </div>
 
       </div>
 
       {showOrderModal && hasCartItems && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-md sm:items-center sm:p-4">
-          <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)] sm:h-[94vh] sm:max-h-[94vh] sm:max-w-6xl sm:rounded-[30px] sm:border sm:border-slate-200/80">
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-md sm:items-center sm:p-4 md:hidden">
+          <div className="order-review-panel relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)] sm:h-[94vh] sm:max-h-[94vh] sm:max-w-6xl sm:rounded-[30px] sm:border sm:border-slate-200/80">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%),radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_38%)]" />
 
-            <div className="relative shrink-0 border-b border-slate-200 bg-slate-950 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] text-white sm:px-6 sm:py-5">
+            <div className="order-review-header relative shrink-0 border-b border-slate-200 bg-slate-950 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] text-white sm:px-6 sm:py-5">
               <div className="sm:hidden">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -616,54 +815,54 @@ export default function POS() {
                   </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
-                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
+                <div className="order-summary-grid mt-3 grid grid-cols-2 gap-2">
+                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
                       Items
                     </div>
-                    <div className="mt-1 text-base font-black">{cart.length}</div>
+                    <div className="order-summary-card-value mt-1 text-base font-black">{cart.length}</div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
-                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
+                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
                       Units
                     </div>
-                    <div className="mt-1 text-base font-black">{totalUnits}</div>
+                    <div className="order-summary-card-value mt-1 text-base font-black">{totalUnits}</div>
                   </div>
-                  <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5">
-                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-100">
+                  <div className="order-summary-card rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-100">
                       Total
                     </div>
-                    <div className="mt-1 text-sm font-black">{formatCurrency(cartTotal)}</div>
+                    <div className="order-summary-card-value mt-1 text-sm font-black">{formatCurrency(cartTotal)}</div>
                   </div>
-                  <div className="rounded-2xl border border-sky-400/20 bg-sky-400/10 px-3 py-2.5">
-                    <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-sky-100">
+                  <div className="order-summary-card rounded-2xl border border-sky-400/20 bg-sky-400/10 px-3 py-2.5">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-sky-100">
                       Change
                     </div>
-                    <div className="mt-1 text-sm font-black">{formatCurrency(change)}</div>
+                    <div className="order-summary-card-value mt-1 text-sm font-black">{formatCurrency(change)}</div>
                   </div>
                 </div>
               </div>
 
               <div className="hidden sm:block">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="order-review-tablet-copy flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="max-w-3xl">
                     <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-100">
                       <ShoppingCartIcon className="h-4 w-4" />
                       Current Order
                     </div>
-                    <h3 className="mt-3 text-xl font-black tracking-tight sm:text-3xl">
+                    <h3 className="order-review-title mt-3 text-xl font-black tracking-tight sm:text-3xl">
                       Review order before checkout
                     </h3>
-                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                    <p className="order-review-description mt-2 text-sm leading-6 text-slate-300">
                       Check item quantities and confirm the payment details before completing this sale.
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row">
+                  <div className="order-review-actions grid grid-cols-2 gap-2 sm:flex sm:flex-row">
                     <button
                       type="button"
                       onClick={clearCart}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                      className="order-action-button inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
                     >
                       <TrashIcon className="h-4 w-4" />
                       Clear Order
@@ -671,7 +870,7 @@ export default function POS() {
                     <button
                       type="button"
                       onClick={() => setShowOrderModal(false)}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                      className="order-action-button inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
                     >
                       <XMarkIcon className="h-4 w-4" />
                       Close
@@ -679,37 +878,37 @@ export default function POS() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-4">
-                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
+                <div className="order-summary-grid mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-4">
+                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
                       Items
                     </div>
-                    <div className="mt-1 text-xl font-black">{cart.length}</div>
+                    <div className="order-summary-card-value mt-1 text-xl font-black">{cart.length}</div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
+                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
                       Units
                     </div>
-                    <div className="mt-1 text-xl font-black">{totalUnits}</div>
+                    <div className="order-summary-card-value mt-1 text-xl font-black">{totalUnits}</div>
                   </div>
-                  <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-emerald-100">
+                  <div className="order-summary-card rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-emerald-100">
                       Total Due
                     </div>
-                    <div className="mt-1 text-base font-black">{formatCurrency(cartTotal)}</div>
+                    <div className="order-summary-card-value mt-1 text-base font-black">{formatCurrency(cartTotal)}</div>
                   </div>
-                  <div className="rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-sky-100">
+                  <div className="order-summary-card rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-sky-100">
                       Change
                     </div>
-                    <div className="mt-1 text-base font-black">{formatCurrency(change)}</div>
+                    <div className="order-summary-card-value mt-1 text-base font-black">{formatCurrency(change)}</div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="min-h-0 flex-1">
-              <div className="custom-scrollbar h-full overflow-y-auto overscroll-y-contain bg-slate-50 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] xl:hidden">
+            <div className="order-review-body min-h-0 flex-1">
+              <div className="order-review-body-scroll custom-scrollbar h-full overflow-y-auto overscroll-y-contain bg-slate-50 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] xl:hidden">
                 <div className="space-y-3">
                   <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">

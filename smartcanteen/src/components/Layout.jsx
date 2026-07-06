@@ -526,13 +526,7 @@ export default function Layout({ children, onLogout }) {
     { name: 'Audit Log', path: '/audit', icon: ShieldCheckIcon },
     { name: 'Manage Accounts', path: '/accounts', icon: UserGroupIcon },
   ];
-  const navItems =
-    user.role === 'staff'
-      ? [
-          baseNavItems.find((item) => item.path === '/financial-reports'),
-          ...baseNavItems.filter((item) => item.path !== '/financial-reports'),
-        ]
-      : baseNavItems;
+  const navItems = baseNavItems;
 
   const visibleNavItems = navItems.filter((item) =>
     getAllowedRolesForPath(item.path).includes(user.role)
@@ -919,6 +913,13 @@ export default function Layout({ children, onLogout }) {
     setRemindersOpen(true);
   }
 
+  function openMobileMenu() {
+    setProfileOpen(false);
+    setNotificationsOpen(false);
+    setRemindersOpen(false);
+    setMobileMenuOpen(true);
+  }
+
   function requestLogout() {
     setProfileOpen(false);
     setMobileMenuOpen(false);
@@ -1246,6 +1247,14 @@ export default function Layout({ children, onLogout }) {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (mobileMenuOpen) {
+      setProfileOpen(false);
+      setNotificationsOpen(false);
+      setRemindersOpen(false);
+    }
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       setCurrentTime(new Date());
     }, 30000);
@@ -1411,7 +1420,7 @@ export default function Layout({ children, onLogout }) {
         <header className="relative z-20 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200/70 bg-white/95 px-4 py-2 shadow-sm backdrop-blur sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
-              onClick={() => setMobileMenuOpen(true)}
+              onClick={openMobileMenu}
               className="-ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-50 hover:text-slate-800 lg:hidden"
               aria-label="Open navigation menu"
             >
@@ -1908,12 +1917,17 @@ export default function Layout({ children, onLogout }) {
               <button
                 type="button"
                 onClick={() => {
+                  if (mobileMenuOpen) {
+                    setMobileMenuOpen(false);
+                  }
                   setNotificationsOpen(false);
                   setRemindersOpen(false);
                   setProfileOpen((value) => !value);
                 }}
                 className="flex h-11 max-w-[16rem] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 shadow-sm transition hover:border-primary/30 hover:shadow-md sm:px-2.5"
                 aria-label="Open profile menu"
+                aria-expanded={profileOpen}
+                aria-haspopup="menu"
               >
                 <div className="hidden min-w-0 flex-col items-end md:flex">
                   <span className="max-w-[10rem] truncate leading-none text-sm font-black text-slate-900">
@@ -1942,10 +1956,11 @@ export default function Layout({ children, onLogout }) {
               type="button"
               aria-label="Close profile menu"
               onClick={() => setProfileOpen(false)}
-              className="notification-dismiss-layer profile-dismiss-layer fixed inset-x-0 bottom-0 top-16 z-[80] cursor-default bg-transparent"
+              className="notification-dismiss-layer profile-dismiss-layer fixed inset-0 z-[40] cursor-default bg-transparent"
             />
             <div
-              className="profile-dropdown profile-popover fixed inset-x-3 top-16 z-[90] overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 md:inset-x-auto md:right-6 md:w-80"
+              className="profile-dropdown profile-popover fixed right-3 top-[calc(env(safe-area-inset-top)+4.5rem)] z-[45] max-h-[calc(100dvh-5.25rem)] w-[calc(100vw-1.5rem)] max-w-sm overflow-y-auto rounded-xl border border-slate-200 bg-white text-slate-900 sm:right-6 sm:top-16 sm:w-80"
+              role="menu"
             >
               <div className="profile-popover-head notification-panel-head border-b border-slate-100 px-4 py-3">
                 <div className="flex items-center gap-3">
