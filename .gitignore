@@ -19,3 +19,4 @@ smartcanteen/dist/
 *.pyc
 *.db
 
+canteen.db
