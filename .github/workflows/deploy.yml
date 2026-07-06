@@ -139,7 +139,44 @@ jobs:
             exit 1
           fi
 
-          echo "All required secrets exist."
+          if [ "$SERVER_USER" != "ubuntu" ]; then
+            echo "::error::SERVER_USER must be 'ubuntu' for the EC2 deployment user."
+            exit 1
+          fi
+
+          if [ "$PROJECT_PATH" != "/home/ubuntu/SmartCanteen" ]; then
+            echo "::error::PROJECT_PATH must be '/home/ubuntu/SmartCanteen'."
+            exit 1
+          fi
+
+          case "$SERVER_HOST" in
+            http://*|https://*|*/*)
+              echo "::error::SERVER_HOST must be an EC2 public IP address or DNS name, without protocol or path."
+              exit 1
+              ;;
+          esac
+
+          if printf '%s' "$SERVER_SSH_KEY" | grep -q '\\n'; then
+            echo "::error::SERVER_SSH_KEY contains literal \\n text. Paste the private key into the secret as multiple real lines."
+            exit 1
+          fi
+
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$SERVER_SSH_KEY" > "$key_file"
+          chmod 600 "$key_file"
+
+          if ! grep -Eq -- '-----BEGIN (OPENSSH|RSA|EC|DSA)? ?PRIVATE KEY-----' "$key_file"; then
+            echo "::error::SERVER_SSH_KEY is not a full private key. It must include BEGIN/END PRIVATE KEY lines."
+            exit 1
+          fi
+
+          if ! ssh-keygen -y -f "$key_file" >/dev/null 2>&1; then
+            echo "::error::SERVER_SSH_KEY could not be parsed by ssh-keygen. Rotate the exposed key, then store the new full private key in GitHub Secrets."
+            exit 1
+          fi
+
+          echo "All required deploy secrets exist and the SSH key is parseable."
 
       - name: Deploy to EC2 Server
         uses: appleboy/ssh-action@v1.0.3

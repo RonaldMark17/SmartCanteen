@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API } from '../services/api';
 import {
   BanknotesIcon,
@@ -418,13 +418,15 @@ function EmptyState({ title, description, action }) {
 export default function FinancialReports() {
   const user = getStoredUser();
   const isAdmin = user.role === 'admin';
-  const schoolYearSuggestion = buildSchoolYearSuggestion();
+  const schoolYearSuggestion = useMemo(() => buildSchoolYearSuggestion(), []);
   const [schoolYearsLoading, setSchoolYearsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [schoolYears, setSchoolYears] = useState([]);
   const [detail, setDetail] = useState(null);
   const [selectedSchoolYearId, setSelectedSchoolYearId] = useState(null);
   const [selectedReportId, setSelectedReportId] = useState(null);
+  const selectedSchoolYearIdRef = useRef(null);
+  const selectedReportIdRef = useRef(null);
   const [reportDraft, setReportDraft] = useState({
     beginning_cash_on_hand: '',
     current_sales: '',
@@ -482,8 +484,74 @@ export default function FinancialReports() {
   );
 
   useEffect(() => {
-    loadSchoolYears();
+    selectedSchoolYearIdRef.current = selectedSchoolYearId;
+  }, [selectedSchoolYearId]);
+
+  useEffect(() => {
+    selectedReportIdRef.current = selectedReportId;
+  }, [selectedReportId]);
+
+  const loadSchoolYearDetail = useCallback(async (schoolYearId, preferredReportId = null) => {
+    if (!schoolYearId) {
+      setDetail(null);
+      return;
+    }
+
+    setDetailLoading(true);
+    try {
+      const schoolYearDetail = await API.getFinancialSchoolYearDetail(schoolYearId);
+      setDetail(schoolYearDetail);
+      const nextReportId =
+        preferredReportId ||
+        selectedReportIdRef.current ||
+        schoolYearDetail?.reports?.[0]?.id ||
+        null;
+      setSelectedReportId(nextReportId);
+      setSelectedSchoolYearId(schoolYearId);
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to load the selected school year.', 'error');
+    } finally {
+      setDetailLoading(false);
+    }
   }, []);
+
+  const loadSchoolYears = useCallback(async (preferredSchoolYearId = null) => {
+    setSchoolYearsLoading(true);
+    try {
+      const schoolYearList = await API.getFinancialSchoolYears();
+      const normalizedSchoolYears = Array.isArray(schoolYearList) ? schoolYearList : [];
+      const findSchoolYearId = (schoolYearId) =>
+        normalizedSchoolYears.find((schoolYear) => Number(schoolYear.id) === Number(schoolYearId))?.id || null;
+      const currentSchoolYearId =
+        normalizedSchoolYears.find((schoolYear) => isCurrentSchoolYear(schoolYear, schoolYearSuggestion))?.id ||
+        null;
+      setSchoolYears(normalizedSchoolYears);
+
+      const nextSchoolYearId =
+        findSchoolYearId(preferredSchoolYearId) ||
+        findSchoolYearId(selectedSchoolYearIdRef.current) ||
+        currentSchoolYearId ||
+        normalizedSchoolYears.find((schoolYear) => schoolYear.is_active)?.id ||
+        normalizedSchoolYears[0]?.id ||
+        null;
+
+      setSelectedSchoolYearId(nextSchoolYearId);
+      if (nextSchoolYearId) {
+        await loadSchoolYearDetail(nextSchoolYearId);
+      } else {
+        setDetail(null);
+      }
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to load school years.', 'error');
+      setDetail(null);
+    } finally {
+      setSchoolYearsLoading(false);
+    }
+  }, [loadSchoolYearDetail, schoolYearSuggestion]);
+
+  useEffect(() => {
+    loadSchoolYears();
+  }, [loadSchoolYears]);
 
   useEffect(() => {
     setFundMonitoringEditing(false);
@@ -532,7 +600,7 @@ export default function FinancialReports() {
         ])
       )
     );
-  }, [selectedReportId, detail]);
+  }, [selectedReport]);
 
   useEffect(() => {
     setAllocationDrafts(
@@ -546,64 +614,6 @@ export default function FinancialReports() {
       }))
     );
   }, [detail]);
-
-  async function loadSchoolYears(preferredSchoolYearId = null) {
-    setSchoolYearsLoading(true);
-    try {
-      const schoolYearList = await API.getFinancialSchoolYears();
-      const normalizedSchoolYears = Array.isArray(schoolYearList) ? schoolYearList : [];
-      const findSchoolYearId = (schoolYearId) =>
-        normalizedSchoolYears.find((schoolYear) => Number(schoolYear.id) === Number(schoolYearId))?.id || null;
-      const currentSchoolYearId =
-        normalizedSchoolYears.find((schoolYear) => isCurrentSchoolYear(schoolYear, schoolYearSuggestion))?.id ||
-        null;
-      setSchoolYears(normalizedSchoolYears);
-
-      const nextSchoolYearId =
-        findSchoolYearId(preferredSchoolYearId) ||
-        findSchoolYearId(selectedSchoolYearId) ||
-        currentSchoolYearId ||
-        normalizedSchoolYears.find((schoolYear) => schoolYear.is_active)?.id ||
-        normalizedSchoolYears[0]?.id ||
-        null;
-
-      setSelectedSchoolYearId(nextSchoolYearId);
-      if (nextSchoolYearId) {
-        await loadSchoolYearDetail(nextSchoolYearId);
-      } else {
-        setDetail(null);
-      }
-    } catch (error) {
-      window.showToast?.(error.message || 'Unable to load school years.', 'error');
-      setDetail(null);
-    } finally {
-      setSchoolYearsLoading(false);
-    }
-  }
-
-  async function loadSchoolYearDetail(schoolYearId, preferredReportId = null) {
-    if (!schoolYearId) {
-      setDetail(null);
-      return;
-    }
-
-    setDetailLoading(true);
-    try {
-      const schoolYearDetail = await API.getFinancialSchoolYearDetail(schoolYearId);
-      setDetail(schoolYearDetail);
-      const nextReportId =
-        preferredReportId ||
-        selectedReportId ||
-        schoolYearDetail?.reports?.[0]?.id ||
-        null;
-      setSelectedReportId(nextReportId);
-      setSelectedSchoolYearId(schoolYearId);
-    } catch (error) {
-      window.showToast?.(error.message || 'Unable to load the selected school year.', 'error');
-    } finally {
-      setDetailLoading(false);
-    }
-  }
 
   async function handleDeleteSchoolYear() {
     if (!selectedSchoolYearId || !isAdmin) {

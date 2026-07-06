@@ -36,26 +36,26 @@ function isBelowMinimumStock(product) {
 }
 
 const MIN_POS_ITEMS_PER_PAGE = 12;
-const DEFAULT_POS_ITEMS_PER_PAGE = 24;
-const MAX_POS_ITEMS_PER_PAGE = 72;
+const DEFAULT_POS_ITEMS_PER_PAGE = 18;
+const MAX_POS_ITEMS_PER_PAGE = 48;
 const MAX_PAGE_BUTTONS = 5;
 const CASH_PAYMENT_TYPE = 'cash';
 const CASH_PAYMENT_LABEL = 'Cash Payment';
 
 function estimateProductCardHeight(width) {
   if (width >= 1280) {
-    return 162;
+    return 198;
   }
 
   if (width >= 1024) {
-    return 168;
+    return 206;
   }
 
   if (width >= 768) {
-    return 176;
+    return 214;
   }
 
-  return 188;
+  return 226;
 }
 
 function formatPaymentMethod(value) {
@@ -190,7 +190,7 @@ export default function POS() {
         const columns = styles.gridTemplateColumns
           .split(' ')
           .filter((column) => column && column !== 'none').length;
-        const fallbackColumns = Math.max(2, Math.floor(grid.clientWidth / 160));
+        const fallbackColumns = Math.max(2, Math.floor(grid.clientWidth / 184));
         const columnCount = Math.max(2, columns || fallbackColumns);
         const rowGap = Number.parseFloat(styles.rowGap) || 10;
         const availableHeight = grid.clientHeight || Math.round(window.innerHeight * 0.58);
@@ -460,7 +460,7 @@ export default function POS() {
       <div className="custom-scrollbar flex-1 overflow-y-auto pb-4">
         <div className="pos-workspace-grid grid min-h-full grid-cols-1 gap-3">
           <div className="pos-products-section flex min-h-0 flex-col gap-3">
-          <div className="control-surface shrink-0 space-y-2.5 p-3">
+          <div className="control-surface shrink-0 space-y-3 p-4">
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
               <input
@@ -496,7 +496,7 @@ export default function POS() {
             </div>
           </div>
 
-          <div ref={productGridRef} className="pos-product-grid custom-scrollbar grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] content-start gap-2.5 pb-3 pr-0 sm:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-2 xl:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))]">
+          <div ref={productGridRef} className="pos-product-grid custom-scrollbar grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] content-start gap-3 pb-3 pr-0 sm:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-2 xl:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))]">
             {paginatedProducts.map((product) => {
               const selectedQty = cartQtyByProductId[product.id] || 0;
               const isSelected = selectedQty > 0;
@@ -504,7 +504,7 @@ export default function POS() {
               return (
                 <div
                   key={product.id}
-                  className={`pos-product-card relative flex flex-col items-center rounded-lg border p-2.5 text-center transition-[border-color,box-shadow,transform] duration-200 ease-out ${
+                  className={`pos-product-card relative flex flex-col items-center rounded-xl border p-3 text-center transition-[border-color,box-shadow,transform] duration-200 ease-out ${
                     product.stock === 0
                       ? 'border-slate-200 bg-white opacity-50 grayscale shadow-none'
                       : isSelected
@@ -521,31 +521,31 @@ export default function POS() {
                     }`}
                   >
                   {isSelected && (
-                    <div className="pos-selected-qty absolute right-2.5 top-2.5 inline-flex min-w-8 items-center justify-center rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                    <div className="pos-selected-qty absolute right-3 top-3 inline-flex min-w-[2.2rem] items-center justify-center rounded-full bg-primary px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
                       {selectedQty}
                     </div>
                   )}
 
                   <div
-                    className={`pos-product-icon mb-1.5 rounded-lg p-2 ${
+                    className={`pos-product-icon mb-2 rounded-xl p-2.5 ${
                       isSelected ? 'bg-primary/10 text-primary' : 'text-primary/80'
                     }`}
                   >
                     {(() => {
                       const ProductIcon = categoryIcon(product.category);
-                      return <ProductIcon className="h-6 w-6 sm:h-7 sm:w-7" />;
+                      return <ProductIcon className="h-7 w-7 sm:h-8 sm:w-8" />;
                     })()}
                   </div>
 
                   <div
-                    className="mb-0.5 w-full truncate px-1 text-[13px] font-semibold leading-tight text-slate-800"
+                    className="mb-1 w-full truncate px-1 text-sm font-semibold leading-tight text-slate-800"
                     title={product.name}
                   >
                     {product.name}
                   </div>
-                  <div className="text-[13px] font-semibold text-primary">{formatCurrency(product.price)}</div>
+                  <div className="text-sm font-semibold text-primary">{formatCurrency(product.price)}</div>
 
-                  <div className="mt-1.5 flex w-full flex-wrap items-center justify-center gap-1.5">
+                  <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
                     <div
                       className={`pos-stock-chip max-w-full truncate rounded-md px-2 py-0.5 text-[10px] font-bold ${
                         isBelowMinimumStock(product)
@@ -564,12 +564,12 @@ export default function POS() {
                   </div>
                   </button>
 
-                  <div className="pos-qty-stepper mt-2 flex w-full items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  <div className="pos-qty-stepper mt-3 flex w-full items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
                     <button
                       type="button"
                       onClick={() => updateQty(product.id, selectedQty - 1)}
                       disabled={selectedQty === 0}
-                      className="pos-qty-button flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
+                      className="pos-qty-button flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
                       aria-label={`Decrease ${product.name} quantity`}
                     >
                       <MinusSmallIcon className="h-5 w-5" />
@@ -588,7 +588,7 @@ export default function POS() {
                         onChange={(event) => handleQuantityInputChange(product.id, event.target.value)}
                         onKeyDown={preventInvalidQuantityKey}
                         aria-label={`Set ${product.name} quantity`}
-                        className="pos-qty-input mx-auto block h-5 w-10 rounded-md border border-transparent bg-transparent text-center text-sm font-semibold text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15 sm:w-12"
+                        className="pos-qty-input mx-auto block h-6 w-12 rounded-lg border border-transparent bg-transparent text-center text-base font-semibold text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
                       />
                     </div>
 
@@ -596,7 +596,7 @@ export default function POS() {
                       type="button"
                       onClick={() => addToCart(product)}
                       disabled={product.stock === 0 || selectedQty >= product.stock}
-                      className="pos-qty-button flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
+                      className="pos-qty-button flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
                       aria-label={`Increase ${product.name} quantity`}
                     >
                       <PlusSmallIcon className="h-5 w-5" />
