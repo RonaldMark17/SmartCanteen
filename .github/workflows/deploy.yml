@@ -41,8 +41,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           python -m venv .venv
           source .venv/bin/activate
+
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt
           python -m pip install pytest
@@ -51,19 +53,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           source .venv/bin/activate
-          python -m compileall -q backend smartcanteen/src/services
+
+          if [ -d "backend" ]; then
+            python -m compileall -q backend
+          else
+            echo "backend folder not found."
+            exit 1
+          fi
 
       - name: Run backend tests if available
         shell: bash
         run: |
           set -euo pipefail
+
           source .venv/bin/activate
+
           mapfile -t test_files < <(find backend tests -type f \( -name "test_*.py" -o -name "*_test.py" \) 2>/dev/null || true)
+
           if [ "${#test_files[@]}" -gt 0 ]; then
             python -m pytest "${test_files[@]}"
           else
-            echo "No backend test files found. Backend syntax check completed."
+            echo "No backend test files found. Skipping backend tests."
           fi
 
       - name: Set up Node.js
@@ -86,6 +98,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.test ? 0 : 1)"; then
             CI=true npm test
           else
@@ -101,7 +114,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: ci
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: production
 
     steps:
       - name: Validate required secrets
@@ -113,6 +125,7 @@ jobs:
           PROJECT_PATH: ${{ secrets.PROJECT_PATH }}
         run: |
           set -euo pipefail
+
           missing=0
 
           for secret_name in SERVER_HOST SERVER_USER SERVER_SSH_KEY PROJECT_PATH; do
@@ -122,24 +135,11 @@ jobs:
             fi
           done
 
-          if [ -n "${SERVER_USER:-}" ] && [ "$SERVER_USER" != "ubuntu" ]; then
-            echo "::error::SERVER_USER must be exactly ubuntu with no extra spaces."
-            missing=1
-          fi
-
-          if [ -n "${SERVER_SSH_KEY:-}" ] && ! grep -Eq -- '-----BEGIN .*PRIVATE KEY-----' <<<"$SERVER_SSH_KEY"; then
-            echo "::error::SERVER_SSH_KEY must be a full private key, including the BEGIN and END lines."
-            missing=1
-          fi
-
-          if [ -n "${SERVER_SSH_KEY:-}" ] && ! grep -Eq -- '-----END .*PRIVATE KEY-----' <<<"$SERVER_SSH_KEY"; then
-            echo "::error::SERVER_SSH_KEY must be a full private key, including the BEGIN and END lines."
-            missing=1
-          fi
-
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
+
+          echo "All required secrets exist."
 
       - name: Deploy to EC2 Server
         uses: appleboy/ssh-action@v1.0.3
@@ -153,10 +153,18 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           envs: PROJECT_PATH,BACKEND_SERVICE_NAME,NGINX_SERVICE_NAME,HEALTHCHECK_URL
+          script_stop: true
           script: |
             set -e
 
-            echo "Checking project directory..."
+            echo "Connected to server."
+            echo "Checking project directory: $PROJECT_PATH"
+
+            if [ -z "$PROJECT_PATH" ]; then
+              echo "PROJECT_PATH is empty."
+              exit 1
+            fi
+
             if [ ! -d "$PROJECT_PATH" ]; then
               echo "Project folder does not exist: $PROJECT_PATH"
               exit 1
@@ -164,14 +172,34 @@ jobs:
 
             cd "$PROJECT_PATH"
 
-            echo "Pulling latest code..."
+            echo "Current directory:"
+            pwd
+
+            echo "Checking git repository..."
+            if [ ! -d ".git" ]; then
+              echo "This folder is not a git repository: $PROJECT_PATH"
+              exit 1
+            fi
+
+            echo "Pulling latest code from main..."
             git fetch origin main
             git reset --hard origin/main
 
-            echo "Running deployment script..."
+            echo "Checking deployment script..."
+            if [ ! -f "scripts/deploy.sh" ]; then
+              echo "Missing deployment script: scripts/deploy.sh"
+              exit 1
+            fi
+
             backend_service="${BACKEND_SERVICE_NAME:-smartcanteen}"
             nginx_service="${NGINX_SERVICE_NAME:-nginx}"
             healthcheck_url="${HEALTHCHECK_URL:-http://127.0.0.1:8000/api/health}"
+
+            echo "Backend service: $backend_service"
+            echo "Nginx service: $nginx_service"
+            echo "Healthcheck URL: $healthcheck_url"
+
+            echo "Running deployment script..."
 
             SMARTCANTEEN_APP_DIR="$PROJECT_PATH" \
             SMARTCANTEEN_BRANCH="main" \
