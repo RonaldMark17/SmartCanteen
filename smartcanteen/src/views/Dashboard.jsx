@@ -534,7 +534,6 @@ export default function Dashboard() {
   const defaultYear = String(todayParts?.year || new Date().getFullYear());
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [transactionsLoading, setTransactionsLoading] = useState(true);
-  const [reloadKey, setReloadKey] = useState(0);
   const [overviewError, setOverviewError] = useState('');
   const [transactionsError, setTransactionsError] = useState('');
   const [period, setPeriod] = useState('day');
@@ -595,7 +594,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -699,7 +698,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey, period, selectedDate, selectedMonth, selectedYear]);
+  }, [period, selectedDate, selectedMonth, selectedYear]);
 
   const now = new Date();
   const referenceDate = buildReferenceDate(period, selectedDate, selectedMonth, selectedYear);
@@ -918,13 +917,6 @@ export default function Dashboard() {
                 </label>
               )}
 
-              <button
-                type="button"
-                onClick={() => setReloadKey((value) => value + 1)}
-                className="action-button"
-              >
-                Refresh
-              </button>
               <button
                 type="button"
                 onClick={handleExportSummary}

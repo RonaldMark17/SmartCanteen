@@ -277,8 +277,8 @@ export default function AuditLog() {
 
   return (
     <div className="view-shell h-auto min-h-full pb-6">
-      <div className="view-header md:flex-row md:items-center">
-        <div>
+      <div className="view-header md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
           <div className="view-eyebrow">
             <ShieldCheckIcon className="h-4 w-4" />
             Security Trail
@@ -289,17 +289,17 @@ export default function AuditLog() {
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+        <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-start md:ml-auto md:justify-end">
           <button
             type="button"
             onClick={refreshAll}
-            className="action-button"
+            className="action-button shrink-0"
           >
             <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
 
-          <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800 shadow-sm">
+          <div className="w-full rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800 shadow-sm sm:w-auto sm:min-w-[240px]">
             <div className="flex items-center gap-2 font-black">
               <ClockIcon className="h-4 w-4" />
               Philippine Time

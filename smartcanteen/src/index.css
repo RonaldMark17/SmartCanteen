@@ -2648,8 +2648,8 @@ html.dark .app-shell .demand-forecast-view .inline-flex.rounded-\[14px\].bg-slat
 
 @media (min-width: 768px) and (max-width: 1024px) {
   .app-shell .pos-workspace-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
-    gap: 0.75rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
     align-items: start;
   }
 

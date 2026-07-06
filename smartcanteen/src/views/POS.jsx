@@ -351,8 +351,8 @@ export default function POS() {
 
   return (
     <div className="view-shell-static relative">
-      <div className="view-header shrink-0 md:flex-row md:items-start">
-        <div>
+      <div className="view-header shrink-0 gap-4 md:flex-row md:items-start md:justify-between md:gap-6">
+        <div className="min-w-0">
           <h1 className="view-title">Point of Sale</h1>
           <p className="view-subtitle">Process orders and manage transactions</p>
         </div>
@@ -361,22 +361,22 @@ export default function POS() {
           type="button"
           onClick={() => hasCartItems && setShowOrderModal(true)}
           disabled={!hasCartItems}
-          className={`pos-order-review-trigger inline-flex w-full min-w-0 items-center gap-3 rounded-2xl border px-4 py-3 text-left transition sm:w-auto sm:min-w-[220px] md:hidden ${
+          className={`pos-order-review-trigger inline-flex w-full max-w-full min-w-0 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left shadow-sm transition sm:w-[18rem] sm:max-w-[18rem] md:ml-auto md:w-[19rem] md:max-w-[19rem] lg:w-[20rem] lg:max-w-[20rem] ${
             hasCartItems
-              ? 'border-slate-200 bg-white text-slate-900 shadow-sm hover:border-primary hover:shadow-md'
+              ? 'border-slate-200 bg-white text-slate-900 hover:border-primary hover:shadow-md'
               : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
           }`}
         >
-          <div className={`pos-order-review-icon rounded-xl p-2 ${hasCartItems ? 'bg-slate-900 text-white' : 'bg-white text-slate-300'}`}>
-            <ShoppingCartIcon className="h-5 w-5" />
+          <div className={`pos-order-review-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${hasCartItems ? 'bg-slate-900 text-white' : 'bg-white text-slate-300'}`}>
+            <ShoppingCartIcon className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[10px] font-bold uppercase tracking-widest">
-              {hasCartItems ? 'Current Order' : 'Pick Products First'}
+            <div className="text-[10px] font-black uppercase leading-tight tracking-[0.16em]">
+              {hasCartItems ? 'CURRENT ORDER' : 'PICK PRODUCTS FIRST'}
             </div>
-            <div className="mt-1 truncate text-sm font-black">
+            <div className="mt-0.5 truncate text-xs font-semibold leading-5">
               {hasCartItems
-                ? `${totalUnits} units • ${formatCurrency(cartTotal)}`
+                ? `${formatCount(totalUnits)} units | ${formatCurrency(cartTotal)}`
                 : 'Select an item to open order review'}
             </div>
           </div>
@@ -384,7 +384,7 @@ export default function POS() {
       </div>
 
       <div className="custom-scrollbar flex-1 overflow-y-auto pb-4">
-        <div className="pos-workspace-grid grid min-h-full gap-4 md:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)]">
+        <div className="pos-workspace-grid grid min-h-full grid-cols-1 gap-4">
           <div className="pos-products-section flex min-h-0 flex-col gap-4">
           <div className="control-surface shrink-0 space-y-3">
             <div className="relative">
@@ -422,7 +422,7 @@ export default function POS() {
             </div>
           </div>
 
-          <div className="pos-product-grid custom-scrollbar grid grid-cols-2 content-start gap-3 pb-4 pr-0 sm:grid-cols-2 md:min-h-0 md:flex-1 md:grid-cols-2 md:overflow-y-auto md:pr-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="pos-product-grid custom-scrollbar grid grid-cols-2 content-start gap-3 pb-4 pr-0 sm:grid-cols-2 md:min-h-0 md:flex-1 md:grid-cols-2 md:overflow-y-auto md:pr-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
             {paginatedProducts.map((product) => {
               const selectedQty = cartQtyByProductId[product.id] || 0;
               const isSelected = selectedQty > 0;
@@ -590,7 +590,7 @@ export default function POS() {
           )}
           </div>
 
-          <aside className="pos-cart-sidebar hidden min-h-0 md:block" aria-live="polite">
+          <aside className="hidden" aria-hidden="true">
             <div className="pos-cart-panel sticky top-0 flex max-h-[calc(100dvh-9rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="pos-cart-header shrink-0 border-b border-slate-200 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -777,7 +777,7 @@ export default function POS() {
       </div>
 
       {showOrderModal && hasCartItems && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-md sm:items-center sm:p-4 md:hidden">
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-md sm:items-center sm:p-4">
           <div className="order-review-panel relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)] sm:h-[94vh] sm:max-h-[94vh] sm:max-w-6xl sm:rounded-[30px] sm:border sm:border-slate-200/80">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%),radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_38%)]" />
 
