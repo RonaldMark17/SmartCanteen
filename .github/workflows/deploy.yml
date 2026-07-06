@@ -104,95 +104,80 @@ jobs:
     environment: production
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Validate deployment secrets
+      - name: Validate required secrets
         shell: bash
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          PROJECT_PATH: ${{ secrets.PROJECT_PATH }}
         run: |
           set -euo pipefail
           missing=0
-          for secret_name in SERVER_HOST SERVER_USER SERVER_SSH_KEY; do
+
+          for secret_name in SERVER_HOST SERVER_USER SERVER_SSH_KEY PROJECT_PATH; do
             if [ -z "${!secret_name:-}" ]; then
               echo "::error::Missing required GitHub secret: ${secret_name}"
               missing=1
             fi
           done
+
+          if [ -n "${SERVER_USER:-}" ] && [ "$SERVER_USER" != "ubuntu" ]; then
+            echo "::error::SERVER_USER must be exactly ubuntu with no extra spaces."
+            missing=1
+          fi
+
+          if [ -n "${SERVER_SSH_KEY:-}" ] && ! grep -Eq -- '-----BEGIN .*PRIVATE KEY-----' <<<"$SERVER_SSH_KEY"; then
+            echo "::error::SERVER_SSH_KEY must be a full private key, including the BEGIN and END lines."
+            missing=1
+          fi
+
+          if [ -n "${SERVER_SSH_KEY:-}" ] && ! grep -Eq -- '-----END .*PRIVATE KEY-----' <<<"$SERVER_SSH_KEY"; then
+            echo "::error::SERVER_SSH_KEY must be a full private key, including the BEGIN and END lines."
+            missing=1
+          fi
+
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
 
-      - name: Configure SSH
-        shell: bash
+      - name: Deploy to EC2 Server
+        uses: appleboy/ssh-action@v1.0.3
         env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          port="${SERVER_PORT:-22}"
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "$port" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
-
-      - name: Sync production environment file if provided
-        shell: bash
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
-          SERVER_ENV_FILE: ${{ secrets.SERVER_ENV_FILE }}
-        run: |
-          set -euo pipefail
-          if [ -z "${SERVER_ENV_FILE:-}" ]; then
-            echo "SERVER_ENV_FILE secret is not set. Keeping the existing server .env file."
-            exit 0
-          fi
-          port="${SERVER_PORT:-22}"
-          app_dir="${SERVER_APP_DIR:-/var/www/smartcanteen}"
-          encoded_env="$(printf '%s' "$SERVER_ENV_FILE" | base64 -w 0)"
-          remote_command="$(
-            printf 'mkdir -p %q %q && umask 077 && printf %%s %q | base64 -d > %q && cp %q %q' \
-              "$app_dir" \
-              "$app_dir/smartcanteen" \
-              "$encoded_env" \
-              "$app_dir/.env" \
-              "$app_dir/.env" \
-              "$app_dir/smartcanteen/.env.production"
-          )"
-          ssh -p "$port" "$SERVER_USER@$SERVER_HOST" "$remote_command"
-
-      - name: Run deployment script
-        shell: bash
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+          PROJECT_PATH: ${{ secrets.PROJECT_PATH }}
           BACKEND_SERVICE_NAME: ${{ secrets.BACKEND_SERVICE_NAME }}
           NGINX_SERVICE_NAME: ${{ secrets.NGINX_SERVICE_NAME }}
           HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
-        run: |
-          set -euo pipefail
-          port="${SERVER_PORT:-22}"
-          app_dir="${SERVER_APP_DIR:-/var/www/smartcanteen}"
-          backend_service="${BACKEND_SERVICE_NAME:-smartcanteen}"
-          nginx_service="${NGINX_SERVICE_NAME:-nginx}"
-          healthcheck_url="${HEALTHCHECK_URL:-http://127.0.0.1:8000/api/health}"
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: PROJECT_PATH,BACKEND_SERVICE_NAME,NGINX_SERVICE_NAME,HEALTHCHECK_URL
+          script: |
+            set -e
 
-          remote_command="$(
-            printf 'SMARTCANTEEN_APP_DIR=%q SMARTCANTEEN_BRANCH=%q SMARTCANTEEN_BACKEND_SERVICE=%q SMARTCANTEEN_NGINX_SERVICE=%q SMARTCANTEEN_HEALTHCHECK_URL=%q bash -s' \
-              "$app_dir" \
-              "main" \
-              "$backend_service" \
-              "$nginx_service" \
-              "$healthcheck_url"
-          )"
+            echo "Checking project directory..."
+            if [ ! -d "$PROJECT_PATH" ]; then
+              echo "Project folder does not exist: $PROJECT_PATH"
+              exit 1
+            fi
 
-          ssh -p "$port" "$SERVER_USER@$SERVER_HOST" "$remote_command" < scripts/deploy.sh
+            cd "$PROJECT_PATH"
+
+            echo "Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "Running deployment script..."
+            backend_service="${BACKEND_SERVICE_NAME:-smartcanteen}"
+            nginx_service="${NGINX_SERVICE_NAME:-nginx}"
+            healthcheck_url="${HEALTHCHECK_URL:-http://127.0.0.1:8000/api/health}"
+
+            SMARTCANTEEN_APP_DIR="$PROJECT_PATH" \
+            SMARTCANTEEN_BRANCH="main" \
+            SMARTCANTEEN_BACKEND_SERVICE="$backend_service" \
+            SMARTCANTEEN_NGINX_SERVICE="$nginx_service" \
+            SMARTCANTEEN_HEALTHCHECK_URL="$healthcheck_url" \
+              bash scripts/deploy.sh
+
+            echo "Deployment completed successfully."

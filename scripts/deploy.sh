@@ -51,7 +51,7 @@ require_command "$PYTHON_BIN"
 
 if [ ! -d "$APP_DIR/.git" ]; then
   echo "Deployment directory is not a git repository: $APP_DIR" >&2
-  echo "Set SMARTCANTEEN_APP_DIR or SERVER_APP_DIR to the checked-out SmartCanteen repository." >&2
+  echo "Set PROJECT_PATH to the checked-out SmartCanteen repository on the server." >&2
   exit 1
 fi
 
