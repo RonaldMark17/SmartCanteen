@@ -17,4 +17,5 @@ smartcanteen/dist/
 
 *.log
 *.pyc
+*.db
 
