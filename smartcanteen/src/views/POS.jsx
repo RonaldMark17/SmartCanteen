@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { API } from '../services/api';
 import { saveOfflineTransaction } from '../services/offlineStore';
 import { requestAlertRefresh } from '../services/realtimeAlerts';
@@ -35,10 +35,28 @@ function isBelowMinimumStock(product) {
   return Number(product?.stock || 0) < Number(product?.min_stock || 0);
 }
 
-const POS_ITEMS_PER_PAGE = 12;
+const MIN_POS_ITEMS_PER_PAGE = 12;
+const DEFAULT_POS_ITEMS_PER_PAGE = 24;
+const MAX_POS_ITEMS_PER_PAGE = 72;
 const MAX_PAGE_BUTTONS = 5;
 const CASH_PAYMENT_TYPE = 'cash';
 const CASH_PAYMENT_LABEL = 'Cash Payment';
+
+function estimateProductCardHeight(width) {
+  if (width >= 1280) {
+    return 162;
+  }
+
+  if (width >= 1024) {
+    return 168;
+  }
+
+  if (width >= 768) {
+    return 176;
+  }
+
+  return 188;
+}
 
 function formatPaymentMethod(value) {
   return String(value || CASH_PAYMENT_TYPE).toLowerCase() === CASH_PAYMENT_TYPE
@@ -122,11 +140,13 @@ function preventInvalidQuantityKey(event) {
 }
 
 export default function POS() {
+  const productGridRef = useRef(null);
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_POS_ITEMS_PER_PAGE);
 
   // Checkout State
   const [amountReceived, setAmountReceived] = useState('');
@@ -151,6 +171,60 @@ export default function POS() {
     mediaQuery.addEventListener('change', closeMobileOrderModal);
 
     return () => mediaQuery.removeEventListener('change', closeMobileOrderModal);
+  }, []);
+
+  useEffect(() => {
+    const grid = productGridRef.current;
+    if (!grid) {
+      return undefined;
+    }
+
+    let frameId = null;
+    const updateItemsPerPage = () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        const styles = window.getComputedStyle(grid);
+        const columns = styles.gridTemplateColumns
+          .split(' ')
+          .filter((column) => column && column !== 'none').length;
+        const fallbackColumns = Math.max(2, Math.floor(grid.clientWidth / 160));
+        const columnCount = Math.max(2, columns || fallbackColumns);
+        const rowGap = Number.parseFloat(styles.rowGap) || 10;
+        const availableHeight = grid.clientHeight || Math.round(window.innerHeight * 0.58);
+        const estimatedCardHeight = estimateProductCardHeight(window.innerWidth);
+        const minimumRows = window.innerWidth >= 768 ? 3 : 4;
+        const rowCount = Math.max(
+          minimumRows,
+          Math.floor((availableHeight + rowGap) / (estimatedCardHeight + rowGap))
+        );
+        const nextItemsPerPage = Math.min(
+          MAX_POS_ITEMS_PER_PAGE,
+          Math.max(MIN_POS_ITEMS_PER_PAGE, columnCount * rowCount)
+        );
+
+        setItemsPerPage((currentValue) =>
+          currentValue === nextItemsPerPage ? currentValue : nextItemsPerPage
+        );
+      });
+    };
+
+    updateItemsPerPage();
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateItemsPerPage);
+    resizeObserver?.observe(grid);
+    window.addEventListener('resize', updateItemsPerPage);
+
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateItemsPerPage);
+    };
   }, []);
 
   // --- Cart Logic ---
@@ -250,10 +324,10 @@ export default function POS() {
       (p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.category.toLowerCase().includes(search.toLowerCase()))
   );
-  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / POS_ITEMS_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages);
-  const pageStartIndex = filteredProducts.length === 0 ? 0 : (safeCurrentPage - 1) * POS_ITEMS_PER_PAGE;
-  const paginatedProducts = filteredProducts.slice(pageStartIndex, pageStartIndex + POS_ITEMS_PER_PAGE);
+  const pageStartIndex = filteredProducts.length === 0 ? 0 : (safeCurrentPage - 1) * itemsPerPage;
+  const paginatedProducts = filteredProducts.slice(pageStartIndex, pageStartIndex + itemsPerPage);
   const pageStartCount = filteredProducts.length === 0 ? 0 : pageStartIndex + 1;
   const pageEndCount = Math.min(pageStartIndex + paginatedProducts.length, filteredProducts.length);
   const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
@@ -384,9 +458,9 @@ export default function POS() {
       </div>
 
       <div className="custom-scrollbar flex-1 overflow-y-auto pb-4">
-        <div className="pos-workspace-grid grid min-h-full grid-cols-1 gap-4">
-          <div className="pos-products-section flex min-h-0 flex-col gap-4">
-          <div className="control-surface shrink-0 space-y-3">
+        <div className="pos-workspace-grid grid min-h-full grid-cols-1 gap-3">
+          <div className="pos-products-section flex min-h-0 flex-col gap-3">
+          <div className="control-surface shrink-0 space-y-2.5 p-3">
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
               <input
@@ -422,7 +496,7 @@ export default function POS() {
             </div>
           </div>
 
-          <div className="pos-product-grid custom-scrollbar grid grid-cols-2 content-start gap-3 pb-4 pr-0 sm:grid-cols-2 md:min-h-0 md:flex-1 md:grid-cols-2 md:overflow-y-auto md:pr-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+          <div ref={productGridRef} className="pos-product-grid custom-scrollbar grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] content-start gap-2.5 pb-3 pr-0 sm:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-2 xl:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))]">
             {paginatedProducts.map((product) => {
               const selectedQty = cartQtyByProductId[product.id] || 0;
               const isSelected = selectedQty > 0;
@@ -430,7 +504,7 @@ export default function POS() {
               return (
                 <div
                   key={product.id}
-                  className={`pos-product-card relative flex flex-col items-center rounded-xl border p-3 text-center transition-[border-color,box-shadow,transform] duration-200 ease-out sm:p-3 ${
+                  className={`pos-product-card relative flex flex-col items-center rounded-lg border p-2.5 text-center transition-[border-color,box-shadow,transform] duration-200 ease-out ${
                     product.stock === 0
                       ? 'border-slate-200 bg-white opacity-50 grayscale shadow-none'
                       : isSelected
@@ -447,31 +521,31 @@ export default function POS() {
                     }`}
                   >
                   {isSelected && (
-                    <div className="pos-selected-qty absolute right-3 top-3 inline-flex min-w-[2.2rem] items-center justify-center rounded-full bg-primary px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                    <div className="pos-selected-qty absolute right-2.5 top-2.5 inline-flex min-w-8 items-center justify-center rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
                       {selectedQty}
                     </div>
                   )}
 
                   <div
-                    className={`pos-product-icon mb-2 rounded-xl p-2.5 ${
+                    className={`pos-product-icon mb-1.5 rounded-lg p-2 ${
                       isSelected ? 'bg-primary/10 text-primary' : 'text-primary/80'
                     }`}
                   >
                     {(() => {
                       const ProductIcon = categoryIcon(product.category);
-                      return <ProductIcon className="h-7 w-7 sm:h-8 sm:w-8" />;
+                      return <ProductIcon className="h-6 w-6 sm:h-7 sm:w-7" />;
                     })()}
                   </div>
 
                   <div
-                    className="mb-1 w-full truncate px-1 text-[13px] font-semibold leading-tight text-slate-800"
+                    className="mb-0.5 w-full truncate px-1 text-[13px] font-semibold leading-tight text-slate-800"
                     title={product.name}
                   >
                     {product.name}
                   </div>
-                  <div className="text-sm font-semibold text-primary">{formatCurrency(product.price)}</div>
+                  <div className="text-[13px] font-semibold text-primary">{formatCurrency(product.price)}</div>
 
-                  <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
+                  <div className="mt-1.5 flex w-full flex-wrap items-center justify-center gap-1.5">
                     <div
                       className={`pos-stock-chip max-w-full truncate rounded-md px-2 py-0.5 text-[10px] font-bold ${
                         isBelowMinimumStock(product)
@@ -490,12 +564,12 @@ export default function POS() {
                   </div>
                   </button>
 
-                  <div className="pos-qty-stepper mt-3 flex w-full items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
+                  <div className="pos-qty-stepper mt-2 flex w-full items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
                     <button
                       type="button"
                       onClick={() => updateQty(product.id, selectedQty - 1)}
                       disabled={selectedQty === 0}
-                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
+                      className="pos-qty-button flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
                       aria-label={`Decrease ${product.name} quantity`}
                     >
                       <MinusSmallIcon className="h-5 w-5" />
@@ -514,7 +588,7 @@ export default function POS() {
                         onChange={(event) => handleQuantityInputChange(product.id, event.target.value)}
                         onKeyDown={preventInvalidQuantityKey}
                         aria-label={`Set ${product.name} quantity`}
-                        className="pos-qty-input mx-auto block h-6 w-10 rounded-lg border border-transparent bg-transparent text-center text-base font-semibold text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15 sm:w-12"
+                        className="pos-qty-input mx-auto block h-5 w-10 rounded-md border border-transparent bg-transparent text-center text-sm font-semibold text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15 sm:w-12"
                       />
                     </div>
 
@@ -522,7 +596,7 @@ export default function POS() {
                       type="button"
                       onClick={() => addToCart(product)}
                       disabled={product.stock === 0 || selectedQty >= product.stock}
-                      className="pos-qty-button flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
+                      className="pos-qty-button flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
                       aria-label={`Increase ${product.name} quantity`}
                     >
                       <PlusSmallIcon className="h-5 w-5" />
@@ -540,7 +614,7 @@ export default function POS() {
           </div>
 
           {filteredProducts.length > 0 && (
-            <div className="data-card flex shrink-0 flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="data-card flex shrink-0 flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm font-semibold text-slate-600">
                 Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(filteredProducts.length)} products
               </div>
@@ -777,20 +851,20 @@ export default function POS() {
       </div>
 
       {showOrderModal && hasCartItems && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-md sm:items-center sm:p-4">
-          <div className="order-review-panel relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)] sm:h-[94vh] sm:max-h-[94vh] sm:max-w-6xl sm:rounded-[30px] sm:border sm:border-slate-200/80">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%),radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_38%)]" />
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-md sm:items-center">
+          <div className="order-review-panel relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)] sm:h-[min(94dvh,900px)] sm:max-h-[94dvh] sm:w-[min(96vw,1200px)] sm:max-w-none sm:rounded-2xl sm:border sm:border-slate-200/80">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%),radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_38%)]" />
 
-            <div className="order-review-header relative shrink-0 border-b border-slate-200 bg-slate-950 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] text-white sm:px-6 sm:py-5">
+            <div className="order-review-header relative shrink-0 border-b border-slate-200 bg-slate-950 px-3 pb-2.5 pt-[calc(env(safe-area-inset-top)+0.625rem)] text-white sm:px-4 sm:py-3 lg:px-5">
               <div className="sm:hidden">
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start justify-between gap-2.5">
                   <div className="min-w-0">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-slate-100">
-                      <ShoppingCartIcon className="h-4 w-4" />
+                    <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-100">
+                      <ShoppingCartIcon className="h-3.5 w-3.5" />
                       Current Order
                     </div>
-                    <h3 className="mt-2 text-lg font-black tracking-tight">Review order</h3>
-                    <p className="mt-1 text-xs font-semibold text-slate-300">
+                    <h3 className="mt-1.5 text-base font-black tracking-tight">Review order</h3>
+                    <p className="mt-0.5 text-xs font-semibold text-slate-300">
                       {cart.length} item(s) | {totalUnits} unit(s) | {formatCurrency(cartTotal)}
                     </p>
                   </div>
@@ -799,7 +873,7 @@ export default function POS() {
                     <button
                       type="button"
                       onClick={clearCart}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/10 px-2.5 py-1.5 text-xs font-bold text-white transition hover:border-white/20 hover:bg-white/15"
                     >
                       <TrashIcon className="h-4 w-4" />
                       Clear
@@ -807,7 +881,7 @@ export default function POS() {
                     <button
                       type="button"
                       onClick={() => setShowOrderModal(false)}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-white transition hover:border-white/20 hover:bg-white/15"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/10 text-white transition hover:border-white/20 hover:bg-white/15"
                       aria-label="Close order modal"
                     >
                       <XMarkIcon className="h-5 w-5" />
@@ -815,45 +889,45 @@ export default function POS() {
                   </div>
                 </div>
 
-                <div className="order-summary-grid mt-3 grid grid-cols-2 gap-2">
-                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
-                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
+                <div className="order-summary-grid mt-2.5 grid grid-cols-2 gap-2">
+                  <div className="order-summary-card rounded-xl border border-white/10 bg-white/10 px-2.5 py-2">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.16em] text-slate-300">
                       Items
                     </div>
-                    <div className="order-summary-card-value mt-1 text-base font-black">{cart.length}</div>
+                    <div className="order-summary-card-value mt-0.5 text-sm font-black">{cart.length}</div>
                   </div>
-                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-3 py-2.5">
-                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-slate-300">
+                  <div className="order-summary-card rounded-xl border border-white/10 bg-white/10 px-2.5 py-2">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.16em] text-slate-300">
                       Units
                     </div>
-                    <div className="order-summary-card-value mt-1 text-base font-black">{totalUnits}</div>
+                    <div className="order-summary-card-value mt-0.5 text-sm font-black">{totalUnits}</div>
                   </div>
-                  <div className="order-summary-card rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5">
-                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-100">
+                  <div className="order-summary-card rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-2">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-100">
                       Total
                     </div>
-                    <div className="order-summary-card-value mt-1 text-sm font-black">{formatCurrency(cartTotal)}</div>
+                    <div className="order-summary-card-value mt-0.5 text-sm font-black">{formatCurrency(cartTotal)}</div>
                   </div>
-                  <div className="order-summary-card rounded-2xl border border-sky-400/20 bg-sky-400/10 px-3 py-2.5">
-                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.2em] text-sky-100">
+                  <div className="order-summary-card rounded-xl border border-sky-400/20 bg-sky-400/10 px-2.5 py-2">
+                    <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.16em] text-sky-100">
                       Change
                     </div>
-                    <div className="order-summary-card-value mt-1 text-sm font-black">{formatCurrency(change)}</div>
+                    <div className="order-summary-card-value mt-0.5 text-sm font-black">{formatCurrency(change)}</div>
                   </div>
                 </div>
               </div>
 
               <div className="hidden sm:block">
-                <div className="order-review-tablet-copy flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="max-w-3xl">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-slate-100">
-                      <ShoppingCartIcon className="h-4 w-4" />
+                <div className="order-review-tablet-copy flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 max-w-3xl">
+                    <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-100">
+                      <ShoppingCartIcon className="h-3.5 w-3.5" />
                       Current Order
                     </div>
-                    <h3 className="order-review-title mt-3 text-xl font-black tracking-tight sm:text-3xl">
+                    <h3 className="order-review-title mt-1.5 text-lg font-black tracking-tight">
                       Review order before checkout
                     </h3>
-                    <p className="order-review-description mt-2 text-sm leading-6 text-slate-300">
+                    <p className="order-review-description mt-1 text-xs leading-5 text-slate-300">
                       Check item quantities and confirm the payment details before completing this sale.
                     </p>
                   </div>
@@ -862,7 +936,7 @@ export default function POS() {
                     <button
                       type="button"
                       onClick={clearCart}
-                      className="order-action-button inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                      className="order-action-button inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-xs font-bold text-white transition hover:border-white/20 hover:bg-white/15"
                     >
                       <TrashIcon className="h-4 w-4" />
                       Clear Order
@@ -870,7 +944,7 @@ export default function POS() {
                     <button
                       type="button"
                       onClick={() => setShowOrderModal(false)}
-                      className="order-action-button inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:border-white/20 hover:bg-white/15"
+                      className="order-action-button inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-xs font-bold text-white transition hover:border-white/20 hover:bg-white/15"
                     >
                       <XMarkIcon className="h-4 w-4" />
                       Close
@@ -878,37 +952,37 @@ export default function POS() {
                   </div>
                 </div>
 
-                <div className="order-summary-grid mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-4">
-                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
+                <div className="order-summary-grid mt-3 grid grid-cols-2 gap-2">
+                  <div className="order-summary-card rounded-xl border border-white/10 bg-white/10 px-3 py-2">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
                       Items
                     </div>
-                    <div className="order-summary-card-value mt-1 text-xl font-black">{cart.length}</div>
+                    <div className="order-summary-card-value mt-0.5 text-base font-black">{cart.length}</div>
                   </div>
-                  <div className="order-summary-card rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-slate-300">
+                  <div className="order-summary-card rounded-xl border border-white/10 bg-white/10 px-3 py-2">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
                       Units
                     </div>
-                    <div className="order-summary-card-value mt-1 text-xl font-black">{totalUnits}</div>
+                    <div className="order-summary-card-value mt-0.5 text-base font-black">{totalUnits}</div>
                   </div>
-                  <div className="order-summary-card rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3">
-                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-emerald-100">
+                  <div className="order-summary-card rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-100">
                       Total Due
                     </div>
-                    <div className="order-summary-card-value mt-1 text-base font-black">{formatCurrency(cartTotal)}</div>
+                    <div className="order-summary-card-value mt-0.5 text-sm font-black sm:text-base">{formatCurrency(cartTotal)}</div>
                   </div>
-                  <div className="order-summary-card rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3">
-                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.24em] text-sky-100">
+                  <div className="order-summary-card rounded-xl border border-sky-400/20 bg-sky-400/10 px-3 py-2">
+                    <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.16em] text-sky-100">
                       Change
                     </div>
-                    <div className="order-summary-card-value mt-1 text-base font-black">{formatCurrency(change)}</div>
+                    <div className="order-summary-card-value mt-0.5 text-sm font-black sm:text-base">{formatCurrency(change)}</div>
                   </div>
                 </div>
               </div>
             </div>
 
             <div className="order-review-body min-h-0 flex-1">
-              <div className="order-review-body-scroll custom-scrollbar h-full overflow-y-auto overscroll-y-contain bg-slate-50 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] xl:hidden">
+              <div className="order-review-body-scroll custom-scrollbar h-full overflow-y-auto overscroll-y-contain bg-slate-50 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:p-4 lg:hidden">
                 <div className="space-y-3">
                   <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
@@ -1120,9 +1194,9 @@ export default function POS() {
                 </div>
               </div>
 
-              <div className="hidden h-full min-h-0 xl:block">
-                <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.9fr)]">
-                <div className="custom-scrollbar min-h-[240px] bg-slate-50/80 p-4 sm:p-5 xl:min-h-0 xl:overflow-y-auto">
+              <div className="hidden h-full min-h-0 lg:block">
+                <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.9fr)]">
+                <div className="custom-scrollbar min-h-[240px] bg-slate-50/80 p-4 lg:min-h-0 lg:overflow-y-auto">
                 <div className="mb-4 flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">
@@ -1235,8 +1309,8 @@ export default function POS() {
                 </div>
               </div>
 
-              <div className="custom-scrollbar border-t border-slate-200 bg-white p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:p-5 sm:pb-5 xl:min-h-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
-                <div className="space-y-4">
+              <div className="custom-scrollbar border-t border-slate-200 bg-white p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
+                <div className="space-y-3">
                   <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center gap-2 text-sm font-black text-slate-900">
                       <DocumentTextIcon className="h-5 w-5 text-slate-400" />

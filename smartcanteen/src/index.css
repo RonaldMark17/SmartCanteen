@@ -2784,7 +2784,10 @@ html.dark .app-shell .demand-forecast-view .inline-flex.rounded-\[14px\].bg-slat
 
 @media (min-width: 640px) and (max-width: 1024px) {
   .app-shell .order-review-panel {
-    max-height: min(94dvh, 720px);
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
   }
 
   .app-shell .order-review-header {
@@ -2823,9 +2826,9 @@ html.dark .app-shell .demand-forecast-view .inline-flex.rounded-\[14px\].bg-slat
   }
 
   .app-shell .order-summary-card {
-    min-height: 3.5rem;
-    padding: 0.625rem 0.75rem;
-    border-radius: 0.875rem;
+    min-height: 2.875rem;
+    padding: 0.5rem 0.625rem;
+    border-radius: 0.75rem;
   }
 
   .app-shell .order-summary-card-label {
@@ -2845,5 +2848,11 @@ html.dark .app-shell .demand-forecast-view .inline-flex.rounded-\[14px\].bg-slat
 
   .app-shell .order-review-body-scroll {
     padding: 0.75rem;
+  }
+}
+
+@media (min-width: 1025px) {
+  .app-shell .order-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
