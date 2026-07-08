@@ -506,10 +506,10 @@ export default function POS() {
                   key={product.id}
                   className={`pos-product-card relative flex flex-col items-center rounded-xl border p-3 text-center transition-[border-color,box-shadow,transform] duration-200 ease-out ${
                     product.stock === 0
-                      ? 'border-slate-200 bg-white opacity-50 grayscale shadow-none'
+                      ? 'pos-product-card-disabled border-slate-200 bg-white opacity-50 grayscale shadow-none'
                       : isSelected
-                        ? 'border-primary bg-white shadow-[0_10px_24px_rgba(15,118,110,0.12)] hover:-translate-y-0.5 hover:shadow-[0_12px_26px_rgba(15,118,110,0.14)]'
-                        : 'border-slate-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-[0_8px_20px_rgba(15,23,42,0.08)]'
+                        ? 'pos-product-card-selected border-primary bg-white shadow-[0_10px_24px_rgba(15,118,110,0.12)]'
+                        : 'pos-product-card-idle border-slate-200 bg-white shadow-sm'
                   }`}
                 >
                   <button

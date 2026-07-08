@@ -662,9 +662,7 @@ html.dark body {
     background: #111827;
     border-color: rgba(93, 110, 139, 0.34);
     color: #dce4ef;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.025),
-      0 14px 34px rgba(0, 0, 0, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   }
 
   html.dark .pos-product-card:hover {
@@ -1181,6 +1179,41 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   border-color: #99f6e4 !important;
   box-shadow: var(--sc-soft-shadow) !important;
   transform: translateY(-2px);
+}
+
+.app-shell .pos-product-card-idle {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+  transform: none;
+}
+
+.app-shell .pos-product-card-idle:hover {
+  background: #ffffff !important;
+  border-color: #99f6e4 !important;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08) !important;
+  transform: translateY(-2px);
+}
+
+.app-shell .pos-product-card-selected {
+  background: #ffffff !important;
+  border-color: #0f766e !important;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.12) !important;
+}
+
+.app-shell .pos-product-card.pos-product-card-selected:not(.opacity-50):hover {
+  background: #ffffff !important;
+  border-color: #0f766e !important;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.12) !important;
+  transform: none !important;
+}
+
+.app-shell .pos-product-card-disabled,
+.app-shell .pos-product-card-disabled:hover {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
 
 .app-shell .pos-product-card.border-primary,
@@ -2121,6 +2154,41 @@ html.dark .app-shell .pos-selected-chip,
 html.dark .app-shell .pos-product-icon {
   background: var(--sc-success-bg) !important;
   color: var(--sc-success-text) !important;
+}
+
+html.dark .app-shell .pos-product-card-idle {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025) !important;
+  transform: none;
+}
+
+html.dark .app-shell .pos-product-card-idle:hover {
+  background: var(--dark-card) !important;
+  border-color: rgba(94, 234, 212, 0.32) !important;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16) !important;
+  transform: translateY(-2px);
+}
+
+html.dark .app-shell .pos-product-card-selected {
+  background: var(--sc-success-bg) !important;
+  border-color: var(--sc-success-border) !important;
+  box-shadow: 0 10px 24px rgba(20, 184, 166, 0.1) !important;
+}
+
+html.dark .app-shell .pos-product-card.pos-product-card-selected:not(.opacity-50):hover {
+  background: var(--sc-success-bg) !important;
+  border-color: var(--sc-success-border) !important;
+  box-shadow: 0 10px 24px rgba(20, 184, 166, 0.1) !important;
+  transform: none !important;
+}
+
+html.dark .app-shell .pos-product-card-disabled,
+html.dark .app-shell .pos-product-card-disabled:hover {
+  background: var(--dark-surface) !important;
+  border-color: var(--dark-border) !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
 
 html.dark .app-shell .fixed.inset-0:not(.notification-dismiss-layer),
