@@ -246,6 +246,14 @@ function isLocalWebHost() {
   return hostname === 'localhost' || hostname === '127.0.0.1';
 }
 
+function isDefaultProductionWebHost() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.location?.origin === DEFAULT_REMOTE_API_ORIGIN;
+}
+
 function resolveLocalWebApiBase() {
   const host = envApiHost || DEFAULT_LOCAL_API_HOST;
 
@@ -294,6 +302,10 @@ function resolveApiBase() {
 
   if (isLocalWebHost()) {
     return normalizeApiBase(`${window.location.origin}${API_ROOT_PATH}`);
+  }
+
+  if (isDefaultProductionWebHost()) {
+    return API_ROOT_PATH;
   }
 
   const secureWebApiBase = resolveSecureWebApiBase();
@@ -668,7 +680,7 @@ async function getCachedResponse(method, path) {
   return latestMatch?.data ?? null;
 }
 
-async function performRequest(method, path, body = null) {
+async function performRequest(method, path, body = null, options = {}) {
   const cacheable = isCacheableRequest(method, path);
   const token = localStorage.getItem('sc_token');
   const offlineSession = isOfflineSessionActive() || isOfflineSessionToken(token);
@@ -720,6 +732,10 @@ async function performRequest(method, path, body = null) {
     baseHeaders.Authorization = `Bearer ${token}`;
   }
 
+  if (options.headers && typeof options.headers === 'object') {
+    Object.assign(baseHeaders, options.headers);
+  }
+
   const apiBases = [API_BASE, API_FALLBACK_BASE].filter(Boolean);
   let lastConnectionBase = API_BASE;
 
@@ -737,6 +753,7 @@ async function performRequest(method, path, body = null) {
     try {
       res = await fetchWithTimeout(requestUrl, {
         method,
+        credentials: 'include',
         headers,
         body: body ? JSON.stringify(body) : undefined,
       });
@@ -840,14 +857,15 @@ function buildPendingGetKey(method, path) {
   return `${String(method || '').toUpperCase()} ${path} ${token}`;
 }
 
-function request(method, path, body = null) {
+function request(method, path, body = null, options = {}) {
   const canShareInFlightRequest =
     isCacheableRequest(method, path) &&
+    !options.headers &&
     !isOfflineSessionActive() &&
     isOnline();
 
   if (!canShareInFlightRequest) {
-    return performRequest(method, path, body);
+    return performRequest(method, path, body, options);
   }
 
   const pendingKey = buildPendingGetKey(method, path);
@@ -892,6 +910,7 @@ async function requestFile(path) {
     try {
       res = await fetchWithTimeout(requestUrl, {
         method: 'GET',
+        credentials: 'include',
         headers,
       });
     } catch (error) {
@@ -1174,10 +1193,20 @@ async function verifyAuthenticatorLogin(
   password,
   { rememberDevice = false, username = '' } = {}
 ) {
+  const normalizedMfaToken = String(mfaToken || '').trim();
+  if (!normalizedMfaToken) {
+    throw new Error('Verification session expired. Please sign in again.');
+  }
+
   const response = await request('POST', '/auth/authenticator/verify', {
-    mfa_token: mfaToken,
+    username,
+    mfa_token: normalizedMfaToken,
     code,
     remember_device: rememberDevice,
+  }, {
+    headers: {
+      Authorization: `Bearer ${normalizedMfaToken}`,
+    },
   });
   return completeAuthenticatedLoginResponse(response, password, { rememberDevice, username });
 }

@@ -18,6 +18,7 @@ import binascii
 import hashlib
 import hmac
 import ipaddress
+import logging
 import os
 import re
 import secrets
@@ -48,6 +49,7 @@ from sqlalchemy.orm import joinedload
 
 
 PRODUCT_NAME_CHARS_RE = re.compile(r"[^a-z0-9]+")
+auth_logger = logging.getLogger("smartcanteen.auth")
 
 
 class TransactionValidationError(Exception):
@@ -890,6 +892,14 @@ def _record_failed_authenticator_verification(
     attempts = min(AUTHENTICATOR_MAX_FAILED_ATTEMPTS, current_attempts + 1)
     remaining_attempts = max(0, AUTHENTICATOR_MAX_FAILED_ATTEMPTS - attempts)
     user.authenticator_failed_attempts = attempts
+    forwarded_proto = req.headers.get("x-forwarded-proto") if req else None
+    auth_logger.warning(
+        "MFA verify rejected: invalid verification code; user_id=%s remaining_attempts=%s cookie_present=%s forwarded_proto=%s",
+        user.id,
+        remaining_attempts,
+        bool(req.cookies) if req else False,
+        forwarded_proto,
+    )
 
     if remaining_attempts <= 0:
         locked_until = now + timedelta(seconds=AUTHENTICATOR_LOCKOUT_SECONDS)
@@ -1775,6 +1785,32 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
     return response
 
 
+def _extract_bearer_token(authorization: Optional[str]) -> str:
+    header_value = str(authorization or "").strip()
+    if not header_value.lower().startswith("bearer "):
+        return ""
+    return header_value.split(" ", 1)[1].strip()
+
+
+def _mfa_verification_session_detail(message: str, code: str = "mfa_session_invalid") -> dict:
+    return {
+        "code": code,
+        "title": "Verification issue",
+        "message": message,
+    }
+
+
+def _raise_mfa_verification_session_issue(
+    message: str = "Verification session expired. Please sign in again.",
+    *,
+    code: str = "mfa_session_invalid",
+):
+    raise HTTPException(
+        status_code=401,
+        detail=_mfa_verification_session_detail(message, code),
+    )
+
+
 def _decode_authenticator_mfa_token(token: str) -> tuple[dict, str]:
     try:
         return auth.decode_mfa_token(token, purpose="authenticator"), "authenticator"
@@ -1787,12 +1823,84 @@ def _decode_authenticator_mfa_token(token: str) -> tuple[dict, str]:
 def authenticator_authentication_verify(
     data: schemas.AuthenticatorAuthenticationFinishRequest,
     req: Request,
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
-    token_payload, purpose = _decode_authenticator_mfa_token(data.mfa_token)
-    user = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
+    body_mfa_token = str(data.mfa_token or "").strip()
+    bearer_mfa_token = _extract_bearer_token(authorization)
+    mfa_token = body_mfa_token or bearer_mfa_token
+    token_source = "body" if body_mfa_token else "authorization" if bearer_mfa_token else "missing"
+    cookie_present = bool(req.cookies) if req else False
+    forwarded_proto = req.headers.get("x-forwarded-proto") if req else None
+
+    if not mfa_token:
+        auth_logger.warning(
+            "MFA verify rejected: missing MFA token; username_present=%s cookie_present=%s forwarded_proto=%s",
+            bool(str(data.username or "").strip()),
+            cookie_present,
+            forwarded_proto,
+        )
+        _raise_mfa_verification_session_issue(
+            "Verification session expired. Please sign in again.",
+            code="mfa_token_missing",
+        )
+
+    try:
+        token_payload, purpose = _decode_authenticator_mfa_token(mfa_token)
+    except HTTPException as exc:
+        auth_logger.warning(
+            "MFA verify rejected: invalid or expired MFA token; token_source=%s username_present=%s cookie_present=%s forwarded_proto=%s",
+            token_source,
+            bool(str(data.username or "").strip()),
+            cookie_present,
+            forwarded_proto,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail=_mfa_verification_session_detail(
+                "Verification session expired. Please sign in again.",
+                "mfa_token_invalid",
+            ),
+        ) from exc
+
+    token_username = token_payload.get("sub")
+    if not token_username:
+        auth_logger.warning(
+            "MFA verify rejected: decoded MFA token has no username; token_source=%s cookie_present=%s forwarded_proto=%s",
+            token_source,
+            cookie_present,
+            forwarded_proto,
+        )
+        _raise_mfa_verification_session_issue(
+            "Verification session expired. Please sign in again.",
+            code="mfa_username_missing",
+        )
+
+    submitted_username = str(data.username or "").strip()
+    if submitted_username and submitted_username.lower() != str(token_username).lower():
+        auth_logger.warning(
+            "MFA verify rejected: submitted username does not match MFA token subject; token_source=%s cookie_present=%s forwarded_proto=%s",
+            token_source,
+            cookie_present,
+            forwarded_proto,
+        )
+        _raise_mfa_verification_session_issue(
+            "Verification session expired. Please sign in again.",
+            code="mfa_username_mismatch",
+        )
+
+    user = db.query(models.User).filter(models.User.username == token_username).first()
     if not user or not user.is_active:
-        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+        auth_logger.warning(
+            "MFA verify rejected: MFA token subject is not an active user; token_source=%s cookie_present=%s forwarded_proto=%s",
+            token_source,
+            cookie_present,
+            forwarded_proto,
+        )
+        _raise_mfa_verification_session_issue(
+            "Verification session expired. Please sign in again.",
+            code="mfa_user_invalid",
+        )
 
     recovery_codes: list[str] = []
     recovery_code_used = False

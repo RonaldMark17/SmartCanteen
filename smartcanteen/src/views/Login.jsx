@@ -12,8 +12,10 @@ import {
 
 const LOGIN_LOCKOUT_STORAGE_KEY = 'sc_login_lockouts';
 const REMEMBERED_USERNAME_STORAGE_KEY = 'sc_remembered_username';
+const MFA_CHALLENGE_STORAGE_KEY = 'sc_pending_authenticator_challenge';
 const MAX_LOGIN_ATTEMPTS = 3;
 const LOGIN_LOCKOUT_MS = 60 * 1000;
+const MFA_CHALLENGE_MAX_AGE_MS = 5 * 60 * 1000;
 const RECOVERY_CODE_LENGTH = 12;
 const PASSWORD_RESET_REQUEST_SENT_MESSAGE = 'Your password reset request has been sent. Please wait for admin approval.';
 const PASSWORD_RESET_STATUS_MESSAGES = {
@@ -309,6 +311,57 @@ function getRememberedUsername() {
   }
 }
 
+function readStoredAuthenticatorChallenge(now = Date.now()) {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(MFA_CHALLENGE_STORAGE_KEY) || 'null');
+    const savedAt = Number(parsed?.savedAt || 0);
+    const challenge = parsed?.challenge;
+
+    if (
+      !challenge ||
+      !challenge.mfa_required ||
+      !challenge.mfa_token ||
+      !challenge.mfa_type ||
+      !savedAt ||
+      now - savedAt > MFA_CHALLENGE_MAX_AGE_MS
+    ) {
+      sessionStorage.removeItem(MFA_CHALLENGE_STORAGE_KEY);
+      return null;
+    }
+
+    return challenge;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredAuthenticatorChallenge(challenge) {
+  try {
+    if (!challenge?.mfa_required || !challenge?.mfa_token) {
+      sessionStorage.removeItem(MFA_CHALLENGE_STORAGE_KEY);
+      return;
+    }
+
+    sessionStorage.setItem(
+      MFA_CHALLENGE_STORAGE_KEY,
+      JSON.stringify({
+        savedAt: Date.now(),
+        challenge,
+      })
+    );
+  } catch {
+    // The MFA token still lives in React state if session storage is unavailable.
+  }
+}
+
+function clearStoredAuthenticatorChallenge() {
+  try {
+    sessionStorage.removeItem(MFA_CHALLENGE_STORAGE_KEY);
+  } catch {
+    // Session storage is optional for the MFA flow.
+  }
+}
+
 function persistAuthenticatedSession(accessToken, user) {
   const quotaMessage =
     'This device is out of browser storage. SmartCanteen cleared temporary cache, but there is still not enough space to save your session. Clear site data for this app and try again.';
@@ -334,7 +387,7 @@ export default function Login({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [authenticatorErrorTitle, setAuthenticatorErrorTitle] = useState('Verification issue');
-  const [authenticatorChallenge, setAuthenticatorChallenge] = useState(null);
+  const [authenticatorChallenge, setAuthenticatorChallenge] = useState(readStoredAuthenticatorChallenge);
   const [authenticatorCode, setAuthenticatorCode] = useState('');
   const [authenticatorQrCode, setAuthenticatorQrCode] = useState('');
   const [secretCopied, setSecretCopied] = useState(false);
@@ -385,6 +438,14 @@ export default function Login({ onLogin }) {
 
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    if (authenticatorChallenge?.mfa_required && authenticatorChallenge?.mfa_token) {
+      saveStoredAuthenticatorChallenge(authenticatorChallenge);
+    } else {
+      clearStoredAuthenticatorChallenge();
+    }
+  }, [authenticatorChallenge]);
 
   useEffect(() => {
     if (!authenticatorLockedUntil || authenticatorLockedUntil > lockoutNow) {
@@ -438,12 +499,17 @@ export default function Login({ onLogin }) {
       return;
     }
 
+    const challengeUsername = authenticatorChallenge?.user?.username;
+    if (challengeUsername && username !== challengeUsername) {
+      setUsername(challengeUsername);
+    }
+
     const focusTimer = window.setTimeout(() => {
       authenticatorCodeRef.current?.focus();
     }, 80);
 
     return () => window.clearTimeout(focusTimer);
-  }, [isAuthenticatorStep]);
+  }, [authenticatorChallenge, isAuthenticatorStep, username]);
 
   const finishSuccessfulLogin = (res, submittedUsername, identifier) => {
     clearLoginLockout(identifier);

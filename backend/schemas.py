@@ -12,7 +12,8 @@ class LoginRequest(BaseModel):
 
 
 class AuthenticatorAuthenticationFinishRequest(BaseModel):
-    mfa_token: str
+    username: Optional[str] = None
+    mfa_token: Optional[str] = None
     code: str
     remember_device: bool = False
 
