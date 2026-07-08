@@ -274,10 +274,12 @@ export default function Login({ onLogin }) {
   const [rememberUsername, setRememberUsername] = useState(() => Boolean(getRememberedUsername()));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [authenticatorErrorTitle, setAuthenticatorErrorTitle] = useState('Verification issue');
   const [authenticatorChallenge, setAuthenticatorChallenge] = useState(null);
   const [authenticatorCode, setAuthenticatorCode] = useState('');
   const [authenticatorQrCode, setAuthenticatorQrCode] = useState('');
   const [secretCopied, setSecretCopied] = useState(false);
+  const [authenticatorLockedUntil, setAuthenticatorLockedUntil] = useState(0);
   const [lockoutNow, setLockoutNow] = useState(() => Date.now());
   const [pendingRecoveryCodes, setPendingRecoveryCodes] = useState([]);
   const [pendingLoginResult, setPendingLoginResult] = useState(null);
@@ -310,6 +312,9 @@ export default function Login({ onLogin }) {
   const lockoutRemainingLabel = formatLockoutDuration(lockoutState.remainingMs);
   const isAuthenticatorStep = Boolean(authenticatorChallenge);
   const isAuthenticatorSetup = authenticatorChallenge?.mfa_type === 'authenticator_setup';
+  const authenticatorLockRemainingMs = Math.max(0, Number(authenticatorLockedUntil || 0) - lockoutNow);
+  const authenticatorLockRemainingLabel = formatLockoutDuration(authenticatorLockRemainingMs);
+  const isAuthenticatorVerificationLocked = isAuthenticatorStep && authenticatorLockRemainingMs > 0;
   const canSubmitAuthenticatorCode = isAuthenticatorCodeReady(authenticatorCode, {
     setup: isAuthenticatorSetup,
   });
@@ -321,6 +326,18 @@ export default function Login({ onLogin }) {
 
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    if (!authenticatorLockedUntil || authenticatorLockedUntil > lockoutNow) {
+      return;
+    }
+
+    setAuthenticatorLockedUntil(0);
+    if (authenticatorErrorTitle === 'Verification locked') {
+      setError('');
+      setAuthenticatorErrorTitle('Verification issue');
+    }
+  }, [authenticatorErrorTitle, authenticatorLockedUntil, lockoutNow]);
 
   useEffect(() => {
     let active = true;
@@ -384,6 +401,8 @@ export default function Login({ onLogin }) {
     persistAuthenticatedSession(res.access_token, res.user);
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
+    setAuthenticatorErrorTitle('Verification issue');
+    setAuthenticatorLockedUntil(0);
     setPendingRecoveryCodes([]);
     setPendingLoginResult(null);
     setRecoveryCodesCopied(false);
@@ -402,6 +421,11 @@ export default function Login({ onLogin }) {
 
     if (currentLockoutState.isLocked) {
       setError('');
+      setLockoutNow(Date.now());
+      return;
+    }
+
+    if (isAuthenticatorStep && isAuthenticatorVerificationLocked) {
       setLockoutNow(Date.now());
       return;
     }
@@ -427,6 +451,8 @@ export default function Login({ onLogin }) {
       if (res?.mfa_required && !res?.access_token) {
         setAuthenticatorChallenge(res);
         setAuthenticatorCode('');
+        setAuthenticatorErrorTitle('Verification issue');
+        setAuthenticatorLockedUntil(0);
         setSecretCopied(false);
         setLoading(false);
         return;
@@ -436,6 +462,8 @@ export default function Login({ onLogin }) {
       if (recoveryCodes.length > 0) {
         setAuthenticatorChallenge(null);
         setAuthenticatorCode('');
+        setAuthenticatorErrorTitle('Verification issue');
+        setAuthenticatorLockedUntil(0);
         setPendingRecoveryCodes(recoveryCodes);
         setPendingLoginResult({
           res,
@@ -453,7 +481,26 @@ export default function Login({ onLogin }) {
 
       const message = err.message || 'Invalid username or password';
 
-      if (isCredentialFailure(message)) {
+      if (isAuthenticatorStep) {
+        const retryAfterSeconds = Number(err.retryAfterSeconds || 0);
+        const parsedLockedUntil = Date.parse(err.lockedUntil || '');
+        const nextLockedUntil = Number.isFinite(parsedLockedUntil)
+          ? parsedLockedUntil
+          : retryAfterSeconds > 0
+            ? Date.now() + retryAfterSeconds * 1000
+            : 0;
+
+        setAuthenticatorErrorTitle(
+          err.alertTitle || (err.locked || nextLockedUntil ? 'Verification locked' : 'Verification issue')
+        );
+        if (err.locked || nextLockedUntil) {
+          setAuthenticatorLockedUntil(nextLockedUntil || Date.now() + LOGIN_LOCKOUT_MS);
+          setLockoutNow(Date.now());
+        } else {
+          setAuthenticatorLockedUntil(0);
+        }
+        setError(message);
+      } else if (isCredentialFailure(message)) {
         const nextLockoutState = recordFailedLogin(identifier);
         setLockoutNow(Date.now());
 
@@ -476,8 +523,10 @@ export default function Login({ onLogin }) {
   const handleUsernameChange = (event) => {
     setUsername(event.target.value);
     setError('');
+    setAuthenticatorErrorTitle('Verification issue');
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
+    setAuthenticatorLockedUntil(0);
     setPendingRecoveryCodes([]);
     setPendingLoginResult(null);
     setRecoveryCodesCopied(false);
@@ -488,6 +537,8 @@ export default function Login({ onLogin }) {
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
     setAuthenticatorQrCode('');
+    setAuthenticatorErrorTitle('Verification issue');
+    setAuthenticatorLockedUntil(0);
     setSecretCopied(false);
     setPendingRecoveryCodes([]);
     setPendingLoginResult(null);
@@ -994,6 +1045,7 @@ export default function Login({ onLogin }) {
                     lockoutState.isLocked ||
                     !username ||
                     !password ||
+                    isAuthenticatorVerificationLocked ||
                     (isAuthenticatorStep && !canSubmitAuthenticatorCode)
                   }
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
@@ -1627,9 +1679,9 @@ export default function Login({ onLogin }) {
             <form onSubmit={handleSubmit} className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 py-5">
               {error && (
                 <DismissibleAlert
-                  resetKey={`${error}-${authenticatorCode}`}
+                  resetKey={`${authenticatorErrorTitle}-${error}-${authenticatorCode}`}
                   tone="red"
-                  title={isAuthenticatorSetup ? 'Authenticator setup issue' : 'Verification issue'}
+                  title={authenticatorErrorTitle || (isAuthenticatorSetup ? 'Authenticator setup issue' : 'Verification issue')}
                   className="mb-4 rounded-xl"
                 >
                   {error}
@@ -1683,7 +1735,7 @@ export default function Login({ onLogin }) {
                       setup: isAuthenticatorSetup,
                     }))
                   }
-                  disabled={loading}
+                  disabled={loading || isAuthenticatorVerificationLocked}
                   autoComplete="one-time-code"
                 />
                 {!isAuthenticatorSetup && (
@@ -1712,10 +1764,12 @@ export default function Login({ onLogin }) {
                 </button>
                 <button
                   type="submit"
-                  disabled={loading || !canSubmitAuthenticatorCode}
+                  disabled={loading || isAuthenticatorVerificationLocked || !canSubmitAuthenticatorCode}
                   className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {loading ? (
+                  {isAuthenticatorVerificationLocked ? (
+                    `Try again in ${authenticatorLockRemainingLabel}`
+                  ) : loading ? (
                     <>
                       <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
                       Verifying...

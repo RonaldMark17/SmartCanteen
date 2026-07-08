@@ -351,6 +351,14 @@ def _ensure_user_authenticator_columns():
             "authenticator_last_counter",
             "ALTER TABLE users ADD COLUMN authenticator_last_counter INTEGER",
         ),
+        (
+            "authenticator_failed_attempts",
+            "ALTER TABLE users ADD COLUMN authenticator_failed_attempts INTEGER DEFAULT 0",
+        ),
+        (
+            "authenticator_locked_until",
+            "ALTER TABLE users ADD COLUMN authenticator_locked_until DATETIME",
+        ),
     ]
 
     try:
@@ -773,6 +781,8 @@ AUTHENTICATOR_PERIOD_SECONDS = 30
 AUTHENTICATOR_DIGITS = 6
 AUTHENTICATOR_WINDOW_STEPS = 1
 TRUSTED_DEVICE_DAYS = 30
+AUTHENTICATOR_MAX_FAILED_ATTEMPTS = 3
+AUTHENTICATOR_LOCKOUT_SECONDS = 60
 RECOVERY_CODE_COUNT = 10
 RECOVERY_CODE_GROUPS = 3
 RECOVERY_CODE_GROUP_LENGTH = 4
@@ -825,6 +835,99 @@ def _verify_authenticator_code(secret: str, code: str, last_counter: Optional[in
             return counter
 
     raise HTTPException(status_code=401, detail="Invalid authenticator code")
+
+
+def _authenticator_retry_after_seconds(locked_until: datetime, now: Optional[datetime] = None) -> int:
+    now = now or datetime.utcnow()
+    return max(1, int((locked_until - now).total_seconds() + 0.999))
+
+
+def _authenticator_locked_detail(locked_until: datetime) -> dict:
+    retry_after_seconds = _authenticator_retry_after_seconds(locked_until)
+    return {
+        "code": "authenticator_verification_locked",
+        "title": "Verification locked",
+        "message": "Too many invalid verification attempts. Please try again after 1 minute.",
+        "remaining_attempts": 0,
+        "locked": True,
+        "lock_seconds": AUTHENTICATOR_LOCKOUT_SECONDS,
+        "retry_after_seconds": retry_after_seconds,
+        "locked_until": locked_until.isoformat() + "Z",
+    }
+
+
+def _raise_authenticator_locked(locked_until: datetime):
+    detail = _authenticator_locked_detail(locked_until)
+    raise HTTPException(
+        status_code=429,
+        detail=detail,
+        headers={"Retry-After": str(detail["retry_after_seconds"])},
+    )
+
+
+def _clear_authenticator_verification_attempts(user: models.User):
+    user.authenticator_failed_attempts = 0
+    user.authenticator_locked_until = None
+
+
+def _enforce_authenticator_verification_not_locked(user: models.User):
+    now = datetime.utcnow()
+    locked_until = getattr(user, "authenticator_locked_until", None)
+    if locked_until and locked_until > now:
+        _raise_authenticator_locked(locked_until)
+
+    if locked_until and locked_until <= now:
+        _clear_authenticator_verification_attempts(user)
+
+
+def _record_failed_authenticator_verification(
+    db: Session,
+    user: models.User,
+    req: Optional[Request],
+):
+    now = datetime.utcnow()
+    current_attempts = int(getattr(user, "authenticator_failed_attempts", 0) or 0)
+    attempts = min(AUTHENTICATOR_MAX_FAILED_ATTEMPTS, current_attempts + 1)
+    remaining_attempts = max(0, AUTHENTICATOR_MAX_FAILED_ATTEMPTS - attempts)
+    user.authenticator_failed_attempts = attempts
+
+    if remaining_attempts <= 0:
+        locked_until = now + timedelta(seconds=AUTHENTICATOR_LOCKOUT_SECONDS)
+        user.authenticator_locked_until = locked_until
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN_AUTHENTICATOR_LOCKED",
+            details="Too many invalid authenticator verification attempts",
+            request=req,
+        )
+        db.commit()
+        _raise_authenticator_locked(locked_until)
+
+    user.authenticator_locked_until = None
+    attempt_label = "attempt" if remaining_attempts == 1 else "attempts"
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="LOGIN_AUTHENTICATOR_FAILED",
+        details=f"Invalid authenticator verification attempt; {remaining_attempts} {attempt_label} remaining",
+        request=req,
+    )
+    db.commit()
+    raise HTTPException(
+        status_code=401,
+        detail={
+            "code": "authenticator_verification_failed",
+            "title": "Verification issue",
+            "message": (
+                f"Invalid verification code. {remaining_attempts} {attempt_label} "
+                "remaining before a 1-minute lock."
+            ),
+            "remaining_attempts": remaining_attempts,
+            "locked": False,
+            "lock_seconds": AUTHENTICATOR_LOCKOUT_SECONDS,
+        },
+    )
 
 
 def _authenticator_otpauth_url(user: models.User, secret: str) -> str:
@@ -1002,6 +1105,7 @@ def _reset_user_authenticator(db: Session, user: models.User, *, revoke_remember
     user.authenticator_secret = None
     user.authenticator_enabled = False
     user.authenticator_last_counter = None
+    _clear_authenticator_verification_attempts(user)
 
     db.query(models.UserRecoveryCode).filter(
         models.UserRecoveryCode.user_id == user.id
@@ -1693,6 +1797,7 @@ def authenticator_authentication_verify(
     recovery_codes: list[str] = []
     recovery_code_used = False
     recovery_request = None
+    _enforce_authenticator_verification_not_locked(user)
 
     if purpose == "authenticator_setup":
         secret = token_payload.get("totp_secret")
@@ -1718,7 +1823,10 @@ def authenticator_authentication_verify(
             if _effective_authenticator_recovery_status(recovery_request) not in AUTHENTICATOR_RECOVERY_APPROVED_STATUSES:
                 raise HTTPException(status_code=400, detail="No approved authenticator recovery request is available")
 
-        counter = _verify_authenticator_code(secret, data.code)
+        try:
+            counter = _verify_authenticator_code(secret, data.code)
+        except HTTPException:
+            _record_failed_authenticator_verification(db, user, req)
         now = datetime.utcnow()
         user.authenticator_secret = secret
         user.authenticator_enabled = True
@@ -1757,17 +1865,14 @@ def authenticator_authentication_verify(
             )
             user.authenticator_last_counter = counter
             audit_details = "Successful login with authenticator app MFA"
-        except HTTPException as exc:
+        except HTTPException:
             if _verify_recovery_code(db, user, data.code):
                 recovery_code_used = True
                 audit_details = "Successful login with authenticator recovery code"
-            elif len(_normalize_recovery_code(data.code)) == (
-                RECOVERY_CODE_GROUPS * RECOVERY_CODE_GROUP_LENGTH
-            ):
-                raise HTTPException(status_code=401, detail="Invalid recovery code")
             else:
-                raise exc
+                _record_failed_authenticator_verification(db, user, req)
 
+    _clear_authenticator_verification_attempts(user)
     remember_device_token = None
     remember_device_expires_at = None
     if data.remember_device:

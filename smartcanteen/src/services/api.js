@@ -495,6 +495,46 @@ function buildUnexpectedResponseError(path, requestUrl, payload) {
   return new Error(`The API request "${requestUrl}" returned an unexpected response.`);
 }
 
+function toFiniteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function buildApiError(payload, fallbackMessage, status, headers) {
+  const detail = payload?.detail;
+  const structuredDetail =
+    detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : null;
+  const validationMessages = Array.isArray(detail)
+    ? detail.map((item) => item?.msg).filter(Boolean).join('; ')
+    : '';
+  const message =
+    structuredDetail?.message ||
+    (typeof detail === 'string' ? detail : '') ||
+    validationMessages ||
+    payload?.message ||
+    fallbackMessage;
+  const error = new Error(String(message || fallbackMessage));
+  error.status = status;
+
+  if (structuredDetail) {
+    const retryAfterSeconds =
+      toFiniteNumber(structuredDetail.retry_after_seconds) ??
+      toFiniteNumber(headers?.get?.('retry-after'));
+    const remainingAttempts = toFiniteNumber(structuredDetail.remaining_attempts);
+
+    error.apiDetail = structuredDetail;
+    error.apiCode = structuredDetail.code || '';
+    error.alertTitle = structuredDetail.title || '';
+    error.locked = Boolean(structuredDetail.locked);
+    error.lockSeconds = toFiniteNumber(structuredDetail.lock_seconds);
+    error.lockedUntil = structuredDetail.locked_until || '';
+    error.remainingAttempts = remainingAttempts;
+    error.retryAfterSeconds = retryAfterSeconds;
+  }
+
+  return error;
+}
+
 function getClientRequestHeaders() {
   const platform = getRuntimePlatform();
   const nativeRuntime = isNativeRuntime();
@@ -706,10 +746,12 @@ async function performRequest(method, path, body = null) {
 
     if (!res.ok) {
       let errMsg = `HTTP ${res.status}`;
+      let apiError = null;
       const errorResponse = res.clone();
       try {
         const err = await readJsonResponse(res, path, requestUrl);
-        errMsg = err?.detail || err?.message || errMsg;
+        apiError = buildApiError(err, errMsg, res.status, res.headers);
+        errMsg = apiError.message;
       } catch {
         const raw = await errorResponse.text().catch(() => '');
         if (looksLikeHtml(raw)) {
@@ -731,6 +773,11 @@ async function performRequest(method, path, body = null) {
 
       if (res.status === 502 || res.status === 503 || res.status === 504) {
         errMsg = `Cannot connect to server at ${apiBase}. Check your backend and API config.`;
+        apiError = null;
+      }
+
+      if (apiError) {
+        throw apiError;
       }
 
       throw new Error(errMsg);

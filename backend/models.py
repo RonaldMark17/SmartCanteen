@@ -19,6 +19,8 @@ class User(Base):
     authenticator_secret = Column(String, nullable=True)
     authenticator_enabled = Column(Boolean, default=False)
     authenticator_last_counter = Column(Integer, nullable=True)
+    authenticator_failed_attempts = Column(Integer, default=0)
+    authenticator_locked_until = Column(DateTime, nullable=True)
     created_at    = Column(DateTime, default=utc_now_naive)
 
     transactions = relationship("Transaction", back_populates="user")
