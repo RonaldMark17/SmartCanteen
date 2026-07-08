@@ -215,6 +215,65 @@ function isCredentialFailure(message) {
   return String(message || '').toLowerCase().includes('invalid username or password');
 }
 
+const DEFAULT_VERIFICATION_ERROR_MESSAGE = 'Invalid verification code. Please try again.';
+
+function extractReadableErrorMessage(value) {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value === '[object Object]' ? '' : value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractReadableErrorMessage(item))
+      .filter(Boolean)
+      .join('; ');
+  }
+
+  if (typeof value === 'object') {
+    return (
+      extractReadableErrorMessage(value.message) ||
+      extractReadableErrorMessage(value.detail) ||
+      extractReadableErrorMessage(value.msg)
+    );
+  }
+
+  return '';
+}
+
+function getErrorResponseDetail(error) {
+  const responseDetail = error?.response?.data?.detail;
+  if (responseDetail !== undefined) {
+    return responseDetail;
+  }
+  return error?.apiDetail || error?.detail || null;
+}
+
+function getReadableErrorMessage(error, fallbackMessage) {
+  const responseData = error?.response?.data;
+  return (
+    extractReadableErrorMessage(responseData?.detail) ||
+    extractReadableErrorMessage(responseData?.message) ||
+    extractReadableErrorMessage(error?.apiDetail) ||
+    extractReadableErrorMessage(error?.detail) ||
+    extractReadableErrorMessage(error?.message) ||
+    fallbackMessage
+  );
+}
+
+function getReadableErrorTitle(error, fallbackTitle) {
+  const detail = getErrorResponseDetail(error);
+  const title =
+    (detail && typeof detail === 'object' && !Array.isArray(detail) ? detail.title : '') ||
+    error?.alertTitle ||
+    error?.title;
+
+  return typeof title === 'string' && title.trim() ? title : fallbackTitle;
+}
+
 function normalizeRecoveryCode(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, RECOVERY_CODE_LENGTH);
 }
@@ -479,21 +538,27 @@ export default function Login({ onLogin }) {
       setUsername(submittedUsername);
       setPassword(submittedPassword);
 
-      const message = err.message || 'Invalid username or password';
+      const message = getReadableErrorMessage(
+        err,
+        isAuthenticatorStep ? DEFAULT_VERIFICATION_ERROR_MESSAGE : 'Invalid username or password'
+      );
 
       if (isAuthenticatorStep) {
-        const retryAfterSeconds = Number(err.retryAfterSeconds || 0);
-        const parsedLockedUntil = Date.parse(err.lockedUntil || '');
+        const detail = getErrorResponseDetail(err);
+        const detailObject = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
+        const retryAfterSeconds = Number(err.retryAfterSeconds ?? detailObject.retry_after_seconds ?? 0);
+        const parsedLockedUntil = Date.parse(err.lockedUntil || detailObject.locked_until || '');
         const nextLockedUntil = Number.isFinite(parsedLockedUntil)
           ? parsedLockedUntil
           : retryAfterSeconds > 0
             ? Date.now() + retryAfterSeconds * 1000
             : 0;
+        const isLockedError = Boolean(err.locked || detailObject.locked || nextLockedUntil);
 
         setAuthenticatorErrorTitle(
-          err.alertTitle || (err.locked || nextLockedUntil ? 'Verification locked' : 'Verification issue')
+          getReadableErrorTitle(err, isLockedError ? 'Verification locked' : 'Verification issue')
         );
-        if (err.locked || nextLockedUntil) {
+        if (isLockedError) {
           setAuthenticatorLockedUntil(nextLockedUntil || Date.now() + LOGIN_LOCKOUT_MS);
           setLockoutNow(Date.now());
         } else {

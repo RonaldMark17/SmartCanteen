@@ -500,6 +500,33 @@ function toFiniteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function extractApiErrorMessage(value) {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value === '[object Object]' ? '' : value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractApiErrorMessage(item))
+      .filter(Boolean)
+      .join('; ');
+  }
+
+  if (typeof value === 'object') {
+    return (
+      extractApiErrorMessage(value.message) ||
+      extractApiErrorMessage(value.detail) ||
+      extractApiErrorMessage(value.msg)
+    );
+  }
+
+  return '';
+}
+
 function buildApiError(payload, fallbackMessage, status, headers) {
   const detail = payload?.detail;
   const structuredDetail =
@@ -508,12 +535,12 @@ function buildApiError(payload, fallbackMessage, status, headers) {
     ? detail.map((item) => item?.msg).filter(Boolean).join('; ')
     : '';
   const message =
-    structuredDetail?.message ||
-    (typeof detail === 'string' ? detail : '') ||
+    extractApiErrorMessage(structuredDetail) ||
+    extractApiErrorMessage(detail) ||
     validationMessages ||
-    payload?.message ||
+    extractApiErrorMessage(payload?.message) ||
     fallbackMessage;
-  const error = new Error(String(message || fallbackMessage));
+  const error = new Error(message || fallbackMessage);
   error.status = status;
 
   if (structuredDetail) {
