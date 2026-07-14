@@ -54,6 +54,16 @@ function toMoney(value) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function parseNonNegativeMoney(value) {
+  const normalized = `${value ?? ''}`.trim();
+  if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(normalized)) {
+    return null;
+  }
+
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+}
+
 function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -387,6 +397,8 @@ function FormField({
   placeholder = '0.00',
   type = 'number',
   disabled = false,
+  min,
+  step,
 }) {
   return (
     <label className="flex flex-col gap-2">
@@ -397,6 +409,8 @@ function FormField({
         onChange={onChange}
         placeholder={placeholder}
         disabled={disabled}
+        min={min}
+        step={step}
         className="field-control"
       />
     </label>
@@ -432,6 +446,10 @@ export default function FinancialReports() {
     current_sales: '',
     cost_of_sales: '',
   });
+  const [reportInputOverrides, setReportInputOverrides] = useState({
+    beginning_cash_on_hand: false,
+    current_sales: false,
+  });
   const [expenseDraft, setExpenseDraft] = useState(() => createEmptyOperationExpenseDraft());
   const [fundInterestDrafts, setFundInterestDrafts] = useState({});
   const [fundExpenseDrafts, setFundExpenseDrafts] = useState({});
@@ -462,10 +480,6 @@ export default function FinancialReports() {
   );
   const canSaveSelectedSchoolYear = !selectedSchoolYearValidationMessage;
   const isJuneReport = Number(selectedReport?.month_index ?? -1) === 0;
-  const beginningCashLocked = Boolean(selectedReport?.beginning_cash_locked);
-  const beginningCashSource = selectedReport?.beginning_cash_source || '';
-  const currentSalesLocked = Boolean(selectedReport?.current_sales_locked);
-  const currentSalesSource = selectedReport?.auto_inputs?.current_sales?.source || '';
   const draftOperationExpensesTotal = sumOperationExpenseDraft(expenseDraft);
   const draftGrossIncome = toMoney(reportDraft.current_sales) - toMoney(reportDraft.cost_of_sales);
   const draftNetProfit = draftGrossIncome - draftOperationExpensesTotal;
@@ -566,6 +580,10 @@ export default function FinancialReports() {
       beginning_cash_on_hand: toInputValue(selectedReport.default_inputs?.beginning_cash_on_hand),
       current_sales: toInputValue(selectedReport.default_inputs?.current_sales),
       cost_of_sales: toInputValue(selectedReport.default_inputs?.cost_of_sales),
+    });
+    setReportInputOverrides({
+      beginning_cash_on_hand: Boolean(selectedReport.beginning_cash_manual_override),
+      current_sales: Boolean(selectedReport.current_sales_manual_override),
     });
     setExpenseDraft(buildOperationExpenseDraft(selectedReport));
     setFundInterestDrafts(
@@ -749,27 +767,30 @@ export default function FinancialReports() {
       return;
     }
 
+    const nextBeginningCash = parseNonNegativeMoney(reportDraft.beginning_cash_on_hand);
+    if (nextBeginningCash === null) {
+      window.showToast?.('Beginning Cash must be a valid non-negative amount with up to two decimal places.', 'error');
+      return;
+    }
+
+    const nextCurrentSales = parseNonNegativeMoney(reportDraft.current_sales);
+    if (nextCurrentSales === null) {
+      window.showToast?.('Current Sales must be a valid non-negative amount with up to two decimal places.', 'error');
+      return;
+    }
+
     setSavingReport(true);
     try {
-      const nextBeginningCash = beginningCashLocked
-        ? toMoney(selectedReport.default_inputs?.beginning_cash_on_hand ?? selectedReport.beginning_cash_on_hand)
-        : toMoney(reportDraft.beginning_cash_on_hand);
-      const nextCurrentSales = currentSalesLocked
-        ? toMoney(selectedReport.default_inputs?.current_sales ?? selectedReport.current_sales)
-        : toMoney(reportDraft.current_sales);
       const reportPayload = {
+        beginning_cash_on_hand: nextBeginningCash,
+        beginning_cash_manual_override: reportInputOverrides.beginning_cash_on_hand,
+        current_sales: nextCurrentSales,
+        current_sales_manual_override: reportInputOverrides.current_sales,
         other_income: 0,
         purchases: 0,
         inventory_used: 0,
         product_cost: toMoney(reportDraft.cost_of_sales),
       };
-
-      if (!beginningCashLocked) {
-        reportPayload.beginning_cash_on_hand = nextBeginningCash;
-      }
-      if (!currentSalesLocked) {
-        reportPayload.current_sales = nextCurrentSales;
-      }
 
       const reportResponse = await API.updateFinancialReport(selectedReport.id, reportPayload);
       const nextExpenses = OPERATION_EXPENSE_FIELDS.map((field, index) => ({
@@ -808,7 +829,9 @@ export default function FinancialReports() {
             return {
               ...report,
               beginning_cash_on_hand: nextBeginningCash,
+              beginning_cash_manual_override: reportInputOverrides.beginning_cash_on_hand,
               current_sales: nextCurrentSales,
+              current_sales_manual_override: reportInputOverrides.current_sales,
               other_income: 0,
               purchases: 0,
               inventory_used: 0,
@@ -934,6 +957,18 @@ export default function FinancialReports() {
       ...currentDraft,
       [field]: value,
     }));
+  }
+
+  function updateMoneyReportDraft(field, value) {
+    if (/^\d*(?:\.\d{0,2})?$/.test(value)) {
+      updateReportDraft(field, value);
+      if (field === 'beginning_cash_on_hand' || field === 'current_sales') {
+        setReportInputOverrides((currentOverrides) => ({
+          ...currentOverrides,
+          [field]: true,
+        }));
+      }
+    }
   }
 
   function updateExpenseDraft(field, value) {
@@ -1220,14 +1255,18 @@ export default function FinancialReports() {
                     <FormField
                       label="Beginning Cash"
                       value={reportDraft.beginning_cash_on_hand}
-                      onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
-                      disabled={!canSaveSelectedSchoolYear || beginningCashLocked}
+                      onChange={(event) => updateMoneyReportDraft('beginning_cash_on_hand', event.target.value)}
+                      disabled={!canSaveSelectedSchoolYear}
+                      min="0"
+                      step="0.01"
                     />
                     <FormField
                       label="Current Sales"
                       value={reportDraft.current_sales}
-                      onChange={(event) => updateReportDraft('current_sales', event.target.value)}
-                      disabled={!canSaveSelectedSchoolYear || currentSalesLocked}
+                      onChange={(event) => updateMoneyReportDraft('current_sales', event.target.value)}
+                      disabled={!canSaveSelectedSchoolYear}
+                      min="0"
+                      step="0.01"
                     />
                     <FormField
                       label="Cost of Sales"
@@ -1236,17 +1275,6 @@ export default function FinancialReports() {
                       disabled={!canSaveSelectedSchoolYear}
                     />
                   </div>
-                  {beginningCashLocked && beginningCashSource ? (
-                    <div className="mt-2 text-xs font-semibold text-slate-500">
-                      {beginningCashSource}
-                    </div>
-                  ) : null}
-                  {currentSalesLocked && currentSalesSource ? (
-                    <div className="mt-2 text-xs font-semibold text-slate-500">
-                      {currentSalesSource}
-                    </div>
-                  ) : null}
-
                   <div className="mt-6 rounded-[16px] border border-slate-200 bg-slate-50/70 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>

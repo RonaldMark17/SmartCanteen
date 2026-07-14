@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { API } from '../services/api';
 import { saveOfflineTransaction } from '../services/offlineStore';
 import { requestAlertRefresh } from '../services/realtimeAlerts';
+import { BULK_UNIT_TYPE, formatProductQuantity, formatQuantity, formatUnit, getBulkSaleOptions, getProductBaseUnit, getProductUnitType, getUnitMultiplier } from '../utils/units';
 import {
   ArchiveBoxIcon,
   BanknotesIcon,
@@ -19,6 +20,7 @@ import {
   PrinterIcon,
   ShoppingBagIcon,
   ShoppingCartIcon,
+  StarIcon,
   TrashIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -41,6 +43,8 @@ const MAX_POS_ITEMS_PER_PAGE = 48;
 const MAX_PAGE_BUTTONS = 5;
 const CASH_PAYMENT_TYPE = 'cash';
 const CASH_PAYMENT_LABEL = 'Cash Payment';
+const QUICK_SALE_PRODUCT_LIMIT = 24;
+const POS_MODE_STORAGE_KEY = 'sc_pos_mode';
 
 function estimateProductCardHeight(width) {
   if (width >= 1280) {
@@ -139,14 +143,26 @@ function preventInvalidQuantityKey(event) {
   event.preventDefault();
 }
 
+function getInitialPosMode() {
+  try {
+    return localStorage.getItem(POS_MODE_STORAGE_KEY) === 'full' ? 'full' : 'quick';
+  } catch {
+    return 'quick';
+  }
+}
+
 export default function POS() {
   const productGridRef = useRef(null);
+  const productSearchRef = useRef(null);
   const [products, setProducts] = useState([]);
+  const [quickSaleProducts, setQuickSaleProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_POS_ITEMS_PER_PAGE);
+  const [posMode, setPosMode] = useState(getInitialPosMode);
+  const [bulkPortions, setBulkPortions] = useState({});
 
   // Checkout State
   const [amountReceived, setAmountReceived] = useState('');
@@ -156,7 +172,37 @@ export default function POS() {
   const [receiptData, setReceiptData] = useState(null);
 
   useEffect(() => {
-    API.getProducts().then(setProducts).catch(console.error);
+    let isActive = true;
+
+    async function loadProductCatalog() {
+      const [productsResult, quickSaleResult] = await Promise.allSettled([
+        API.getProducts(),
+        API.getQuickSaleProducts(),
+      ]);
+      if (!isActive) {
+        return;
+      }
+
+      const productRows = productsResult.status === 'fulfilled' && Array.isArray(productsResult.value)
+        ? productsResult.value
+        : [];
+      setProducts(productRows);
+
+      if (quickSaleResult.status === 'fulfilled' && Array.isArray(quickSaleResult.value)) {
+        setQuickSaleProducts(quickSaleResult.value);
+      } else {
+        setQuickSaleProducts(productRows);
+      }
+
+      if (productsResult.status === 'rejected') {
+        console.error(productsResult.reason);
+      }
+    }
+
+    loadProductCatalog();
+    return () => {
+      isActive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -228,26 +274,65 @@ export default function POS() {
   }, []);
 
   // --- Cart Logic ---
+  const getBulkPortionKey = (portion) => `${portion.quantity}:${portion.saleUnit}`;
+
+  const getSelectedBulkPortion = (product) => {
+    const portions = getBulkSaleOptions(product);
+    const selectedKey = bulkPortions[product.id];
+    return portions.find((portion) => getBulkPortionKey(portion) === selectedKey) || portions[0];
+  };
+
+  const buildCartItem = (product) => {
+    const unitType = getProductUnitType(product);
+    const portion = unitType === BULK_UNIT_TYPE ? getSelectedBulkPortion(product) : {
+      quantity: 1,
+      saleUnit: 'pcs',
+    };
+    const inventoryMultiplier = getUnitMultiplier(getProductBaseUnit(product), portion.saleUnit);
+
+    return {
+      ...product,
+      qty: portion.quantity,
+      sale_unit: portion.saleUnit,
+      inventory_multiplier: inventoryMultiplier,
+      inventory_quantity: portion.quantity * inventoryMultiplier,
+      price: Number(product.price || 0) * inventoryMultiplier,
+    };
+  };
+
   const addToCart = (product) => {
+    const nextCartItem = buildCartItem(product);
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
-        if (existing.qty >= product.stock) {
+        const nextInventoryQuantity = Number(existing.inventory_quantity || existing.qty) + nextCartItem.inventory_quantity;
+        if (nextInventoryQuantity > Number(product.stock || 0) + 0.000001) {
           window.showToast('Max stock reached!', 'warning');
           return prev;
         }
 
         return prev.map((item) =>
-          item.id === product.id ? { ...item, qty: item.qty + 1 } : item
+          item.id === product.id
+            ? {
+                ...item,
+                qty: Number(item.qty) + nextCartItem.inventory_quantity / item.inventory_multiplier,
+                inventory_quantity: nextInventoryQuantity,
+              }
+            : item
         );
       }
 
-      return [...prev, { ...product, qty: 1 }];
+      return [...prev, nextCartItem];
     });
   };
 
   const updateQty = (id, newQty) => {
-    const numericQty = Number.parseInt(newQty, 10);
+    const product = products.find((p) => p.id === id);
+    if (!product) {
+      return;
+    }
+
+    const numericQty = Number(newQty);
 
     if (!Number.isFinite(numericQty) || numericQty <= 0) {
       const nextCart = cart.filter((item) => item.id !== id);
@@ -258,28 +343,36 @@ export default function POS() {
       return;
     }
 
-    const product = products.find((p) => p.id === id);
-    if (!product) {
-      return;
-    }
-
-    const safeQty = Math.min(numericQty, product.stock);
-    if (safeQty <= 0) {
+    if (getProductUnitType(product) !== BULK_UNIT_TYPE && !Number.isInteger(numericQty)) {
+      window.showToast('PCS products must use whole numbers.', 'warning');
       return;
     }
 
     setCart((prev) => {
       const existing = prev.find((item) => item.id === id);
-      if (!existing) {
-        return [...prev, { ...product, qty: safeQty }];
+      const inventoryMultiplier = existing?.inventory_multiplier || 1;
+      const safeQty = Math.min(numericQty, Number(product.stock || 0) / inventoryMultiplier);
+      if (safeQty <= 0) {
+        return prev;
       }
 
-      return prev.map((item) => (item.id === id ? { ...item, qty: safeQty } : item));
+      if (!existing) {
+        return [...prev, { ...buildCartItem(product), qty: safeQty, inventory_quantity: safeQty * inventoryMultiplier }];
+      }
+
+      return prev.map((item) =>
+        item.id === id
+          ? { ...item, qty: safeQty, inventory_quantity: safeQty * inventoryMultiplier }
+          : item
+      );
     });
   };
 
   const handleQuantityInputChange = (id, value) => {
-    const numericText = sanitizeQuantityInput(value);
+    const product = products.find((item) => item.id === id);
+    const numericText = getProductUnitType(product) === BULK_UNIT_TYPE
+      ? sanitizeMoneyInput(value)
+      : sanitizeQuantityInput(value);
 
     if (!numericText) {
       return;
@@ -287,6 +380,29 @@ export default function POS() {
 
     updateQty(id, numericText);
   };
+
+  const getQuantityStep = (product, selectedQty) => {
+    if (getProductUnitType(product) !== BULK_UNIT_TYPE) {
+      return 1;
+    }
+
+    const cartItem = cart.find((item) => item.id === product.id);
+    if (!cartItem) {
+      return getSelectedBulkPortion(product).quantity;
+    }
+    const selectedPortion = getSelectedBulkPortion(product);
+    const portionInventoryQuantity = selectedPortion.quantity * getUnitMultiplier(
+      getProductBaseUnit(product),
+      selectedPortion.saleUnit
+    );
+    return portionInventoryQuantity / cartItem.inventory_multiplier || selectedQty;
+  };
+
+  const getCartItemStep = (item) =>
+    getQuantityStep(products.find((product) => product.id === item.id) || item, item.qty);
+  const canIncreaseCartItem = (item) =>
+    Number(item.inventory_quantity || item.qty) + getCartItemStep(item) * Number(item.inventory_multiplier || 1)
+      <= Number(item.stock || 0) + 0.000001;
 
   const clearCart = () => {
     if (window.confirm('Are you sure you want to clear the cart?')) {
@@ -314,23 +430,86 @@ export default function POS() {
     setAmountReceived(sanitizeMoneyInput(event.target.value));
   };
 
+  const setPOSMode = (nextMode) => {
+    setPosMode(nextMode);
+    setCurrentPage(1);
+    setActiveCategory('All');
+    try {
+      localStorage.setItem(POS_MODE_STORAGE_KEY, nextMode);
+    } catch {
+      // The POS remains usable when browser storage is unavailable.
+    }
+    window.requestAnimationFrame(() => productSearchRef.current?.focus());
+  };
+
   // --- Filtering ---
   const categories = ['All', ...new Set(products.map((p) => p.category))].sort();
-  const filteredProducts = products.filter(
-    (p) =>
-      p.is_active !== false &&
-      Number(p.stock || 0) > 0 &&
-      (activeCategory === 'All' || p.category === activeCategory) &&
-      (p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.category.toLowerCase().includes(search.toLowerCase()))
+  const normalizedSearch = search.trim().toLowerCase();
+  const hasSearch = Boolean(normalizedSearch);
+  const matchesSearch = (product) =>
+    String(product.name || '').toLowerCase().includes(normalizedSearch);
+  const isAvailableProduct = (product) =>
+    product.is_active !== false && Number(product.stock || 0) > 0;
+  const filteredProducts = products.filter((product) =>
+    isAvailableProduct(product) &&
+    (hasSearch
+      ? matchesSearch(product)
+      : activeCategory === 'All' || product.category === activeCategory)
+  );
+  const quickSaleSource = quickSaleProducts.length > 0 ? quickSaleProducts : products;
+  const rankedQuickSaleProducts = quickSaleSource.filter(
+    (product) => isAvailableProduct(product) && (!hasSearch || matchesSearch(product))
+  );
+  const bestSellerIds = new Set(
+    [...rankedQuickSaleProducts]
+      .filter((product) => Number(product.sales_last_30_days || 0) > 0)
+      .sort((left, right) => Number(right.sales_last_30_days || 0) - Number(left.sales_last_30_days || 0))
+      .slice(0, 8)
+      .map((product) => product.id)
+  );
+  const frequentProductIds = new Set(
+    [...rankedQuickSaleProducts]
+      .filter((product) => Number(product.orders_last_30_days || 0) > 0)
+      .sort((left, right) => Number(right.orders_last_30_days || 0) - Number(left.orders_last_30_days || 0))
+      .slice(0, 8)
+      .map((product) => product.id)
+  );
+  const recentProductIds = new Set(
+    [...rankedQuickSaleProducts]
+      .filter((product) => product.last_sold_at)
+      .sort((left, right) => new Date(right.last_sold_at) - new Date(left.last_sold_at))
+      .slice(0, 8)
+      .map((product) => product.id)
   );
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStartIndex = filteredProducts.length === 0 ? 0 : (safeCurrentPage - 1) * itemsPerPage;
   const paginatedProducts = filteredProducts.slice(pageStartIndex, pageStartIndex + itemsPerPage);
+  const visibleProducts =
+    posMode === 'quick'
+      ? (hasSearch ? filteredProducts : rankedQuickSaleProducts.slice(0, QUICK_SALE_PRODUCT_LIMIT))
+      : paginatedProducts;
   const pageStartCount = filteredProducts.length === 0 ? 0 : pageStartIndex + 1;
   const pageEndCount = Math.min(pageStartIndex + paginatedProducts.length, filteredProducts.length);
   const pageNumbers = getPageNumbers(safeCurrentPage, totalPages);
+
+  const getQuickSaleLabel = (product) => {
+    if (product.is_favorite) return 'Favorite';
+    if (bestSellerIds.has(product.id)) return 'Best seller';
+    if (frequentProductIds.has(product.id)) return 'Frequent';
+    if (recentProductIds.has(product.id)) return 'Recent';
+    return 'Quick access';
+  };
+
+  const applyCartStockReduction = (productList) =>
+    productList.map((product) => {
+      const cartItem = cart.find((item) => item.id === product.id);
+      if (!cartItem) {
+        return product;
+      }
+
+      return { ...product, stock: Math.max(0, product.stock - Number(cartItem.inventory_quantity || cartItem.qty)) };
+    });
 
   // --- Checkout ---
   const handleCheckout = async () => {
@@ -343,6 +522,7 @@ export default function POS() {
         product_id: item.id,
         quantity: item.qty,
         unit_price: item.price,
+        sale_unit: item.sale_unit,
       })),
       payment_type: CASH_PAYMENT_TYPE,
     };
@@ -350,17 +530,8 @@ export default function POS() {
     if (!navigator.onLine) {
       const offlineTotal = cartTotal;
       saveOfflineTransaction({ ...transactionPayload, total: offlineTotal });
-      setProducts((prev) =>
-        prev.map((p) => {
-          const cartItem = cart.find((c) => c.id === p.id);
-          if (!cartItem) {
-            return p;
-          }
-
-          const nextStock = Math.max(0, p.stock - cartItem.qty);
-          return { ...p, stock: nextStock };
-        })
-      );
+      setProducts(applyCartStockReduction);
+      setQuickSaleProducts(applyCartStockReduction);
       window.showToast('Saved offline. Will sync when back online.', 'warning');
       setReceiptData({
         ...transactionPayload,
@@ -375,17 +546,8 @@ export default function POS() {
     try {
       const txn = await API.createTransaction(transactionPayload);
 
-      setProducts((prev) =>
-        prev.map((p) => {
-          const cartItem = cart.find((c) => c.id === p.id);
-          if (!cartItem) {
-            return p;
-          }
-
-          const nextStock = Math.max(0, p.stock - cartItem.qty);
-          return { ...p, stock: nextStock };
-        })
-      );
+      setProducts(applyCartStockReduction);
+      setQuickSaleProducts(applyCartStockReduction);
 
       requestAlertRefresh({ source: 'pos', reason: 'transaction-created' });
       window.showToast('Transaction complete!', 'success');
@@ -450,7 +612,7 @@ export default function POS() {
             </div>
             <div className="mt-0.5 truncate text-xs font-semibold leading-5">
               {hasCartItems
-                ? `${formatCount(totalUnits)} units | ${formatCurrency(cartTotal)}`
+                ? `${formatCount(cart.length)} item type${cart.length === 1 ? '' : 's'} | ${formatCurrency(cartTotal)}`
                 : 'Select an item to open order review'}
             </div>
           </div>
@@ -461,12 +623,43 @@ export default function POS() {
         <div className="pos-workspace-grid grid min-h-full grid-cols-1 gap-3">
           <div className="pos-products-section flex min-h-0 flex-col gap-3">
           <div className="control-surface shrink-0 space-y-3 p-4">
+            <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1" role="tablist" aria-label="POS mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={posMode === 'quick'}
+                onClick={() => setPOSMode('quick')}
+                className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-md px-4 text-base font-black transition ${
+                  posMode === 'quick'
+                    ? 'bg-white text-primary shadow-sm'
+                    : 'text-slate-600 hover:bg-white/70'
+                }`}
+              >
+                <StarIcon className="h-5 w-5" />
+                Quick Sale
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={posMode === 'full'}
+                onClick={() => setPOSMode('full')}
+                className={`min-h-12 rounded-md px-4 text-base font-black transition ${
+                  posMode === 'full'
+                    ? 'bg-white text-primary shadow-sm'
+                    : 'text-slate-600 hover:bg-white/70'
+                }`}
+              >
+                Full POS
+              </button>
+            </div>
+
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
               <input
+                ref={productSearchRef}
                 type="search"
-                placeholder="Search products by name or category..."
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                placeholder="Search products by name..."
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-base outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
@@ -475,36 +668,44 @@ export default function POS() {
               />
             </div>
 
-            <div className="custom-scrollbar flex gap-2 overflow-x-auto pb-1">
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => {
-                    setActiveCategory(cat);
-                    setCurrentPage(1);
-                  }}
-                  className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition-all ${
-                    activeCategory === cat
-                      ? 'bg-slate-900 text-white shadow-md'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
+            {posMode === 'full' ? (
+              <div className="custom-scrollbar flex gap-2 overflow-x-auto pb-1">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => {
+                      setActiveCategory(cat);
+                      setCurrentPage(1);
+                    }}
+                    className={`min-h-11 whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition-all ${
+                      activeCategory === cat
+                        ? 'bg-slate-900 text-white shadow-md'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
 
-          <div ref={productGridRef} className="pos-product-grid custom-scrollbar grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] content-start gap-3 pb-3 pr-0 sm:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-2 xl:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))]">
-            {paginatedProducts.map((product) => {
-              const selectedQty = cartQtyByProductId[product.id] || 0;
+          <div ref={productGridRef} className={`pos-product-grid custom-scrollbar grid content-start gap-3 pb-3 pr-0 md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-2 ${
+            posMode === 'quick'
+              ? 'grid-cols-[repeat(auto-fill,minmax(12.5rem,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(14.5rem,1fr))]'
+              : 'grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] xl:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))]'
+          }`}>
+            {visibleProducts.map((product) => {
+              const selectedCartItem = cart.find((item) => item.id === product.id);
+              const selectedQty = selectedCartItem?.qty || cartQtyByProductId[product.id] || 0;
+              const selectedInventoryQuantity = Number(selectedCartItem?.inventory_quantity || 0);
               const isSelected = selectedQty > 0;
 
               return (
                 <div
                   key={product.id}
-                  className={`pos-product-card relative flex flex-col items-center rounded-xl border p-3 text-center transition-[border-color,box-shadow,transform] duration-200 ease-out ${
+                  className={`pos-product-card relative flex flex-col items-center rounded-xl border text-center transition-[border-color,box-shadow,transform] duration-200 ease-out ${posMode === 'quick' ? 'min-h-[14rem] p-4' : 'p-3'} ${
                     product.stock === 0
                       ? 'pos-product-card-disabled border-slate-200 bg-white opacity-50 grayscale shadow-none'
                       : isSelected
@@ -520,30 +721,36 @@ export default function POS() {
                       product.stock === 0 ? 'cursor-not-allowed' : 'cursor-pointer'
                     }`}
                   >
+                  {posMode === 'quick' && !hasSearch && (
+                    <div className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700">
+                      <StarIcon className="h-3.5 w-3.5" />
+                      {getQuickSaleLabel(product)}
+                    </div>
+                  )}
                   {isSelected && (
                     <div className="pos-selected-qty absolute right-3 top-3 inline-flex min-w-[2.2rem] items-center justify-center rounded-full bg-primary px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
-                      {selectedQty}
+                      {formatQuantity(selectedQty, selectedCartItem?.sale_unit || getProductBaseUnit(product), getProductUnitType(product))}
                     </div>
                   )}
 
                   <div
-                    className={`pos-product-icon mb-2 rounded-xl p-2.5 ${
+                    className={`pos-product-icon mb-2 rounded-xl ${posMode === 'quick' ? `${hasSearch ? '' : 'mt-6 '}p-3.5` : 'p-2.5'} ${
                       isSelected ? 'bg-primary/10 text-primary' : 'text-primary/80'
                     }`}
                   >
                     {(() => {
                       const ProductIcon = categoryIcon(product.category);
-                      return <ProductIcon className="h-7 w-7 sm:h-8 sm:w-8" />;
+                      return <ProductIcon className={posMode === 'quick' ? 'h-9 w-9' : 'h-7 w-7 sm:h-8 sm:w-8'} />;
                     })()}
                   </div>
 
                   <div
-                    className="mb-1 w-full truncate px-1 text-sm font-semibold leading-tight text-slate-800"
+                    className={`mb-1 w-full truncate px-1 font-semibold leading-tight text-slate-800 ${posMode === 'quick' ? 'text-base' : 'text-sm'}`}
                     title={product.name}
                   >
                     {product.name}
                   </div>
-                  <div className="text-sm font-semibold text-primary">{formatCurrency(product.price)}</div>
+                  <div className={`font-semibold text-primary ${posMode === 'quick' ? 'text-base' : 'text-sm'}`}>{formatCurrency(product.price)}</div>
 
                   <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
                     <div
@@ -553,23 +760,36 @@ export default function POS() {
                           : 'bg-slate-100 text-slate-500'
                       }`}
                     >
-                      {product.stock === 0 ? 'OUT OF STOCK' : `${product.stock} IN STOCK`}
+                      {product.stock === 0 ? 'OUT OF STOCK' : `${formatProductQuantity(product)} IN STOCK`}
                     </div>
 
                     {isSelected && (
                       <div className="pos-selected-chip rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                        Qty {selectedQty}
+                        Qty {formatQuantity(selectedQty, selectedCartItem?.sale_unit || getProductBaseUnit(product), getProductUnitType(product))}
                       </div>
                     )}
                   </div>
                   </button>
 
+                  {getProductUnitType(product) === BULK_UNIT_TYPE ? (
+                    <select
+                      value={bulkPortions[product.id] || getBulkPortionKey(getSelectedBulkPortion(product))}
+                      onChange={(event) => setBulkPortions((current) => ({ ...current, [product.id]: event.target.value }))}
+                      className="mt-3 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      aria-label={`Portion size for ${product.name}`}
+                    >
+                      {getBulkSaleOptions(product).map((portion) => (
+                        <option key={getBulkPortionKey(portion)} value={getBulkPortionKey(portion)}>{portion.label}</option>
+                      ))}
+                    </select>
+                  ) : null}
+
                   <div className="pos-qty-stepper mt-3 flex w-full items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
                     <button
                       type="button"
-                      onClick={() => updateQty(product.id, selectedQty - 1)}
+                      onClick={() => updateQty(product.id, selectedQty - getQuantityStep(product, selectedQty))}
                       disabled={selectedQty === 0}
-                      className="pos-qty-button flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
+                      className={`pos-qty-button flex shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm ${posMode === 'quick' ? 'h-12 w-12' : 'h-10 w-10'}`}
                       aria-label={`Decrease ${product.name} quantity`}
                     >
                       <MinusSmallIcon className="h-5 w-5" />
@@ -581,12 +801,12 @@ export default function POS() {
                       </div>
                       <input
                         type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
+                        inputMode={getProductUnitType(product) === BULK_UNIT_TYPE ? 'decimal' : 'numeric'}
+                        pattern={getProductUnitType(product) === BULK_UNIT_TYPE ? '[0-9]*[.]?[0-9]*' : '[0-9]*'}
                         value={selectedQty}
                         onFocus={(event) => event.currentTarget.select()}
                         onChange={(event) => handleQuantityInputChange(product.id, event.target.value)}
-                        onKeyDown={preventInvalidQuantityKey}
+                        onKeyDown={getProductUnitType(product) === BULK_UNIT_TYPE ? preventInvalidMoneyKey : preventInvalidQuantityKey}
                         aria-label={`Set ${product.name} quantity`}
                         className="pos-qty-input mx-auto block h-6 w-12 rounded-lg border border-transparent bg-transparent text-center text-base font-semibold text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
                       />
@@ -595,8 +815,8 @@ export default function POS() {
                     <button
                       type="button"
                       onClick={() => addToCart(product)}
-                      disabled={product.stock === 0 || selectedQty >= product.stock}
-                      className="pos-qty-button flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm"
+                      disabled={product.stock === 0 || selectedInventoryQuantity + buildCartItem(product).inventory_quantity > Number(product.stock || 0) + 0.000001}
+                      className={`pos-qty-button flex shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm ${posMode === 'quick' ? 'h-12 w-12' : 'h-10 w-10'}`}
                       aria-label={`Increase ${product.name} quantity`}
                     >
                       <PlusSmallIcon className="h-5 w-5" />
@@ -606,14 +826,14 @@ export default function POS() {
               );
             })}
 
-            {filteredProducts.length === 0 && (
+            {visibleProducts.length === 0 && (
               <div className="col-span-full py-12 text-center font-medium text-slate-400">
                 No products found.
               </div>
             )}
           </div>
 
-          {filteredProducts.length > 0 && (
+          {posMode === 'full' && filteredProducts.length > 0 && (
             <div className="data-card flex shrink-0 flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm font-semibold text-slate-600">
                 Showing {formatCount(pageStartCount)}-{formatCount(pageEndCount)} of {formatCount(filteredProducts.length)} products
@@ -677,7 +897,7 @@ export default function POS() {
                     </div>
                     <div className="pos-cart-meta mt-1 text-xs font-semibold text-slate-500">
                       {hasCartItems
-                        ? `${cart.length} item(s) | ${totalUnits} unit(s)`
+                        ? `${cart.length} item type${cart.length === 1 ? '' : 's'}`
                         : 'Selected products will appear here.'}
                     </div>
                   </div>
@@ -714,7 +934,7 @@ export default function POS() {
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
                               <span>{item.category || 'General'}</span>
-                              <span>{formatCurrency(item.price)} each</span>
+                              <span>{formatCurrency(item.price)} / {formatUnit(item.sale_unit)}</span>
                             </div>
                           </div>
                           <button
@@ -731,7 +951,7 @@ export default function POS() {
                           <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-1">
                             <button
                               type="button"
-                              onClick={() => updateQty(item.id, item.qty - 1)}
+                              onClick={() => updateQty(item.id, item.qty - getCartItemStep(item))}
                               className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-slate-600 shadow-sm transition hover:text-primary"
                               aria-label={`Decrease ${item.name} quantity`}
                             >
@@ -739,19 +959,19 @@ export default function POS() {
                             </button>
                             <input
                               type="text"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
+                              inputMode={getProductUnitType(item) === BULK_UNIT_TYPE ? 'decimal' : 'numeric'}
+                              pattern={getProductUnitType(item) === BULK_UNIT_TYPE ? '[0-9]*[.]?[0-9]*' : '[0-9]*'}
                               value={item.qty}
                               onFocus={(event) => event.currentTarget.select()}
                               onChange={(event) => handleQuantityInputChange(item.id, event.target.value)}
-                              onKeyDown={preventInvalidQuantityKey}
+                              onKeyDown={getProductUnitType(item) === BULK_UNIT_TYPE ? preventInvalidMoneyKey : preventInvalidQuantityKey}
                               aria-label={`Set ${item.name} quantity`}
                               className="mx-1 h-9 w-11 rounded-md border border-transparent bg-transparent text-center text-base font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
                             />
                             <button
                               type="button"
-                              onClick={() => updateQty(item.id, item.qty + 1)}
-                              disabled={item.qty >= item.stock}
+                              onClick={() => updateQty(item.id, item.qty + getCartItemStep(item))}
+                              disabled={!canIncreaseCartItem(item)}
                               className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-slate-600 shadow-sm transition hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
                               aria-label={`Increase ${item.name} quantity`}
                             >
@@ -865,7 +1085,7 @@ export default function POS() {
                     </div>
                     <h3 className="mt-1.5 text-base font-black tracking-tight">Review order</h3>
                     <p className="mt-0.5 text-xs font-semibold text-slate-300">
-                      {cart.length} item(s) | {totalUnits} unit(s) | {formatCurrency(cartTotal)}
+                      {cart.length} item type{cart.length === 1 ? '' : 's'} | {formatCurrency(cartTotal)}
                     </p>
                   </div>
 
@@ -898,9 +1118,9 @@ export default function POS() {
                   </div>
                   <div className="order-summary-card rounded-xl border border-white/10 bg-white/10 px-2.5 py-2">
                     <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.16em] text-slate-300">
-                      Units
+                      Lines
                     </div>
-                    <div className="order-summary-card-value mt-0.5 text-sm font-black">{totalUnits}</div>
+                    <div className="order-summary-card-value mt-0.5 text-sm font-black">{cart.length}</div>
                   </div>
                   <div className="order-summary-card rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-2">
                     <div className="order-summary-card-label text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-100">
@@ -963,7 +1183,7 @@ export default function POS() {
                     <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
                       Units
                     </div>
-                    <div className="order-summary-card-value mt-0.5 text-base font-black">{totalUnits}</div>
+                    <div className="order-summary-card-value mt-0.5 text-base font-black">{cart.length}</div>
                   </div>
                   <div className="order-summary-card rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2">
                     <div className="order-summary-card-label text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-100">
@@ -995,7 +1215,7 @@ export default function POS() {
                         </div>
                       </div>
                       <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-500">
-                        {totalUnits} units
+                        {cart.length} item type{cart.length === 1 ? '' : 's'}
                       </div>
                     </div>
 
@@ -1017,8 +1237,8 @@ export default function POS() {
                                 <span className="rounded-full bg-white px-2.5 py-1 text-slate-500">
                                   {item.category || 'General'}
                                 </span>
-                                <span>{formatCurrency(item.price)} each</span>
-                                <span>{item.stock} in stock</span>
+                                <span>{formatCurrency(item.price)} / {formatUnit(item.sale_unit)}</span>
+                                <span>{formatProductQuantity(item)} in stock</span>
                               </div>
                             </div>
 
@@ -1036,7 +1256,7 @@ export default function POS() {
                             <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
                               <button
                                 type="button"
-                                onClick={() => updateQty(item.id, item.qty - 1)}
+                                onClick={() => updateQty(item.id, item.qty - getCartItemStep(item))}
                                 className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 hover:text-primary"
                                 aria-label={`Decrease ${item.name} quantity`}
                               >
@@ -1048,20 +1268,20 @@ export default function POS() {
                                 </div>
                                 <input
                                   type="text"
-                                  inputMode="numeric"
-                                  pattern="[0-9]*"
+                                  inputMode={getProductUnitType(item) === BULK_UNIT_TYPE ? 'decimal' : 'numeric'}
+                                  pattern={getProductUnitType(item) === BULK_UNIT_TYPE ? '[0-9]*[.]?[0-9]*' : '[0-9]*'}
                                   value={item.qty}
                                   onFocus={(event) => event.currentTarget.select()}
                                   onChange={(event) => handleQuantityInputChange(item.id, event.target.value)}
-                                  onKeyDown={preventInvalidQuantityKey}
+                                  onKeyDown={getProductUnitType(item) === BULK_UNIT_TYPE ? preventInvalidMoneyKey : preventInvalidQuantityKey}
                                   aria-label={`Set ${item.name} quantity`}
                                   className="mx-auto block h-7 w-14 rounded-lg border border-transparent bg-transparent text-center text-lg font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
                                 />
                               </div>
                               <button
                                 type="button"
-                                onClick={() => updateQty(item.id, item.qty + 1)}
-                                disabled={item.qty >= item.stock}
+                                onClick={() => updateQty(item.id, item.qty + getCartItemStep(item))}
+                                disabled={!canIncreaseCartItem(item)}
                                 className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-600"
                                 aria-label={`Increase ${item.name} quantity`}
                               >
@@ -1207,7 +1427,7 @@ export default function POS() {
                     </div>
                   </div>
                   <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-500 shadow-sm">
-                    {totalUnits} total units in cart
+                    {cart.length} item type{cart.length === 1 ? '' : 's'} in cart
                   </div>
                 </div>
 
@@ -1245,7 +1465,7 @@ export default function POS() {
                                 Available
                               </span>
                               <span className="mt-1 block text-sm font-black text-slate-800">
-                                {item.stock} in stock
+                                {formatProductQuantity(item)} in stock
                               </span>
                             </div>
                           </div>
@@ -1265,7 +1485,7 @@ export default function POS() {
                         <div className="inline-flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-2 sm:w-auto sm:justify-start sm:gap-3">
                           <button
                             type="button"
-                            onClick={() => updateQty(item.id, item.qty - 1)}
+                            onClick={() => updateQty(item.id, item.qty - getCartItemStep(item))}
                             className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-lg font-black text-slate-600 shadow-sm transition hover:text-primary"
                           >
                             -
@@ -1276,19 +1496,20 @@ export default function POS() {
                             </div>
                             <input
                               type="text"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
+                              inputMode={getProductUnitType(item) === BULK_UNIT_TYPE ? 'decimal' : 'numeric'}
+                              pattern={getProductUnitType(item) === BULK_UNIT_TYPE ? '[0-9]*[.]?[0-9]*' : '[0-9]*'}
                               value={item.qty}
                               onFocus={(event) => event.currentTarget.select()}
                               onChange={(event) => handleQuantityInputChange(item.id, event.target.value)}
-                              onKeyDown={preventInvalidQuantityKey}
+                              onKeyDown={getProductUnitType(item) === BULK_UNIT_TYPE ? preventInvalidMoneyKey : preventInvalidQuantityKey}
                               aria-label={`Set ${item.name} quantity`}
                               className="mx-auto block h-7 w-14 rounded-lg border border-transparent bg-transparent text-center text-lg font-black text-slate-900 outline-none transition focus:border-primary/30 focus:bg-white focus:ring-2 focus:ring-primary/15"
                             />
                           </div>
                           <button
                             type="button"
-                            onClick={() => updateQty(item.id, item.qty + 1)}
+                            onClick={() => updateQty(item.id, item.qty + getCartItemStep(item))}
+                            disabled={!canIncreaseCartItem(item)}
                             className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-lg font-black text-slate-600 shadow-sm transition hover:text-primary"
                           >
                             +
@@ -1464,7 +1685,7 @@ export default function POS() {
                 {receiptData.cartDetails.map((item) => (
                   <div key={item.id} className="flex justify-between text-sm">
                     <span className="text-slate-600">
-                      <span className="font-bold">{item.qty}x</span> {item.name}
+                      <span className="font-bold">{formatQuantity(item.qty, item.sale_unit, getProductUnitType(item))}</span> {item.name}
                     </span>
                     <span className="font-bold text-slate-900">
                       {formatCurrency(item.price * item.qty)}

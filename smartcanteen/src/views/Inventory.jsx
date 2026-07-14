@@ -4,6 +4,7 @@ import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import { getPhilippineDateKey } from '../utils/dateTime';
+import { BULK_UNIT_TYPE, formatProductQuantity, formatQuantity, formatUnit, getProductBaseUnit, getProductUnitType } from '../utils/units';
 import { requestAlertRefresh } from '../services/realtimeAlerts';
 import {
   ArrowDownTrayIcon,
@@ -51,11 +52,7 @@ function sortActiveProducts(products) {
 }
 
 function getProductSearchText(product) {
-  return [
-    product?.id,
-    product?.name,
-    product?.category,
-  ].filter(Boolean).join(' ').toLowerCase();
+  return String(product?.name || '').toLowerCase();
 }
 
 function productMatchesFilters(product, { searchQuery, categoryFilter, stockFilter }) {
@@ -348,7 +345,7 @@ function InventorySection({
                   <td className="px-6 py-4">{`PHP ${Number(product.price || 0).toFixed(2)}`}</td>
                   <td className="px-6 py-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${shouldWarnStock ? 'bg-red-100 text-red-700 animate-pulse' : isInactiveSection ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
-                      {product.stock} {shouldWarnStock && ' (LOW)'}
+                      {formatProductQuantity(product)} {shouldWarnStock && ' (LOW)'}
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -439,11 +436,11 @@ function InventorySection({
                   <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Stock</div>
-                      <div className="mt-1 font-black text-slate-900">{product.stock}</div>
+                      <div className="mt-1 font-black text-slate-900">{formatProductQuantity(product)}</div>
                     </div>
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Min Alert</div>
-                      <div className="mt-1 font-black text-slate-900">{product.min_stock}</div>
+                      <div className="mt-1 font-black text-slate-900">{formatQuantity(product.min_stock, getProductBaseUnit(product), getProductUnitType(product))}</div>
                     </div>
                   </div>
 
@@ -535,7 +532,17 @@ export default function Inventory() {
   const tableColumnCount = isAdmin ? 7 : 6;
 
   function initialFormState() {
-    return { id: null, name: '', category: 'Staple', price: '', stock: 0, min_stock: 5 };
+    return {
+      id: null,
+      name: '',
+      category: 'Staple',
+      price: '',
+      stock: 0,
+      min_stock: 5,
+      is_favorite: false,
+      unit_type: 'pcs',
+      base_unit: 'pcs',
+    };
   }
 
   const fetchProducts = useCallback(async () => {
@@ -614,12 +621,28 @@ export default function Inventory() {
     e.preventDefault();
     setFormError('');
     try {
+      const unitType = getProductUnitType(formData);
+      const baseUnit = unitType === BULK_UNIT_TYPE ? (formData.base_unit || 'kg') : 'pcs';
+      const stock = Number(formData.stock);
+      const minStock = Number(formData.min_stock);
+      if (!Number.isFinite(stock) || !Number.isFinite(minStock) || stock < 0 || minStock < 0) {
+        setFormError('Stock and minimum alert stock must be non-negative numbers.');
+        return;
+      }
+      if (unitType !== BULK_UNIT_TYPE && (!Number.isInteger(stock) || !Number.isInteger(minStock))) {
+        setFormError('PCS products require whole-number stock values.');
+        return;
+      }
+
       const payload = {
         name: formData.name,
         category: formData.category,
         price: parseFloat(formData.price),
-        stock: parseInt(formData.stock),
-        min_stock: parseInt(formData.min_stock),
+        stock,
+        min_stock: minStock,
+        unit_type: unitType,
+        base_unit: baseUnit,
+        is_favorite: Boolean(formData.is_favorite),
       };
 
       if (formData.id) {
@@ -642,7 +665,7 @@ export default function Inventory() {
 
   const exportCSVReport = () => {
     const reportProducts = [...activeProducts, ...inactiveProducts];
-    const headers = ['ID', 'Product Name', 'Category', 'Price (PHP)', 'Current Stock', 'Min Stock Alert', 'Status'];
+    const headers = ['ID', 'Product Name', 'Category', 'Price (PHP)', 'Unit Type', 'Base Unit', 'Current Stock', 'Min Stock Alert', 'Status'];
     const csvRows = [headers.join(',')];
 
     reportProducts.forEach((product) => {
@@ -651,8 +674,10 @@ export default function Inventory() {
         `"${String(product.name || '').replace(/"/g, '""')}"`,
         product.category,
         Number(product.price || 0).toFixed(2),
-        product.stock,
-        product.min_stock,
+        getProductUnitType(product).toUpperCase(),
+        getProductBaseUnit(product),
+        formatProductQuantity(product),
+        formatQuantity(product.min_stock, getProductBaseUnit(product), getProductUnitType(product)),
         isProductActive(product) ? 'Active' : 'Inactive',
       ];
       csvRows.push(row.join(','));
@@ -708,10 +733,9 @@ export default function Inventory() {
     ),
   ];
   const activeLowStockCount = activeProducts.filter(isBelowMinimumStock).length;
-  const activeStockUnits = activeProducts.reduce(
-    (total, product) => total + Number(product.stock || 0),
-    0
-  );
+  const activeBulkProductCount = activeProducts.filter(
+    (product) => getProductUnitType(product) === BULK_UNIT_TYPE
+  ).length;
   const filtersActive =
     searchQuery.trim() !== '' || categoryFilter !== 'All' || stockFilter !== 'all';
   const displayedActiveProducts = moveFocusedProductFirst(
@@ -802,9 +826,9 @@ export default function Inventory() {
           tone={activeLowStockCount > 0 ? 'red' : 'slate'}
         />
         <InventoryMetricCard
-          title="Stock Units"
-          value={formatCount(activeStockUnits)}
-          detail="Active inventory total"
+          title="Bulk Products"
+          value={formatCount(activeBulkProductCount)}
+          detail="Tracked by weight or volume"
           icon={Squares2X2Icon}
           tone="fuchsia"
         />
@@ -826,7 +850,7 @@ export default function Inventory() {
               type="search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search name, category, or ID"
+              placeholder="Search products by name"
               className="field-control w-full pl-10"
             />
           </label>
@@ -950,19 +974,47 @@ export default function Inventory() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">Price (PHP) *</label>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Price per {formatUnit(getProductBaseUnit(formData))} (PHP) *</label>
                     <input type="number" step="0.01" required value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">Current Stock</label>
-                    <input type="number" required value={formData.stock} onChange={(e) => setFormData({ ...formData, stock: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Unit Type *</label>
+                    <select value={getProductUnitType(formData)} onChange={(e) => setFormData({ ...formData, unit_type: e.target.value, base_unit: e.target.value === BULK_UNIT_TYPE ? (getProductBaseUnit(formData) === 'pcs' ? 'kg' : getProductBaseUnit(formData)) : 'pcs' })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none bg-white">
+                      <option value="pcs">PCS (Piece)</option>
+                      <option value="bulk">Bulk</option>
+                    </select>
+                  </div>
+                  {getProductUnitType(formData) === BULK_UNIT_TYPE ? (
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Base Unit *</label>
+                      <select value={getProductBaseUnit(formData)} onChange={(e) => setFormData({ ...formData, base_unit: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none bg-white">
+                        <option value="kg">kg</option>
+                        <option value="g">g</option>
+                        <option value="l">L</option>
+                        <option value="ml">mL</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">Stock and sales use whole PCS values.</div>
+                  )}
+                </div>
+
+                <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                  <input type="checkbox" checked={Boolean(formData.is_favorite)} onChange={(e) => setFormData({ ...formData, is_favorite: e.target.checked })} className="h-5 w-5 rounded border-slate-300 text-primary focus:ring-primary" />
+                  Pin to Quick Sale
+                </label>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Current Stock ({formatUnit(getProductBaseUnit(formData))})</label>
+                    <input type="number" min="0" step={getProductUnitType(formData) === BULK_UNIT_TYPE ? '0.001' : '1'} required value={formData.stock} onChange={(e) => setFormData({ ...formData, stock: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">Min Alert Stock</label>
-                    <input type="number" required value={formData.min_stock} onChange={(e) => setFormData({ ...formData, min_stock: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Min Alert Stock ({formatUnit(getProductBaseUnit(formData))})</label>
+                    <input type="number" min="0" step={getProductUnitType(formData) === BULK_UNIT_TYPE ? '0.001' : '1'} required value={formData.min_stock} onChange={(e) => setFormData({ ...formData, min_stock: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none" />
                   </div>
                 </div>
 

@@ -22,7 +22,6 @@ import {
   ExclamationTriangleIcon,
   FunnelIcon,
   MagnifyingGlassIcon,
-  PlusIcon,
   ShoppingBagIcon,
   SparklesIcon,
   Squares2X2Icon,
@@ -230,7 +229,6 @@ const SALES_OUTLOOK_FACTORS = [
   { key: 'todaySales', title: 'Today Sales' },
   { key: 'recentTrend', title: 'Recent 3-7 Day Trend' },
   { key: 'attendanceTomorrow', title: 'Attendance Tomorrow' },
-  { key: 'plannedMenu', title: 'Planned Menu' },
   { key: 'stockLevel', title: 'Inventory Availability' },
   { key: 'allowanceTiming', title: 'Allowance Timing' },
   { key: 'sameDayLastWeek', title: 'Same Day Last Week' },
@@ -1046,12 +1044,12 @@ function getWeatherBusinessInsight(weather) {
   return insights[weather] || insights.hot_dry;
 }
 
-function getTopForecastItem(predictions, plannedMenuItems = []) {
+function getTopForecastItem(predictions) {
   const topPrediction = [...predictions]
     .filter((item) => Number(item.predicted_quantity || 0) > 0)
     .sort((left, right) => Number(right.predicted_quantity || 0) - Number(left.predicted_quantity || 0))[0];
 
-  return topPrediction?.product_name || plannedMenuItems[0] || 'No top seller yet';
+  return topPrediction?.product_name || 'No top seller yet';
 }
 
 function getWatchItem(predictions) {
@@ -1941,29 +1939,16 @@ function TomorrowSalesOutlookInputs({
 }) {
   const [inputs, setInputs] = useState(() => initialInputs);
   const [manualMode, setManualMode] = useState(false);
-  const [menuDraft, setMenuDraft] = useState('');
   const prediction = buildFunctionalTomorrowSalesPrediction(inputs);
   const predictionMeta = getSalesWeekClassMeta(prediction.level);
-  const plannedMenuItems = splitPlannedMenuItems(
-    inputs.plannedMenuItems?.length > 0 ? inputs.plannedMenuItems : inputs.plannedMenu
-  );
   const weatherInsight = getWeatherBusinessInsight(weather);
-  const topForecastItem = getTopForecastItem(predictions, plannedMenuItems);
+  const topForecastItem = getTopForecastItem(predictions);
   const watchItem = getWatchItem(predictions);
   const baseFieldClassName =
     'mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-500';
 
   function updateInput(key, value) {
     setInputs((current) => ({ ...current, [key]: value }));
-  }
-
-  function updatePlannedMenuItems(nextItems) {
-    const normalizedItems = splitPlannedMenuItems(nextItems);
-    setInputs((current) => ({
-      ...current,
-      plannedMenu: buildPlannedMenuLabel(normalizedItems),
-      plannedMenuItems: normalizedItems,
-    }));
   }
 
   function getFieldClassName(disabled) {
@@ -1977,7 +1962,6 @@ function TomorrowSalesOutlookInputs({
   function resetToAppData() {
     setInputs(initialInputs);
     setManualMode(false);
-    setMenuDraft('');
   }
 
   function toggleManualMode() {
@@ -1986,23 +1970,6 @@ function TomorrowSalesOutlookInputs({
       return;
     }
     setManualMode(true);
-  }
-
-  function addPlannedMenuItem() {
-    const item = menuDraft.trim();
-    if (!item) {
-      return;
-    }
-
-    const hasDuplicate = plannedMenuItems.some(
-      (existingItem) => existingItem.toLowerCase() === item.toLowerCase()
-    );
-    updatePlannedMenuItems(hasDuplicate ? plannedMenuItems : [...plannedMenuItems, item]);
-    setMenuDraft('');
-  }
-
-  function removePlannedMenuItem(indexToRemove) {
-    updatePlannedMenuItems(plannedMenuItems.filter((_, index) => index !== indexToRemove));
   }
 
   function renderSelect(key, options, disabled) {
@@ -2127,63 +2094,6 @@ function TomorrowSalesOutlookInputs({
           onChange={(eventTarget) => updateInput('attendanceTomorrow', eventTarget.target.value)}
           className={getFieldClassName(disabled)}
         />
-      );
-    }
-    if (factor.key === 'plannedMenu') {
-      return (
-        <div className="mt-2 space-y-2">
-          <div className="flex min-h-10 flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
-            {plannedMenuItems.length > 0 ? (
-              plannedMenuItems.map((item, index) => (
-                <span
-                  key={`${item}-${index}`}
-                  className="inline-flex min-w-0 items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700"
-                >
-                  <span className="max-w-[9rem] truncate">{item}</span>
-                  {!disabled && (
-                    <button
-                      type="button"
-                      onClick={() => removePlannedMenuItem(index)}
-                      className="rounded-full p-0.5 text-slate-400 transition hover:bg-white hover:text-slate-700"
-                      aria-label={`Remove ${item}`}
-                    >
-                      <XMarkIcon className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </span>
-              ))
-            ) : (
-              <span className="px-1 py-1 text-xs font-semibold text-slate-400">
-                No menu items yet
-              </span>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={menuDraft}
-              disabled={disabled}
-              onChange={(eventTarget) => setMenuDraft(eventTarget.target.value)}
-              onKeyDown={(eventTarget) => {
-                if (eventTarget.key === 'Enter') {
-                  eventTarget.preventDefault();
-                  addPlannedMenuItem();
-                }
-              }}
-              placeholder="Add menu item"
-              className={`${getFieldClassName(disabled)} mt-0 min-w-0 flex-1`}
-            />
-            <button
-              type="button"
-              onClick={addPlannedMenuItem}
-              disabled={disabled || !menuDraft.trim()}
-              className="mt-0 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Add menu item"
-            >
-              <PlusIcon className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
       );
     }
     if (factor.key === 'stockLevel') return renderSelect('stockLevel', TOMORROW_STOCK_OPTIONS, disabled);

@@ -67,12 +67,6 @@ FUND_MONITORING_COLUMNS = ("B", "C", "D", "E", "F", "G")
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 FUTURE_FINANCIAL_REPORT_ERROR = "You cannot add a financial report for a future school year."
 CURRENT_FINANCIAL_REPORT_ERROR = "Financial reports can only be saved for the current active school year."
-BEGINNING_CASH_CARRY_FORWARD_ERROR = (
-    "Beginning cash is system-generated from the previous school year's final current balance."
-)
-CURRENT_SALES_TRANSACTION_ERROR = (
-    "Current sales is system-generated from transactions for the selected month."
-)
 DEMO_BEGINNING_CASH_ON_HAND = 11834.59
 DEMO_MONTHLY_REPORT_ROWS = [
     {
@@ -347,9 +341,6 @@ def _ensure_school_year_defaults(db: Session, school_year: models.SchoolYear) ->
         if _create_default_expenses(db, report):
             changed = True
 
-    if _apply_beginning_cash_carry_forward(db, school_year):
-        changed = True
-
     if changed:
         db.flush()
 
@@ -573,6 +564,8 @@ def _build_report_month_bounds(report: models.MonthlyReport) -> tuple[datetime, 
 
 def _get_report_transaction_sales(db: Session, report: models.MonthlyReport) -> float:
     start_utc, end_utc = _build_report_month_bounds(report)
+    # A transaction row is created only after POS checkout succeeds; this system does not retain
+    # pending POS transactions in the transactions table.
     total_sales = (
         db.query(func.coalesce(func.sum(models.Transaction.total), 0.0))
         .filter(models.Transaction.created_at.between(start_utc, end_utc))
@@ -585,19 +578,27 @@ def _serialize_report(
     report: models.MonthlyReport,
     allocations: list[models.Allocation],
     *,
-    current_sales_override: Optional[float] = None,
+    beginning_cash_auto: Optional[float] = None,
+    current_sales_auto: Optional[float] = None,
 ) -> dict:
     expenses = sorted(report.expenses, key=lambda item: (item.sort_order, item.id))
     serialized_expenses = [_serialize_expense(expense) for expense in expenses]
-    beginning_cash = _round_money(report.beginning_cash_on_hand)
+    saved_beginning_cash = _round_money(report.beginning_cash_on_hand)
     saved_current_sales = _round_money(report.current_sales)
+    beginning_cash_manual_override = bool(getattr(report, "beginning_cash_manual_override", False))
+    current_sales_manual_override = bool(getattr(report, "current_sales_manual_override", False))
+    beginning_cash = (
+        saved_beginning_cash
+        if beginning_cash_manual_override or beginning_cash_auto is None
+        else _round_money(beginning_cash_auto)
+    )
     transaction_current_sales = (
-        None if current_sales_override is None else _round_money(current_sales_override)
+        None if current_sales_auto is None else _round_money(current_sales_auto)
     )
     current_sales = (
-        transaction_current_sales
-        if transaction_current_sales is not None
-        else saved_current_sales
+        saved_current_sales
+        if current_sales_manual_override or transaction_current_sales is None
+        else transaction_current_sales
     )
     other_income = _round_money(report.other_income)
     purchases = _round_money(report.purchases)
@@ -636,11 +637,16 @@ def _serialize_report(
         "calendar_year": report.calendar_year,
         "month_label": f"{report.month_name} {report.calendar_year}",
         "beginning_cash_on_hand": beginning_cash,
+        "beginning_cash_manual_override": beginning_cash_manual_override,
+        "beginning_cash_auto": _round_money(beginning_cash_auto) if beginning_cash_auto is not None else None,
+        "beginning_cash_source": "manual" if beginning_cash_manual_override else "automatic",
         "current_sales": current_sales,
+        "current_sales_manual_override": current_sales_manual_override,
+        "current_sales_auto": transaction_current_sales,
         "analytics_current_sales": transaction_current_sales,
         "transaction_current_sales": transaction_current_sales,
-        "current_sales_source": "transactions" if transaction_current_sales is not None else "saved",
-        "current_sales_locked": transaction_current_sales is not None,
+        "current_sales_source": "manual" if current_sales_manual_override else "automatic",
+        "current_sales_locked": False,
         "other_income": other_income,
         "purchases": purchases,
         "inventory_used": inventory_used,
@@ -876,14 +882,6 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
         report.id: _get_report_transaction_sales(db, report)
         for report in reports
     }
-    serialized_reports = [
-        _serialize_report(
-            report,
-            allocations,
-            current_sales_override=transaction_sales_by_report_id[report.id],
-        )
-        for report in reports
-    ]
     beginning_cash_carry_forward = _get_beginning_cash_carry_forward(db, school_year)
 
     previous_report = None
@@ -894,9 +892,31 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
         for allocation in allocations
     }
     historical_reports = []
-    for report in serialized_reports:
-        transaction_sales = transaction_sales_by_report_id[report["id"]]
+    serialized_reports = []
+    for monthly_report in reports:
+        transaction_sales = transaction_sales_by_report_id[monthly_report.id]
         previous_balance_total = _fund_balance_total(allocations, previous_fund_balances)
+        if previous_report is not None:
+            beginning_cash_auto = previous_balance_total
+            beginning_cash_auto_source = (
+                f'Auto-carried from {previous_report["month_label"]} Current Balance total'
+            )
+        elif beginning_cash_carry_forward:
+            beginning_cash_auto = _round_money(beginning_cash_carry_forward["amount"])
+            beginning_cash_auto_source = (
+                f'Auto-carried from {beginning_cash_carry_forward["source_month_label"]} '
+                f'Current Balance total'
+            )
+        else:
+            beginning_cash_auto = 0.0
+            beginning_cash_auto_source = 'No previous report found; defaulted to PHP 0.00'
+
+        report = _serialize_report(
+            monthly_report,
+            allocations,
+            beginning_cash_auto=beginning_cash_auto,
+            current_sales_auto=transaction_sales,
+        )
         auto_inputs, default_inputs = _build_auto_input_payload(
             report,
             previous_report=previous_report,
@@ -904,28 +924,23 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
             transaction_sales=transaction_sales,
             historical_reports=historical_reports,
         )
+        auto_inputs["beginning_cash_on_hand"] = {
+            "value": beginning_cash_auto,
+            "source": beginning_cash_auto_source,
+        }
+        default_inputs["beginning_cash_on_hand"] = report["beginning_cash_on_hand"]
+        default_inputs["current_sales"] = report["current_sales"]
         report["auto_inputs"] = auto_inputs
         report["default_inputs"] = default_inputs
-        report["auto_fill_applied_by_default"] = False
+        report["auto_fill_applied_by_default"] = not (
+            report["beginning_cash_manual_override"] and report["current_sales_manual_override"]
+        )
         report["fund_previous_balance_total"] = previous_balance_total
         report["beginning_cash_locked"] = False
-        report["beginning_cash_source"] = None
-        report["beginning_cash_carry_forward"] = None
-
-        if int(report["month_index"]) == 0 and beginning_cash_carry_forward:
-            carry_forward_amount = _round_money(beginning_cash_carry_forward["amount"])
-            carry_forward_source = (
-                f'Auto-carried from {beginning_cash_carry_forward["source_school_year_name"]} '
-                f'final Current Balance total ({beginning_cash_carry_forward["source_month_label"]})'
-            )
-            report["beginning_cash_locked"] = True
-            report["beginning_cash_source"] = carry_forward_source
-            report["beginning_cash_carry_forward"] = beginning_cash_carry_forward
-            auto_inputs["beginning_cash_on_hand"] = {
-                "value": carry_forward_amount,
-                "source": carry_forward_source,
-            }
-            default_inputs["beginning_cash_on_hand"] = carry_forward_amount
+        report["beginning_cash_source"] = (
+            "manual" if report["beginning_cash_manual_override"] else "automatic"
+        )
+        report["beginning_cash_carry_forward"] = beginning_cash_carry_forward
 
         if previous_report:
             report["comparison"] = {
@@ -943,6 +958,7 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
         previous_fund_balances = next_fund_balances
         previous_report = report
         historical_reports.append(report)
+        serialized_reports.append(report)
 
     return {
         "school_year": {
@@ -1016,7 +1032,7 @@ def _calculate_school_year_final_current_balance(
             last_report_payload = _serialize_report(
                 report,
                 allocations,
-                current_sales_override=_get_report_transaction_sales(db, report),
+                current_sales_auto=_get_report_transaction_sales(db, report),
             )
         if not last_report_payload:
             return None
@@ -1038,7 +1054,7 @@ def _calculate_school_year_final_current_balance(
         report_payload = _serialize_report(
             report,
             allocations,
-            current_sales_override=_get_report_transaction_sales(db, report),
+            current_sales_auto=_get_report_transaction_sales(db, report),
         )
         previous_fund_balances = _calculate_next_fund_balances(
             report_payload,
@@ -1117,7 +1133,7 @@ def _build_school_year_summary(db: Session, school_year: models.SchoolYear) -> d
         _serialize_report(
             report,
             allocations,
-            current_sales_override=_get_report_transaction_sales(db, report),
+            current_sales_auto=_get_report_transaction_sales(db, report),
         )
         for report in reports
     ]
@@ -1204,22 +1220,12 @@ def _populate_report_worksheet(
     worksheet,
     report: models.MonthlyReport,
     *,
-    current_sales_override: Optional[float] = None,
-    beginning_cash_override: Optional[float] = None,
+    financial_values: Optional[dict] = None,
 ) -> dict:
-    saved_current_sales = _round_money(report.current_sales)
-    transaction_current_sales = (
-        None if current_sales_override is None else _round_money(current_sales_override)
-    )
-    current_sales = (
-        transaction_current_sales
-        if transaction_current_sales is not None
-        else saved_current_sales
-    )
+    financial_values = financial_values or {}
+    current_sales = _round_money(financial_values.get("current_sales", report.current_sales))
     beginning_cash = _round_money(
-        report.beginning_cash_on_hand
-        if beginning_cash_override is None
-        else beginning_cash_override
+        financial_values.get("beginning_cash_on_hand", report.beginning_cash_on_hand)
     )
     cost_of_sales = _round_money(
         _round_money(report.purchases)
@@ -1341,7 +1347,10 @@ def _build_school_year_workbook_export(
     allocations = sorted(school_year.allocations, key=lambda item: (item.sort_order, item.id))[
         :len(FUND_MONITORING_COLUMNS)
     ]
-    has_previous_report = False
+    effective_reports_by_id = {
+        report["id"]: report
+        for report in _serialize_school_year_detail(db, school_year).get("reports", [])
+    }
     previous_fund_balances: dict[str, float] = {
         str(allocation.category_key or "").strip(): _round_money(
             getattr(allocation, "opening_balance", 0.0)
@@ -1351,16 +1360,10 @@ def _build_school_year_workbook_export(
     for report in sorted(school_year.monthly_reports, key=lambda item: item.month_index):
         if report.month_name in workbook.sheetnames:
             worksheet = workbook[report.month_name]
-            beginning_cash_override = (
-                _fund_balance_total(allocations, previous_fund_balances)
-                if has_previous_report
-                else None
-            )
             result = _populate_report_worksheet(
                 worksheet,
                 report,
-                current_sales_override=_get_report_transaction_sales(db, report),
-                beginning_cash_override=beginning_cash_override,
+                financial_values=effective_reports_by_id.get(report.id),
             )
             previous_fund_balances = _populate_fund_monitoring_worksheet(
                 worksheet,
@@ -1369,7 +1372,6 @@ def _build_school_year_workbook_export(
                 previous_balances=previous_fund_balances,
                 fund_entries_by_key=_fund_entry_map(report),
             )
-            has_previous_report = True
 
     if active_sheet_name and active_sheet_name in workbook.sheetnames:
         for worksheet in workbook.worksheets:
@@ -1545,17 +1547,9 @@ def update_report(
         raise HTTPException(status_code=404, detail="Monthly report not found")
     _validate_school_year_write_allowed(report.school_year)
 
-    carry_forward = _get_report_beginning_cash_carry_forward(db, report)
-    transaction_current_sales = _get_report_transaction_sales(db, report)
     updates = payload.model_dump(exclude_unset=True)
-    if carry_forward and "beginning_cash_on_hand" in updates:
-        if _round_money(updates["beginning_cash_on_hand"]) != _round_money(carry_forward["amount"]):
-            raise HTTPException(status_code=400, detail=BEGINNING_CASH_CARRY_FORWARD_ERROR)
-        updates.pop("beginning_cash_on_hand", None)
-    if "current_sales" in updates:
-        if _round_money(updates["current_sales"]) != transaction_current_sales:
-            raise HTTPException(status_code=400, detail=CURRENT_SALES_TRANSACTION_ERROR)
-        updates.pop("current_sales", None)
+    beginning_cash_manual_override = updates.pop("beginning_cash_manual_override", None)
+    current_sales_manual_override = updates.pop("current_sales_manual_override", None)
 
     for field_name, value in updates.items():
         if field_name == "notes":
@@ -1563,9 +1557,10 @@ def update_report(
         else:
             setattr(report, field_name, _round_money(value))
 
-    if carry_forward:
-        report.beginning_cash_on_hand = _round_money(carry_forward["amount"])
-    report.current_sales = transaction_current_sales
+    if beginning_cash_manual_override is not None:
+        report.beginning_cash_manual_override = bool(beginning_cash_manual_override)
+    if current_sales_manual_override is not None:
+        report.current_sales_manual_override = bool(current_sales_manual_override)
 
     _audit_log(
         db,
@@ -1592,7 +1587,7 @@ def update_report(
         "report": _serialize_report(
             report,
             allocations,
-            current_sales_override=_get_report_transaction_sales(db, report),
+            current_sales_auto=_get_report_transaction_sales(db, report),
         )
     }
 
@@ -1673,7 +1668,7 @@ def replace_report_expenses(
         "report": _serialize_report(
             report,
             allocations,
-            current_sales_override=_get_report_transaction_sales(db, report),
+            current_sales_auto=_get_report_transaction_sales(db, report),
         )
     }
 
@@ -1749,7 +1744,7 @@ def replace_report_fund_monitoring(
         "report": _serialize_report(
             report,
             allocations,
-            current_sales_override=_get_report_transaction_sales(db, report),
+            current_sales_auto=_get_report_transaction_sales(db, report),
         )
     }
 

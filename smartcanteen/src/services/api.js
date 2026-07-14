@@ -1271,6 +1271,7 @@ export const API = {
     }),
 
   getProducts: (active_only = true) => request('GET', `/products${toQuery({ active_only })}`),
+  getQuickSaleProducts: () => request('GET', '/products/quick-sale'),
   getLowStock: () => request('GET', '/products/low-stock'),
   createProduct: (data) => request('POST', '/products', data),
   updateProduct: (id, data) => request('PUT', `/products/${id}`, data),

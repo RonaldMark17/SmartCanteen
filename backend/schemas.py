@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -171,38 +171,54 @@ class UserResponse(BaseModel):
 # ── Product ────────────────────────────────────────────────────────────────────
 
 class ProductCreate(BaseModel):
-    name:      str
-    category:  str   = "General"
-    price:     float
-    stock:     int   = 0
-    min_stock: int   = 5
+    name:         str
+    category:     str   = "General"
+    price:        float
+    stock:        float = 0.0
+    min_stock:    float = 5.0
+    unit_type:    str   = "pcs"
+    base_unit:    str   = "pcs"
+    is_favorite:  bool = False
 
 class ProductUpdate(BaseModel):
-    name:      Optional[str]   = None
-    category:  Optional[str]   = None
-    price:     Optional[float] = None
-    stock:     Optional[int]   = None
-    min_stock: Optional[int]   = None
-    is_active: Optional[bool]  = None
+    name:         Optional[str]   = None
+    category:     Optional[str]   = None
+    price:        Optional[float] = None
+    stock:        Optional[float] = None
+    min_stock:    Optional[float] = None
+    unit_type:    Optional[str]   = None
+    base_unit:    Optional[str]   = None
+    is_favorite:  Optional[bool]  = None
+    is_active:    Optional[bool]  = None
 
 class ProductResponse(BaseModel):
-    id:        int
-    name:      str
-    category:  str
-    price:     float
-    stock:     int
-    min_stock: int
-    is_active: bool
+    id:           int
+    name:         str
+    category:     str
+    price:        float
+    stock:        float
+    min_stock:    float
+    unit_type:    str = "pcs"
+    base_unit:    str = "pcs"
+    is_favorite:  bool = False
+    is_active:    bool
     class Config:
         from_attributes = True
+
+
+class QuickSaleProductResponse(ProductResponse):
+    sales_last_30_days: float = 0.0
+    orders_last_30_days: int = 0
+    last_sold_at: Optional[datetime] = None
 
 
 # ── Transaction ────────────────────────────────────────────────────────────────
 
 class TransactionItemCreate(BaseModel):
     product_id: int
-    quantity:   int
+    quantity:   float
     unit_price: float
+    sale_unit:  Optional[str] = None
 
 class TransactionCreate(BaseModel):
     items:        List[TransactionItemCreate]
@@ -212,7 +228,9 @@ class TransactionCreate(BaseModel):
 
 class TransactionItemResponse(BaseModel):
     product_id: int
-    quantity:   int
+    quantity:   float
+    sale_quantity: Optional[float] = None
+    sale_unit: Optional[str] = None
     unit_price: float
     product:    Optional[ProductResponse] = None
     class Config:
@@ -252,8 +270,10 @@ class FinancialSchoolYearCreate(BaseModel):
 
 
 class FinancialReportUpdate(BaseModel):
-    beginning_cash_on_hand: Optional[float] = None
-    current_sales: Optional[float] = None
+    beginning_cash_on_hand: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+    beginning_cash_manual_override: Optional[bool] = None
+    current_sales: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+    current_sales_manual_override: Optional[bool] = None
     other_income: Optional[float] = None
     purchases: Optional[float] = None
     inventory_used: Optional[float] = None

@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import ipaddress
 import logging
+import math
 import os
 import re
 import secrets
@@ -59,6 +60,10 @@ class TransactionValidationError(Exception):
 
 
 CASH_PAYMENT_TYPE = "cash"
+PCS_UNIT_TYPE = "pcs"
+BULK_UNIT_TYPE = "bulk"
+PCS_BASE_UNIT = "pcs"
+BULK_BASE_UNITS = {"kg", "g", "l", "ml"}
 
 
 def _normalize_transaction_payment_type(payment_type: Optional[str]) -> str:
@@ -107,6 +112,81 @@ def _raise_duplicate_product_name(product: models.Product):
             "Update or restore that product instead of adding a duplicate."
         ),
     )
+
+
+def _normalize_unit_type(value: Optional[str]) -> str:
+    unit_type = str(value or PCS_UNIT_TYPE).strip().lower()
+    if unit_type not in {PCS_UNIT_TYPE, BULK_UNIT_TYPE}:
+        raise HTTPException(status_code=400, detail="Unit type must be PCS or Bulk")
+    return unit_type
+
+
+def _normalize_base_unit(value: Optional[str], unit_type: str) -> str:
+    if unit_type == PCS_UNIT_TYPE:
+        return PCS_BASE_UNIT
+
+    base_unit = str(value or "kg").strip().lower()
+    if base_unit not in BULK_BASE_UNITS:
+        raise HTTPException(status_code=400, detail="Bulk products must use kg, g, L, or mL as the base unit")
+    return base_unit
+
+
+def _normalize_inventory_amount(value, *, field_name: str, require_whole: bool) -> float:
+    try:
+        amount = float(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a valid number") from exc
+
+    if not math.isfinite(amount) or amount < 0:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a non-negative number")
+    if require_whole and not amount.is_integer():
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a whole number for PCS products")
+    return float(round(amount, 6))
+
+
+def _normalize_product_unit_fields(data: dict, product: Optional[models.Product] = None) -> None:
+    unit_type = _normalize_unit_type(data.get("unit_type", getattr(product, "unit_type", PCS_UNIT_TYPE)))
+    base_unit = _normalize_base_unit(data.get("base_unit", getattr(product, "base_unit", PCS_BASE_UNIT)), unit_type)
+    data["unit_type"] = unit_type
+    data["base_unit"] = base_unit
+
+    for field_name in ("stock", "min_stock"):
+        if field_name in data:
+            data[field_name] = _normalize_inventory_amount(
+                data[field_name],
+                field_name=field_name.replace("_", " ").capitalize(),
+                require_whole=unit_type == PCS_UNIT_TYPE,
+            )
+        elif product is not None:
+            _normalize_inventory_amount(
+                getattr(product, field_name),
+                field_name=field_name.replace("_", " ").capitalize(),
+                require_whole=unit_type == PCS_UNIT_TYPE,
+            )
+
+
+def _get_sale_unit_multiplier(product: models.Product, sale_unit: Optional[str]) -> tuple[str, float]:
+    unit_type = _normalize_unit_type(getattr(product, "unit_type", PCS_UNIT_TYPE))
+    base_unit = _normalize_base_unit(getattr(product, "base_unit", PCS_BASE_UNIT), unit_type)
+    normalized_sale_unit = str(sale_unit or base_unit).strip().lower()
+
+    if unit_type == PCS_UNIT_TYPE:
+        if normalized_sale_unit != PCS_BASE_UNIT:
+            raise TransactionValidationError("PCS products can only be sold in PCS")
+        return PCS_BASE_UNIT, 1.0
+
+    compatible_units = {
+        "kg": {"kg": 1.0, "g": 0.001},
+        "g": {"g": 1.0, "kg": 1000.0},
+        "l": {"l": 1.0, "ml": 0.001},
+        "ml": {"ml": 1.0, "l": 1000.0},
+    }
+    multiplier = compatible_units.get(base_unit, {}).get(normalized_sale_unit)
+    if multiplier is None:
+        raise TransactionValidationError(
+            f"{product.name} must be sold in a unit compatible with {base_unit}"
+        )
+    return normalized_sale_unit, multiplier
 
 
 def _get_client_ip(request: Optional[Request] = None):
@@ -259,14 +339,16 @@ def _normalize_transaction_items(items) -> List[dict]:
             if isinstance(item, dict):
                 normalized_items.append({
                     "product_id": int(item["product_id"]),
-                    "quantity": int(item["quantity"]),
+                    "quantity": float(item["quantity"]),
                     "unit_price": float(item["unit_price"]),
+                    "sale_unit": item.get("sale_unit"),
                 })
             else:
                 normalized_items.append({
                     "product_id": int(item.product_id),
-                    "quantity": int(item.quantity),
+                    "quantity": float(item.quantity),
                     "unit_price": float(item.unit_price),
+                    "sale_unit": getattr(item, "sale_unit", None),
                 })
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise TransactionValidationError("Invalid transaction item payload") from exc
@@ -291,9 +373,44 @@ def _persist_transaction(
     normalized_items = _normalize_transaction_items(items)
     normalized_payment_type = _normalize_transaction_payment_type(payment_type)
     discount_value = float(discount or 0)
-    subtotal = sum(item["quantity"] * item["unit_price"] for item in normalized_items)
-    total = max(0.0, subtotal - discount_value)
+    resolved_items = []
+    for item in normalized_items:
+        sale_quantity = float(item["quantity"])
+        if not math.isfinite(sale_quantity) or sale_quantity <= 0:
+            raise TransactionValidationError("Transaction item quantity must be greater than zero")
 
+        product = db.query(models.Product).filter(models.Product.id == item["product_id"]).first()
+        if not product or not product.is_active:
+            raise TransactionValidationError(
+                f"Product {item['product_id']} not found",
+                status_code=404,
+            )
+        sale_unit, unit_multiplier = _get_sale_unit_multiplier(product, item["sale_unit"])
+        if _normalize_unit_type(product.unit_type) == PCS_UNIT_TYPE and not sale_quantity.is_integer():
+            raise TransactionValidationError("PCS products must be sold in whole numbers")
+
+        inventory_quantity = round(sale_quantity * unit_multiplier, 6)
+        if inventory_quantity <= 0:
+            raise TransactionValidationError("Transaction item quantity must be greater than zero")
+        if float(product.stock or 0) + 0.000001 < inventory_quantity:
+            raise TransactionValidationError(
+                f"Insufficient stock for '{product.name}' "
+                f"(available: {product.stock}, requested: {inventory_quantity})",
+            )
+
+        unit_price = round(float(product.price or 0) * unit_multiplier, 2)
+        resolved_items.append(
+            {
+                "product": product,
+                "sale_quantity": sale_quantity,
+                "sale_unit": sale_unit,
+                "inventory_quantity": inventory_quantity,
+                "unit_price": unit_price,
+            }
+        )
+
+    subtotal = sum(item["sale_quantity"] * item["unit_price"] for item in resolved_items)
+    total = max(0.0, subtotal - discount_value)
     txn_kwargs = {
         "user_id": user_id,
         "total": total,
@@ -309,29 +426,18 @@ def _persist_transaction(
     db.add(txn)
     db.flush()
 
-    for item in normalized_items:
-        if item["quantity"] <= 0:
-            raise TransactionValidationError("Transaction item quantity must be greater than zero")
-
-        product = db.query(models.Product).filter(models.Product.id == item["product_id"]).first()
-        if not product or not product.is_active:
-            raise TransactionValidationError(
-                f"Product {item['product_id']} not found",
-                status_code=404,
-            )
-        if product.stock < item["quantity"]:
-            raise TransactionValidationError(
-                f"Insufficient stock for '{product.name}' "
-                f"(available: {product.stock}, requested: {item['quantity']})",
-            )
-
-        product.stock -= item["quantity"]
+    for item in resolved_items:
+        product = item["product"]
+        product.stock = round(float(product.stock or 0) - item["inventory_quantity"], 6)
         if product.stock <= 0:
-            product.stock = 0
+            product.stock = 0.0
+
         db.add(models.TransactionItem(
             transaction_id=txn.id,
-            product_id=item["product_id"],
-            quantity=item["quantity"],
+            product_id=product.id,
+            quantity=item["inventory_quantity"],
+            sale_quantity=item["sale_quantity"],
+            sale_unit=item["sale_unit"],
             unit_price=item["unit_price"],
         ))
 
@@ -399,6 +505,68 @@ def _ensure_analytics_indexes():
         print(f"Analytics index setup skipped: {exc}")
 
 
+def _ensure_product_quick_sale_columns():
+    column_statements = [
+        ("is_favorite", "ALTER TABLE products ADD COLUMN is_favorite BOOLEAN DEFAULT FALSE"),
+    ]
+
+    try:
+        with engine.begin() as connection:
+            existing_columns = {
+                row["name"]
+                for row in connection.execute(text("PRAGMA table_info(products)")).mappings()
+            }
+            for column_name, statement in column_statements:
+                if column_name not in existing_columns:
+                    connection.execute(text(statement))
+    except Exception:
+        try:
+            with engine.begin() as connection:
+                for _column_name, statement in column_statements:
+                    try:
+                        connection.execute(text(statement))
+                    except Exception:
+                        pass
+        except Exception as exc:
+            print(f"Product quick-sale column setup skipped: {exc}")
+
+
+def _ensure_inventory_unit_columns():
+    column_statements = [
+        ("products", "unit_type", "ALTER TABLE products ADD COLUMN unit_type VARCHAR DEFAULT 'pcs'"),
+        ("products", "base_unit", "ALTER TABLE products ADD COLUMN base_unit VARCHAR DEFAULT 'pcs'"),
+        ("transaction_items", "sale_quantity", "ALTER TABLE transaction_items ADD COLUMN sale_quantity FLOAT"),
+        ("transaction_items", "sale_unit", "ALTER TABLE transaction_items ADD COLUMN sale_unit VARCHAR"),
+    ]
+
+    try:
+        with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                for table_name, column_name, _statement in column_statements:
+                    connection.execute(
+                        text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} " + (
+                            "VARCHAR DEFAULT 'pcs'" if column_name in {"unit_type", "base_unit"} else "FLOAT"
+                        ))
+                    )
+                connection.execute(text("ALTER TABLE products ALTER COLUMN stock TYPE DOUBLE PRECISION USING stock::double precision"))
+                connection.execute(text("ALTER TABLE products ALTER COLUMN min_stock TYPE DOUBLE PRECISION USING min_stock::double precision"))
+                connection.execute(text("ALTER TABLE transaction_items ALTER COLUMN quantity TYPE DOUBLE PRECISION USING quantity::double precision"))
+                return
+
+            existing_columns_by_table = {}
+            for table_name, _column_name, _statement in column_statements:
+                if table_name not in existing_columns_by_table:
+                    existing_columns_by_table[table_name] = {
+                        row["name"]
+                        for row in connection.execute(text(f"PRAGMA table_info({table_name})")).mappings()
+                    }
+            for table_name, column_name, statement in column_statements:
+                if column_name not in existing_columns_by_table.get(table_name, set()):
+                    connection.execute(text(statement))
+    except Exception as exc:
+        print(f"Inventory unit column setup skipped: {exc}")
+
+
 def _ensure_financial_reporting_columns():
     column_statements = [
         ("allocations", "opening_balance", "ALTER TABLE allocations ADD COLUMN opening_balance FLOAT DEFAULT 0.0"),
@@ -411,6 +579,16 @@ def _ensure_financial_reporting_columns():
             "fund_monitoring_entries",
             "cash_on_bank",
             "ALTER TABLE fund_monitoring_entries ADD COLUMN cash_on_bank FLOAT DEFAULT 0.0",
+        ),
+        (
+            "monthly_reports",
+            "beginning_cash_manual_override",
+            "ALTER TABLE monthly_reports ADD COLUMN beginning_cash_manual_override BOOLEAN NOT NULL DEFAULT FALSE",
+        ),
+        (
+            "monthly_reports",
+            "current_sales_manual_override",
+            "ALTER TABLE monthly_reports ADD COLUMN current_sales_manual_override BOOLEAN NOT NULL DEFAULT FALSE",
         ),
     ]
 
@@ -428,12 +606,17 @@ def _ensure_financial_reporting_columns():
                 existing_columns = existing_columns_by_table.get(table_name, set())
                 if column_name not in existing_columns:
                     connection.execute(text(statement))
+                    if table_name == "monthly_reports" and column_name.endswith("_manual_override"):
+                        # Existing reports predate automatic values, so preserve their saved totals.
+                        connection.execute(text(f"UPDATE {table_name} SET {column_name} = TRUE"))
     except Exception:
         try:
             with engine.begin() as connection:
                 for _table_name, _column_name, statement in column_statements:
                     try:
                         connection.execute(text(statement))
+                        if _table_name == "monthly_reports" and _column_name.endswith("_manual_override"):
+                            connection.execute(text(f"UPDATE {_table_name} SET {_column_name} = TRUE"))
                     except Exception:
                         pass
         except Exception as exc:
@@ -574,6 +757,8 @@ def _ensure_authenticator_recovery_request_columns():
 
 _ensure_user_authenticator_columns()
 _ensure_analytics_indexes()
+_ensure_product_quick_sale_columns()
+_ensure_inventory_unit_columns()
 _ensure_financial_reporting_columns()
 _ensure_password_reset_request_columns()
 _ensure_authenticator_recovery_request_columns()
@@ -3289,6 +3474,72 @@ def list_products(
     return q.order_by(models.Product.category, models.Product.name).all()
 
 
+@app.get(
+    "/api/products/quick-sale",
+    response_model=List[schemas.QuickSaleProductResponse],
+    tags=["Products"],
+)
+def list_quick_sale_products(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.get_current_user),
+):
+    cutoff = datetime.utcnow() - timedelta(days=30)
+    sales_stats = (
+        db.query(
+            models.TransactionItem.product_id.label("product_id"),
+            func.coalesce(func.sum(models.TransactionItem.quantity), 0).label("sales_last_30_days"),
+            func.count(func.distinct(models.TransactionItem.transaction_id)).label("orders_last_30_days"),
+            func.max(models.Transaction.created_at).label("last_sold_at"),
+        )
+        .join(models.Transaction, models.Transaction.id == models.TransactionItem.transaction_id)
+        .filter(models.Transaction.created_at >= cutoff)
+        .group_by(models.TransactionItem.product_id)
+        .subquery()
+    )
+    sales_last_30_days = func.coalesce(sales_stats.c.sales_last_30_days, 0)
+    orders_last_30_days = func.coalesce(sales_stats.c.orders_last_30_days, 0)
+    rows = (
+        db.query(
+            models.Product,
+            sales_last_30_days.label("sales_last_30_days"),
+            orders_last_30_days.label("orders_last_30_days"),
+            sales_stats.c.last_sold_at.label("last_sold_at"),
+        )
+        .outerjoin(sales_stats, sales_stats.c.product_id == models.Product.id)
+        .filter(
+            models.Product.is_active == True,
+            models.Product.stock > 0,
+        )
+        .order_by(
+            models.Product.is_favorite.desc(),
+            sales_last_30_days.desc(),
+            orders_last_30_days.desc(),
+            sales_stats.c.last_sold_at.desc(),
+            models.Product.name.asc(),
+        )
+        .all()
+    )
+
+    return [
+        {
+            "id": product.id,
+            "name": product.name,
+            "category": product.category,
+            "price": product.price,
+            "stock": product.stock,
+            "min_stock": product.min_stock,
+            "unit_type": product.unit_type,
+            "base_unit": product.base_unit,
+            "is_favorite": bool(product.is_favorite),
+            "is_active": bool(product.is_active),
+            "sales_last_30_days": round(float(sales_quantity or 0), 6),
+            "orders_last_30_days": int(order_count or 0),
+            "last_sold_at": last_sold_at,
+        }
+        for product, sales_quantity, order_count, last_sold_at in rows
+    ]
+
+
 @app.post("/api/products", response_model=schemas.ProductResponse, tags=["Products"])
 def create_product(
     data: schemas.ProductCreate,
@@ -3299,6 +3550,7 @@ def create_product(
 ):
     product_data = data.model_dump()
     product_data["name"] = str(product_data.get("name") or "").strip()
+    _normalize_product_unit_fields(product_data)
     duplicate_product = _find_duplicate_product_name(db, product_data["name"])
     if duplicate_product:
         _raise_duplicate_product_name(duplicate_product)
@@ -3348,6 +3600,8 @@ def update_product(
         )
         if duplicate_product:
             _raise_duplicate_product_name(duplicate_product)
+
+    _normalize_product_unit_fields(update_data, product)
 
     for field, value in update_data.items():
         setattr(product, field, value)

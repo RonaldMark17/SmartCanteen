@@ -118,15 +118,20 @@ class AuthenticatorRecoveryRequest(Base):
 class Product(Base):
     __tablename__ = "products"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    name       = Column(String, nullable=False)
-    category   = Column(String, default="General")
-    price      = Column(Float, nullable=False)
-    stock      = Column(Integer, default=0)
-    min_stock  = Column(Integer, default=5)      # low-stock threshold
-    is_active  = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id           = Column(Integer, primary_key=True, index=True)
+    name         = Column(String, nullable=False)
+    category     = Column(String, default="General")
+    price        = Column(Float, nullable=False)
+    stock        = Column(Float, default=0.0)
+    min_stock    = Column(Float, default=5.0)      # low-stock threshold
+    unit_type    = Column(String, default="pcs")
+    base_unit    = Column(String, default="pcs")
+    barcode      = Column(String, nullable=True, index=True)
+    product_code = Column(String, nullable=True, index=True)
+    is_favorite  = Column(Boolean, default=False)
+    is_active    = Column(Boolean, default=True)
+    created_at   = Column(DateTime, default=utc_now_naive)
+    updated_at   = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     transaction_items = relationship("TransactionItem", back_populates="product")
 
@@ -154,8 +159,10 @@ class TransactionItem(Base):
     id             = Column(Integer, primary_key=True, index=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"))
     product_id     = Column(Integer, ForeignKey("products.id"))
-    quantity       = Column(Integer, nullable=False)
-    unit_price     = Column(Float,   nullable=False)
+    quantity       = Column(Float, nullable=False)  # quantity in the product's base unit
+    sale_quantity  = Column(Float, nullable=True)
+    sale_unit      = Column(String, nullable=True)
+    unit_price     = Column(Float, nullable=False)  # price for one sale unit
 
     transaction = relationship("Transaction", back_populates="items")
     product     = relationship("Product",     back_populates="transaction_items")
@@ -250,7 +257,9 @@ class MonthlyReport(Base):
     month_name             = Column(String, nullable=False)
     calendar_year          = Column(Integer, nullable=False)
     beginning_cash_on_hand = Column(Float, default=0.0)
+    beginning_cash_manual_override = Column(Boolean, default=False, nullable=False)
     current_sales          = Column(Float, default=0.0)
+    current_sales_manual_override = Column(Boolean, default=False, nullable=False)
     other_income           = Column(Float, default=0.0)
     purchases              = Column(Float, default=0.0)
     inventory_used         = Column(Float, default=0.0)
