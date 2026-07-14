@@ -458,6 +458,7 @@ export default function FinancialReports() {
   const [allocationDrafts, setAllocationDrafts] = useState([]);
   const [exportingWorkbook, setExportingWorkbook] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
+  const [savingAllocations, setSavingAllocations] = useState(false);
   const [savingFundMonitoring, setSavingFundMonitoring] = useState(false);
   const [fundMonitoringEditing, setFundMonitoringEditing] = useState(false);
   const [creatingSchoolYear, setCreatingSchoolYear] = useState(false);
@@ -480,6 +481,10 @@ export default function FinancialReports() {
   );
   const canSaveSelectedSchoolYear = !selectedSchoolYearValidationMessage;
   const isJuneReport = Number(selectedReport?.month_index ?? -1) === 0;
+  const allocationPercentTotal = allocationDrafts.reduce(
+    (total, allocation) => total + toMoney(allocation.percentage),
+    0
+  );
   const draftOperationExpensesTotal = sumOperationExpenseDraft(expenseDraft);
   const draftGrossIncome = toMoney(reportDraft.current_sales) - toMoney(reportDraft.cost_of_sales);
   const draftNetProfit = draftGrossIncome - draftOperationExpensesTotal;
@@ -756,6 +761,36 @@ export default function FinancialReports() {
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
+  }
+
+  async function handleSaveAllocations() {
+    if (!detail?.school_year?.id || !isAdmin) {
+      return;
+    }
+    if (!canSaveSelectedSchoolYear) {
+      window.showToast?.(selectedSchoolYearValidationMessage, 'error');
+      return;
+    }
+
+    setSavingAllocations(true);
+    try {
+      await API.updateFinancialAllocations(
+        detail.school_year.id,
+        allocationDrafts.map((allocation, index) => ({
+          category_key: allocation.category_key,
+          label: allocation.label,
+          percentage: toMoney(allocation.percentage),
+          opening_balance: toMoney(allocation.opening_balance),
+          sort_order: allocation.sort_order ?? index,
+        }))
+      );
+      window.showToast?.('Fund allocations saved.', 'success');
+      await loadSchoolYearDetail(detail.school_year.id, selectedReportId);
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to save fund allocations.', 'error');
+    } finally {
+      setSavingAllocations(false);
+    }
   }
 
   async function handleSaveReport() {
@@ -1171,7 +1206,15 @@ export default function FinancialReports() {
                   <h2 className="text-lg font-black text-slate-900">Select Month</h2>
                   <p className="mt-1 text-sm text-slate-500">{detail.school_year.name}</p>
                 </div>
-                <CalendarDaysIcon className="h-5 w-5 text-slate-400" />
+                <div className="flex items-center gap-3 rounded-[14px] border border-primary/15 bg-primary/5 px-3 py-2 text-right">
+                  <CalendarDaysIcon className="h-5 w-5 text-primary" />
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current Reporting Period</div>
+                    <div className="mt-0.5 text-sm font-black text-slate-900">
+                      {selectedReport?.month_label || 'Select a month'}
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
                 {detail.reports.map((report) => (
@@ -1294,6 +1337,67 @@ export default function FinancialReports() {
                         />
                       ))}
                     </div>
+                  </div>
+                </section>
+
+                <section className="panel-card">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="text-lg font-black text-slate-900">Fund Allocation</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Total rate: {formatPercent(allocationPercentTotal)}
+                      </p>
+                    </div>
+                    {isAdmin ? (
+                      <button
+                        type="button"
+                        onClick={handleSaveAllocations}
+                        disabled={savingAllocations || !canSaveSelectedSchoolYear}
+                        className="action-button"
+                      >
+                        <ScaleIcon className="h-4 w-4" />
+                        {savingAllocations ? 'Saving...' : 'Save Allocations'}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {allocationDrafts.map((allocation, index) => {
+                      const allocationAmount = selectedReport?.allocations?.find(
+                        (item) => item.category_key === allocation.category_key
+                      )?.amount;
+
+                      return (
+                        <div
+                          key={allocation.id || allocation.category_key}
+                          className="rounded-[16px] border border-slate-200 bg-slate-50/60 p-3"
+                        >
+                          <input
+                            type="text"
+                            value={allocation.label}
+                            onChange={(event) => updateAllocationDraft(index, 'label', event.target.value)}
+                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                            className="field-control w-full"
+                          />
+                          <div className="mt-2 grid grid-cols-[100px_1fr] gap-2">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              value={allocation.percentage}
+                              onChange={(event) => updateAllocationDraft(index, 'percentage', event.target.value)}
+                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                              className="field-control w-full"
+                              aria-label={`${allocation.label || 'Fund'} allocation percentage`}
+                            />
+                            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-right text-sm font-black text-slate-900">
+                              {formatCurrency(allocationAmount || 0)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </section>
 

@@ -413,7 +413,6 @@ export default function POS() {
   };
 
   // --- Calculations ---
-  const totalUnits = cart.reduce((sum, item) => sum + item.qty, 0);
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const numericAmountReceived = parseFloat(amountReceived || 0) || 0;
   const change = Math.max(0, numericAmountReceived - cartTotal);
