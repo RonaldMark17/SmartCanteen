@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import {
   ArchiveBoxIcon,
   BanknotesIcon,
@@ -129,13 +130,7 @@ const REPORT_TYPES = [
 const FUTURE_FINANCIAL_REPORT_MESSAGE = 'You cannot add a financial report for a future school year.';
 const CURRENT_FINANCIAL_REPORT_MESSAGE = 'Financial reports can only be saved for the current active school year.';
 
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('sc_user') || '{}');
-  } catch {
-    return {};
-  }
-}
+
 
 function formatCurrency(value) {
   return `PHP ${Number(value || 0).toLocaleString('en-PH', {
@@ -870,8 +865,9 @@ export default function FinancialReports({ mode = 'financial' }) {
         : mode === 'expense-management'
           ? 'expenses'
             : mode;
-  const user = getStoredUser();
-  const isAdmin = ['admin', 'administrator'].includes(String(user.role || '').trim().toLowerCase());
+  const { user: authUser, role } = useAuth();
+  const user = authUser || {};
+  const isAdmin = ['admin', 'administrator'].includes(String(role || user.role || '').trim().toLowerCase());
   const schoolYearSuggestion = useMemo(() => buildSchoolYearSuggestion(), []);
   const [schoolYearsLoading, setSchoolYearsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);

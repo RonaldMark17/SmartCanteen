@@ -1247,6 +1247,7 @@ export const API = {
     }),
   startAuthenticatorRecoverySetup: (usernameOrEmail) =>
     request('POST', '/auth/authenticator-recovery/setup', { usernameOrEmail }),
+  getCurrentUser: () => request('GET', '/auth/me'),
   getAccountNotices: () => request('GET', '/account/notices'),
   regenerateRecoveryCodes: () => request('POST', '/auth/recovery-codes/regenerate'),
   getAdminUsers: () => request('GET', '/admin/users'),

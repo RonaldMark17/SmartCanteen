@@ -4333,6 +4333,7 @@ def frontend_status():
 def seed(
     reset_demo: bool = Query(False, description="Rebuild the local canteen demo dataset."),
     db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_admin),
 ):
     """Seed realistic SmartCanteen demo products, sales, weather, and school events."""
     return seed_demo_canteen_database(db, reset=reset_demo)

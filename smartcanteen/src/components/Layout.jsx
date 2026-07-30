@@ -28,6 +28,7 @@ import {
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from './DismissibleAlert';
 import BrandLogo from './BrandLogo';
+import { useAuth } from '../contexts/AuthContext';
 import { API } from '../services/api';
 import {
   formatPhilippineDate,
@@ -63,14 +64,6 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
 const LOW_STOCK_ALERT_TYPE = 'low_stock';
 const HIGH_DEMAND_ALERT_TYPE = 'high_demand';
 const ROUTE_ACCESS_BY_PATH = new Map(APP_ROUTE_ACCESS.map((route) => [route.path, route]));
-
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('sc_user') || '{}');
-  } catch {
-    return {};
-  }
-}
 
 function getStoredSidebarCollapsed() {
   try {
@@ -536,7 +529,8 @@ export default function Layout({ children, onLogout }) {
   const lowStockItemsRef = useRef(lowStockItems);
   const highDemandItemsRef = useRef(highDemandItems);
 
-  const user = getStoredUser();
+  const { user: authUser } = useAuth();
+  const user = authUser || {};
   const { modules } = useModuleSettings();
   const notificationsModuleEnabled = isModuleEnabled(modules, MODULE_KEYS.NOTIFICATIONS);
   const inventoryModuleEnabled = isModuleEnabled(modules, MODULE_KEYS.INVENTORY);

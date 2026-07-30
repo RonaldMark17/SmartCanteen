@@ -9,6 +9,7 @@ import {
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { useModuleSettings } from '../contexts/useModuleSettings';
+import { useAuth } from '../contexts/AuthContext';
 import {
   DEFAULT_MODULE_VISIBILITY,
   MODULE_KEYS,
@@ -36,13 +37,7 @@ const MODULE_DESCRIPTIONS = {
 
 const LOCKED_ON_MODULES = new Set([MODULE_KEYS.SETTINGS]);
 
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('sc_user') || '{}');
-  } catch {
-    return {};
-  }
-}
+
 
 function areModuleSettingsEqual(left, right) {
   const normalizedLeft = normalizeModuleSettings(left);
@@ -110,7 +105,8 @@ function ModuleToggle({ module, enabled, disabled, onToggle }) {
 }
 
 export default function Settings() {
-  const user = getStoredUser();
+  const { user: authUser, role } = useAuth();
+  const user = { ...(authUser || {}), role };
   const {
     modules,
     loading,

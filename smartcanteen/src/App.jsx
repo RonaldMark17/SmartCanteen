@@ -1,5 +1,4 @@
 import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
-import { useState } from 'react';
 import Layout from './components/Layout';
 import Toaster from './components/Toaster';
 import Login from './views/Login';
@@ -15,6 +14,7 @@ import ManageAccounts from './views/ManageAccounts';
 import Settings from './views/Settings';
 import { ModuleSettingsProvider } from './contexts/ModuleSettingsContext';
 import { useModuleSettings } from './contexts/useModuleSettings';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import {
   APP_ROUTE_ACCESS,
   getDefaultRoute,
@@ -22,21 +22,6 @@ import {
   isRouteEnabled,
 } from './config/access';
 import { getModuleLabel } from './config/modules';
-
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('sc_user') || '{}');
-  } catch {
-    return {};
-  }
-}
-
-function clearSession() {
-  localStorage.removeItem('sc_token');
-  localStorage.removeItem('sc_user');
-  localStorage.removeItem('sc_background_alert_token');
-  localStorage.removeItem('sc_offline_session');
-}
 
 function ModuleDisabled({ moduleLabel, fallbackPath }) {
   return (
@@ -71,6 +56,17 @@ function ModuleSettingsLoading() {
   );
 }
 
+function AuthLoading() {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-slate-50 text-slate-600">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <p className="text-sm font-semibold">Verifying secure authentication...</p>
+      </div>
+    </div>
+  );
+}
+
 function RoleRoute({ route, role, fallbackPath, element }) {
   const { modules, loading } = useModuleSettings();
 
@@ -94,7 +90,8 @@ function RoleRoute({ route, role, fallbackPath, element }) {
   return element;
 }
 
-function AuthenticatedWorkspace({ role, onLogout }) {
+function AuthenticatedWorkspace() {
+  const { role, logout } = useAuth();
   const { modules } = useModuleSettings();
   const defaultRoute = getDefaultRoute(role, modules);
   const routeElements = {
@@ -115,7 +112,7 @@ function AuthenticatedWorkspace({ role, onLogout }) {
   };
 
   return (
-    <Layout onLogout={onLogout}>
+    <Layout onLogout={logout}>
       <Routes>
         <Route path="/" element={<Navigate to={defaultRoute} replace />} />
 
@@ -142,27 +139,18 @@ function AuthenticatedWorkspace({ role, onLogout }) {
   );
 }
 
-export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('sc_token'));
+function AppContent() {
+  const { isAuthenticated, role, loading, refreshUser } = useAuth();
 
-  if (!isAuthenticated) {
-    return (
-      <>
-        <Toaster />
-        <Login onLogin={() => setIsAuthenticated(true)} />
-      </>
-    );
+  if (loading) {
+    return <AuthLoading />;
   }
 
-  const user = getStoredUser();
-  const role = user.role;
-
-  if (!isValidRole(role)) {
-    clearSession();
+  if (!isAuthenticated || !isValidRole(role)) {
     return (
       <>
         <Toaster />
-        <Login onLogin={() => setIsAuthenticated(true)} />
+        <Login onLogin={() => refreshUser()} />
       </>
     );
   }
@@ -172,14 +160,16 @@ export default function App() {
       <Toaster />
 
       <ModuleSettingsProvider>
-        <AuthenticatedWorkspace
-          role={role}
-          onLogout={() => {
-            clearSession();
-            setIsAuthenticated(false);
-          }}
-        />
+        <AuthenticatedWorkspace />
       </ModuleSettingsProvider>
     </BrowserRouter>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

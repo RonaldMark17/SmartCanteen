@@ -4,6 +4,7 @@ import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import { useModuleSettings } from '../contexts/useModuleSettings';
+import { useAuth } from '../contexts/AuthContext';
 import { MODULE_KEYS, isModuleEnabled } from '../config/modules';
 import {
   formatPhilippineDate,
@@ -74,13 +75,7 @@ const EXPENSE_LABEL_FIXES = {
   'other expenses': 'Other Expenses',
 };
 
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('sc_user') || '{}');
-  } catch {
-    return {};
-  }
-}
+
 
 function toMoney(value) {
   const number = Number(value || 0);
@@ -440,7 +435,8 @@ function QuickActionButton({ icon: IconComponent, label, onClick, primary = fals
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const user = getStoredUser();
+  const { user: authUser } = useAuth();
+  const user = authUser || {};
   const { modules } = useModuleSettings();
   const financialReportsEnabled = isModuleEnabled(modules, MODULE_KEYS.FINANCIAL_REPORTS);
   const posEnabled = isModuleEnabled(modules, MODULE_KEYS.POS);

@@ -1,6 +1,7 @@
 import { useCallback, useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import { getPhilippineDateKey } from '../utils/dateTime';
@@ -527,8 +528,8 @@ export default function Inventory() {
   const [formData, setFormData] = useState(initialFormState());
   const [formError, setFormError] = useState('');
 
-  const user = JSON.parse(localStorage.getItem('sc_user') || '{}');
-  const isAdmin = user?.role === 'admin';
+  const { role } = useAuth();
+  const isAdmin = role === 'admin';
   const tableColumnCount = isAdmin ? 7 : 6;
 
   function initialFormState() {

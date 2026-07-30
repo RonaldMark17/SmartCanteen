@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
@@ -31,13 +32,7 @@ const EMPTY_FORM = {
   is_active: true,
 };
 
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('sc_user') || '{}');
-  } catch {
-    return {};
-  }
-}
+
 
 function formatCount(value) {
   return Number(value || 0).toLocaleString('en-PH');
@@ -164,7 +159,7 @@ function AccountMetricCard({ title, value, detail, icon, tone = 'slate' }) {
 }
 
 export default function ManageAccounts() {
-  const currentUser = getStoredUser();
+  const { user: currentUser = {} } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
