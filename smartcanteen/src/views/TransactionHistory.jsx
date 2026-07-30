@@ -220,7 +220,7 @@ export default function TransactionHistory() {
     const safeEnd = dateRange.end || safeStart;
 
     link.href = url;
-    link.download = `SmartCanteen_Transactions_${safeStart}_to_${safeEnd}.csv`;
+    link.download = `MEALS_Transactions_${safeStart}_to_${safeEnd}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

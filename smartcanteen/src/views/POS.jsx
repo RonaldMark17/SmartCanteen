@@ -602,7 +602,7 @@ export default function POS() {
               : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
           }`}
         >
-          <div className={`pos-order-review-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${hasCartItems ? 'bg-slate-900 text-white' : 'bg-white text-slate-300'}`}>
+          <div className={`pos-order-review-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${hasCartItems ? 'theme-emphasis-surface' : 'bg-white text-slate-300'}`}>
             <ShoppingCartIcon className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
@@ -679,7 +679,7 @@ export default function POS() {
                     }}
                     className={`min-h-11 whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition-all ${
                       activeCategory === cat
-                        ? 'bg-slate-900 text-white shadow-md'
+                        ? 'theme-emphasis-surface shadow-md'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
@@ -859,7 +859,7 @@ export default function POS() {
                       aria-current={pageNumber === safeCurrentPage ? 'page' : undefined}
                       className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-black transition ${
                         pageNumber === safeCurrentPage
-                          ? 'bg-slate-900 text-white'
+                          ? 'theme-emphasis-surface'
                           : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
                       }`}
                     >
@@ -1030,7 +1030,7 @@ export default function POS() {
                       </div>
                     </div>
 
-                    <div className="pos-cart-total-card rounded-lg bg-slate-950 p-4 text-white">
+                    <div className="pos-cart-total-card theme-total-card rounded-lg p-4">
                       <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                         Total Due
                       </div>
@@ -1074,7 +1074,7 @@ export default function POS() {
           <div className="order-review-panel relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-[0_30px_80px_rgba(15,23,42,0.35)] sm:h-[min(94dvh,900px)] sm:max-h-[94dvh] sm:w-[min(96vw,1200px)] sm:max-w-none sm:rounded-2xl sm:border sm:border-slate-200/80">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%),radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_38%)]" />
 
-            <div className="order-review-header relative shrink-0 border-b border-slate-200 bg-slate-950 px-3 pb-2.5 pt-[calc(env(safe-area-inset-top)+0.625rem)] text-white sm:px-4 sm:py-3 lg:px-5">
+            <div className="order-review-header theme-modal-header relative shrink-0 border-b border-slate-200 px-3 pb-2.5 pt-[calc(env(safe-area-inset-top)+0.625rem)] sm:px-4 sm:py-3 lg:px-5">
               <div className="sm:hidden">
                 <div className="flex items-start justify-between gap-2.5">
                   <div className="min-w-0">
@@ -1316,7 +1316,7 @@ export default function POS() {
                         <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Payment
                         </span>
-                        <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-900 bg-slate-900 px-3 py-3 text-white shadow-sm">
+                        <div className="theme-emphasis-surface mt-2 flex items-center gap-3 rounded-2xl px-3 py-3 shadow-sm">
                           <BanknotesIcon className="h-5 w-5 shrink-0" />
                           <div className="min-w-0">
                             <div className="text-sm font-black">{CASH_PAYMENT_LABEL}</div>
@@ -1377,7 +1377,7 @@ export default function POS() {
                     </div>
                   </div>
 
-                  <div className="rounded-[26px] bg-slate-950 p-4 text-white shadow-xl shadow-slate-900/10">
+                  <div className="theme-total-card rounded-[26px] p-4 shadow-xl shadow-slate-900/10">
                     <div className="flex items-end justify-between">
                       <div>
                         <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
@@ -1515,7 +1515,7 @@ export default function POS() {
                           </button>
                         </div>
 
-                        <div className="rounded-2xl bg-slate-900 px-4 py-3 text-left text-white sm:min-w-[170px] sm:text-right">
+                        <div className="theme-total-card rounded-2xl px-4 py-3 text-left sm:min-w-[170px] sm:text-right">
                           <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                             Line Total
                           </div>
@@ -1545,7 +1545,7 @@ export default function POS() {
                         <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
                           Payment Method
                         </span>
-                        <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-900 bg-slate-900 px-3 py-3 text-white shadow-sm">
+                        <div className="theme-emphasis-surface mt-2 flex items-center gap-3 rounded-2xl px-3 py-3 shadow-sm">
                           <BanknotesIcon className="h-5 w-5 shrink-0" />
                           <div className="min-w-0">
                             <div className="text-sm font-black">{CASH_PAYMENT_LABEL}</div>
@@ -1669,7 +1669,7 @@ export default function POS() {
                 <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
                   <BanknotesIcon className="h-6 w-6 text-slate-700" />
                 </div>
-                <h2 className="text-lg font-black text-slate-900">SmartCanteen Receipt</h2>
+                <h2 className="text-lg font-black text-slate-900">MEALS Receipt</h2>
                 <p className="mt-1 text-xs font-medium text-slate-500">
                   {new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}
                 </p>

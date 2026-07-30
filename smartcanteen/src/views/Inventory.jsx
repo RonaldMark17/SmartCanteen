@@ -690,7 +690,7 @@ export default function Inventory() {
     link.setAttribute('href', url);
     link.setAttribute(
       'download',
-      `SmartCanteen_Inventory_Report_${getPhilippineDateKey(new Date())}.csv`
+      `MEALS_Inventory_Report_${getPhilippineDateKey(new Date())}.csv`
     );
     document.body.appendChild(link);
     link.click();

@@ -74,6 +74,15 @@ class UserAlertState(Base):
     user = relationship("User", back_populates="alert_states")
 
 
+class SystemModuleSetting(Base):
+    __tablename__ = "system_module_settings"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    module_key = Column(String, unique=True, index=True, nullable=False)
+    enabled    = Column(Boolean, default=True, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
 class PasswordResetRequest(Base):
     __tablename__ = "password_reset_requests"
 

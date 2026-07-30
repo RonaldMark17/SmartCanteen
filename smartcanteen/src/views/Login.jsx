@@ -364,7 +364,7 @@ function clearStoredAuthenticatorChallenge() {
 
 function persistAuthenticatedSession(accessToken, user) {
   const quotaMessage =
-    'This device is out of browser storage. SmartCanteen cleared temporary cache, but there is still not enough space to save your session. Clear site data for this app and try again.';
+    'This device is out of browser storage. MEALS cleared temporary cache, but there is still not enough space to save your session. Clear site data for this app and try again.';
 
   safeLocalStorageSetItem('sc_token', accessToken, { quotaMessage });
 
@@ -1064,7 +1064,7 @@ export default function Login({ onLogin }) {
               <div className="mb-8 flex items-center gap-3">
                 <BrandLogo className="h-12 w-12" />
                 <div className="min-w-0">
-                  <div className="truncate text-xl font-semibold text-slate-950">SmartCanteen</div>
+                  <div className="truncate text-xl font-semibold text-slate-950">MEALS</div>
                   <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
                     Operations Workspace
                   </div>
@@ -1077,7 +1077,7 @@ export default function Login({ onLogin }) {
                     Welcome back
                   </h2>
                   <p className="mt-1 text-sm leading-6 text-slate-500">
-                    Sign in to continue to SmartCanteen.
+                    Sign in to continue to MEALS.
                   </p>
                 </div>
               </div>
@@ -1800,7 +1800,7 @@ export default function Login({ onLogin }) {
                   </h3>
                   <p className="mt-1 text-sm leading-6 text-slate-500">
                     {isAuthenticatorSetup
-                      ? 'Add SmartCanteen to your authenticator app, then enter the 6-digit code.'
+                      ? 'Add MEALS to your authenticator app, then enter the 6-digit code.'
                       : 'Open your authenticator app and enter the current 6-digit code.'}
                   </p>
                 </div>

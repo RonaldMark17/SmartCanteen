@@ -8,14 +8,19 @@ import {
   Bars3Icon,
   BellAlertIcon,
   BuildingStorefrontIcon,
+  CalendarDaysIcon,
   ChartBarIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
+  Cog6ToothIcon,
+  ClipboardDocumentListIcon,
   CubeIcon,
+  DocumentChartBarIcon,
   ExclamationTriangleIcon,
   HomeIcon,
   MoonIcon,
+  ReceiptPercentIcon,
   ShieldCheckIcon,
   SparklesIcon,
   UserGroupIcon,
@@ -39,7 +44,9 @@ import {
 } from '../services/deviceAlerts';
 import { OFFLINE_QUEUE_EVENT, countPendingOfflineChanges } from '../services/offlineStore';
 import { ALERT_REFRESH_EVENT, connectRealtimeAlertStream } from '../services/realtimeAlerts';
-import { getAllowedRolesForPath, getDefaultRoute } from '../config/access';
+import { APP_ROUTE_ACCESS, getDefaultRoute, isRouteEnabled } from '../config/access';
+import { useModuleSettings } from '../contexts/useModuleSettings';
+import { MODULE_KEYS, isModuleEnabled } from '../config/modules';
 
 const LOW_STOCK_SIGNATURE_KEY = 'sc_low_stock_signature_v2';
 const HIGH_DEMAND_SIGNATURE_KEY = 'sc_high_demand_signature';
@@ -55,6 +62,7 @@ const ALERT_STATE_POLL_MS = 5000;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sc_sidebar_collapsed';
 const LOW_STOCK_ALERT_TYPE = 'low_stock';
 const HIGH_DEMAND_ALERT_TYPE = 'high_demand';
+const ROUTE_ACCESS_BY_PATH = new Map(APP_ROUTE_ACCESS.map((route) => [route.path, route]));
 
 function getStoredUser() {
   try {
@@ -467,6 +475,18 @@ function getNavDescription(path) {
   if (path === '/financial-reports') {
     return 'Monthly canteen finance and exports';
   }
+  if (path === '/daily-sales') {
+    return 'Daily sales totals and cash tracking';
+  }
+  if (path === '/expenses') {
+    return 'Operating expenses and fund costs';
+  }
+  if (path === '/school-years') {
+    return 'School year periods and monthly reports';
+  }
+  if (path === '/reports') {
+    return 'Report review, printing, and exports';
+  }
   if (path === '/predictions') {
     return 'Demand planning and sales forecast';
   }
@@ -475,6 +495,9 @@ function getNavDescription(path) {
   }
   if (path === '/accounts') {
     return 'Create and manage user access';
+  }
+  if (path === '/settings') {
+    return 'System modules and workspace setup';
   }
 
   return 'Workspace module';
@@ -514,64 +537,95 @@ export default function Layout({ children, onLogout }) {
   const highDemandItemsRef = useRef(highDemandItems);
 
   const user = getStoredUser();
+  const { modules } = useModuleSettings();
+  const notificationsModuleEnabled = isModuleEnabled(modules, MODULE_KEYS.NOTIFICATIONS);
+  const inventoryModuleEnabled = isModuleEnabled(modules, MODULE_KEYS.INVENTORY);
+  const demandForecastModuleEnabled = isModuleEnabled(modules, MODULE_KEYS.DEMAND_FORECAST);
 
   const baseNavItems = [
     { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
-    { name: 'Financial Reports', path: '/financial-reports', icon: BanknotesIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
+    { name: 'Financial Reports', path: '/financial-reports', icon: BanknotesIcon },
+    { name: 'Daily Sales', path: '/daily-sales', icon: DocumentChartBarIcon },
+    { name: 'Expenses', path: '/expenses', icon: ReceiptPercentIcon },
+    { name: 'School Years', path: '/school-years', icon: CalendarDaysIcon },
+    { name: 'Reports', path: '/reports', icon: ClipboardDocumentListIcon },
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
     { name: 'Demand Forecast', path: '/predictions', icon: SparklesIcon },
-    { name: 'Audit Log', path: '/audit', icon: ShieldCheckIcon },
-    { name: 'Manage Accounts', path: '/accounts', icon: UserGroupIcon },
+    { name: 'Audit Logs', path: '/audit', icon: ShieldCheckIcon },
+    { name: 'User Management', path: '/accounts', icon: UserGroupIcon },
+    { name: 'Settings', path: '/settings', icon: Cog6ToothIcon },
   ];
-  const navItems = baseNavItems;
 
-  const visibleNavItems = navItems.filter((item) =>
-    getAllowedRolesForPath(item.path).includes(user.role)
-  );
+  const visibleNavItems = baseNavItems.filter((item) => {
+    const route = ROUTE_ACCESS_BY_PATH.get(item.path);
+    return Boolean(
+      route &&
+        route.allowedRoles.includes(user.role) &&
+        isRouteEnabled(route, modules)
+    );
+  });
   const isActive = (path) => location.pathname === path;
+  const effectiveLowStockItems = useMemo(
+    () =>
+      notificationsModuleEnabled && inventoryModuleEnabled
+        ? lowStockItems
+        : [],
+    [inventoryModuleEnabled, lowStockItems, notificationsModuleEnabled]
+  );
+  const effectiveHighDemandItems = useMemo(
+    () =>
+      notificationsModuleEnabled && demandForecastModuleEnabled
+        ? highDemandItems
+        : [],
+    [demandForecastModuleEnabled, highDemandItems, notificationsModuleEnabled]
+  );
+  const effectiveAccountNotices = useMemo(
+    () => (notificationsModuleEnabled ? accountNotices : []),
+    [accountNotices, notificationsModuleEnabled]
+  );
   const unreadLowStockAlertKeys = useMemo(
     () =>
       getUnreadAlertKeySet(
-        lowStockItems,
+        effectiveLowStockItems,
         READ_LOW_STOCK_ALERTS_KEY,
         buildLowStockAlertKey,
         alertReadVersion
       ),
-    [alertReadVersion, lowStockItems]
+    [alertReadVersion, effectiveLowStockItems]
   );
   const unreadHighDemandReminderKeys = useMemo(
     () =>
       getUnreadAlertKeySet(
-        highDemandItems,
+        effectiveHighDemandItems,
         READ_HIGH_DEMAND_ALERTS_KEY,
         buildHighDemandAlertKey,
         alertReadVersion
     ),
-    [alertReadVersion, highDemandItems]
+    [alertReadVersion, effectiveHighDemandItems]
   );
   const unreadAccountNoticeKeys = useMemo(
     () =>
       getUnreadAlertKeySet(
-        accountNotices,
+        effectiveAccountNotices,
         READ_ACCOUNT_NOTICES_KEY,
         buildAccountNoticeKey,
         alertReadVersion
       ),
-    [accountNotices, alertReadVersion]
+    [effectiveAccountNotices, alertReadVersion]
   );
-  const lowStockAlertCount = lowStockItems.length;
-  const highDemandReminderCount = highDemandItems.length;
-  const accountNoticeCount = accountNotices.length;
+  const lowStockAlertCount = effectiveLowStockItems.length;
+  const highDemandReminderCount = effectiveHighDemandItems.length;
+  const accountNoticeCount = effectiveAccountNotices.length;
   const unreadLowStockAlertCount = unreadLowStockAlertKeys.size;
   const unreadHighDemandReminderCount = unreadHighDemandReminderKeys.size;
   const unreadAccountNoticeCount = unreadAccountNoticeKeys.size;
   const notificationItemCount = lowStockAlertCount + accountNoticeCount;
   const unreadNotificationCount = unreadLowStockAlertCount + unreadAccountNoticeCount;
-  const defaultRoute = getDefaultRoute(user.role);
-  const displayName = user.full_name || user.username || 'SmartCanteen user';
+  const defaultRoute = getDefaultRoute(user.role, modules);
+  const displayName = user.full_name || user.username || 'MEALS user';
   const userInitials = getUserInitials(displayName);
   const formattedDate = formatWorkspaceDate(currentTime);
   const formattedTime = formatWorkspaceTime(currentTime);
@@ -585,6 +639,13 @@ export default function Layout({ children, onLogout }) {
   }, [highDemandItems]);
 
   const loadLowStockAlerts = useCallback(async ({ notifyOnChange = true } = {}) => {
+    if (!notificationsModuleEnabled || !inventoryModuleEnabled) {
+      setLowStockItems([]);
+      lowStockItemsRef.current = [];
+      persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, '');
+      return { visibleItems: [], unreadItems: [], hasFreshEntries: false };
+    }
+
     try {
       const data = await API.getLowStock();
       const items = Array.isArray(data)
@@ -640,9 +701,16 @@ export default function Layout({ children, onLogout }) {
         hasFreshEntries: false,
       };
     }
-  }, []);
+  }, [inventoryModuleEnabled, notificationsModuleEnabled]);
 
   const loadHighDemandAlerts = useCallback(async ({ notifyOnChange = true } = {}) => {
+    if (!notificationsModuleEnabled || !demandForecastModuleEnabled) {
+      setHighDemandItems([]);
+      highDemandItemsRef.current = [];
+      persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, '');
+      return { visibleItems: [], unreadItems: [], hasFreshEntries: false };
+    }
+
     try {
       const response = await API.getPredictions();
       const items = normalizeHighDemandItems(response);
@@ -694,9 +762,13 @@ export default function Layout({ children, onLogout }) {
         hasFreshEntries: false,
       };
     }
-  }, []);
+  }, [demandForecastModuleEnabled, notificationsModuleEnabled]);
 
   const syncAlertStateWithServer = useCallback(async () => {
+    if (!notificationsModuleEnabled) {
+      return false;
+    }
+
     if (!navigator.onLine) {
       return false;
     }
@@ -784,9 +856,19 @@ export default function Layout({ children, onLogout }) {
       // Alert state still works from the local cache while offline or during transient API failures.
       return false;
     }
-  }, []);
+  }, [notificationsModuleEnabled]);
 
   const loadAlertData = useCallback(async function runAlertDataLoad({ notifyOnChange = true } = {}) {
+    if (!notificationsModuleEnabled) {
+      setLowStockItems([]);
+      setHighDemandItems([]);
+      lowStockItemsRef.current = [];
+      highDemandItemsRef.current = [];
+      setHasUnreadAlerts(false);
+      setAlertsLoading(false);
+      return;
+    }
+
     if (alertsRequestInFlightRef.current) {
       queuedAlertRefreshRef.current = {
         notifyOnChange: Boolean(queuedAlertRefreshRef.current?.notifyOnChange || notifyOnChange),
@@ -828,9 +910,15 @@ export default function Layout({ children, onLogout }) {
         window.setTimeout(() => runAlertDataLoad(queuedRefresh), 0);
       }
     }
-  }, [loadHighDemandAlerts, loadLowStockAlerts, syncAlertStateWithServer]);
+  }, [loadHighDemandAlerts, loadLowStockAlerts, notificationsModuleEnabled, syncAlertStateWithServer]);
 
   const loadAccountNotices = useCallback(async () => {
+    if (!notificationsModuleEnabled) {
+      setAccountNotices([]);
+      setAccountNoticesLoading(false);
+      return;
+    }
+
     setAccountNoticesLoading(true);
     try {
       const notices = await API.getAccountNotices();
@@ -840,7 +928,7 @@ export default function Layout({ children, onLogout }) {
     } finally {
       setAccountNoticesLoading(false);
     }
-  }, []);
+  }, [notificationsModuleEnabled]);
 
   const refreshOfflineData = useCallback(async ({ showSyncToast = false } = {}) => {
     setPendingSyncCount(countPendingOfflineChanges());
@@ -982,8 +1070,12 @@ export default function Layout({ children, onLogout }) {
     setWorkspaceRefreshing(true);
     try {
       await Promise.allSettled([
-        loadAlertData({ notifyOnChange: false }),
-        loadAccountNotices(),
+        ...(notificationsModuleEnabled
+          ? [
+              loadAlertData({ notifyOnChange: false }),
+              loadAccountNotices(),
+            ]
+          : []),
         refreshOfflineData({ showSyncToast: true }),
       ]);
 
@@ -1037,6 +1129,10 @@ export default function Layout({ children, onLogout }) {
   }
 
   async function refreshNotifications() {
+    if (!notificationsModuleEnabled) {
+      return;
+    }
+
     await Promise.allSettled([
       loadAlertData({ notifyOnChange: false }),
       loadAccountNotices(),
@@ -1166,17 +1262,28 @@ export default function Layout({ children, onLogout }) {
       }
     }
 
-    loadPermission();
-    loadAlertData({ notifyOnChange: false });
-    loadAccountNotices();
+    if (notificationsModuleEnabled) {
+      loadPermission();
+      loadAlertData({ notifyOnChange: false });
+      loadAccountNotices();
+    } else {
+      stopBackgroundAlertChecks();
+      setLowStockItems([]);
+      setHighDemandItems([]);
+      setAccountNotices([]);
+      setHasUnreadAlerts(false);
+      setAlertsLoading(false);
+    }
     refreshOfflineData();
 
     const handleStatus = () => {
       const online = navigator.onLine;
       setIsSynced(online);
       if (online) {
-        loadAlertData({ notifyOnChange: false });
-        loadAccountNotices();
+        if (notificationsModuleEnabled) {
+          loadAlertData({ notifyOnChange: false });
+          loadAccountNotices();
+        }
         refreshOfflineData({ showSyncToast: true });
       }
     };
@@ -1186,7 +1293,7 @@ export default function Layout({ children, onLogout }) {
     };
 
     const handleAlertRefreshRequest = () => {
-      if (navigator.onLine) {
+      if (notificationsModuleEnabled && navigator.onLine) {
         loadAlertData({ notifyOnChange: true });
       }
     };
@@ -1199,13 +1306,13 @@ export default function Layout({ children, onLogout }) {
     window.addEventListener(ALERT_REFRESH_EVENT, handleAlertRefreshRequest);
 
     const intervalId = window.setInterval(() => {
-      if (navigator.onLine) {
+      if (notificationsModuleEnabled && navigator.onLine) {
         loadAlertData();
         loadAccountNotices();
       }
     }, LOW_STOCK_POLL_MS);
     const alertStateIntervalId = window.setInterval(() => {
-      if (navigator.onLine) {
+      if (notificationsModuleEnabled && navigator.onLine) {
         syncAlertStateWithServer();
       }
     }, ALERT_STATE_POLL_MS);
@@ -1220,7 +1327,13 @@ export default function Layout({ children, onLogout }) {
       window.removeEventListener(ALERT_REFRESH_EVENT, handleAlertRefreshRequest);
       disconnectRealtimeAlerts();
     };
-  }, [loadAccountNotices, loadAlertData, refreshOfflineData, syncAlertStateWithServer]);
+  }, [
+    loadAccountNotices,
+    loadAlertData,
+    notificationsModuleEnabled,
+    refreshOfflineData,
+    syncAlertStateWithServer,
+  ]);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');
@@ -1263,62 +1376,61 @@ export default function Layout({ children, onLogout }) {
   }, []);
 
   const sidebarShellClass = darkMode
-    ? 'border-slate-900/80 bg-slate-950 text-slate-300 shadow-slate-950/20'
-    : 'border-slate-200 bg-white text-slate-600 shadow-slate-200/70';
-  const sidebarBrandTitleClass = darkMode ? 'text-white' : 'text-slate-950';
-  const sidebarBrandMetaClass = darkMode ? 'text-teal-300' : 'text-primary';
-  const sidebarSectionLabelClass = darkMode ? 'text-slate-500' : 'text-slate-400';
-  const sidebarFooterClass = darkMode ? 'border-slate-800/70' : 'border-slate-200';
+    ? 'border-r border-slate-800 bg-slate-900 text-slate-200'
+    : 'border-r border-slate-200 bg-white text-slate-700';
+  const sidebarBrandTitleClass = darkMode ? 'text-white' : 'text-slate-900';
+  const sidebarBrandMetaClass = darkMode ? 'text-emerald-400' : 'text-emerald-600';
+  const sidebarFooterClass = darkMode ? 'border-slate-800' : 'border-slate-100';
   const sidebarLogoutClass = darkMode
     ? 'text-slate-400 hover:border-red-400/20 hover:bg-red-500/10 hover:text-red-300'
-    : 'text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600';
+    : 'text-slate-500 hover:border-red-200/60 hover:bg-red-50/60 hover:text-red-600';
   const mobileSidebarShellClass = darkMode
-    ? 'border-r border-slate-800 bg-slate-950 text-slate-200 shadow-slate-950/40'
+    ? 'border-r border-slate-800 bg-slate-950 text-slate-200'
     : 'border-r border-slate-200 bg-white text-slate-700';
 
   const getSidebarNavLinkClass = (active) => {
     if (active) {
       return darkMode
-        ? 'border-teal-400/45 bg-teal-400/[0.12] text-white shadow-none'
-        : 'border-primary/20 bg-fuchsia-50 text-slate-950 shadow-sm shadow-primary/10';
+        ? 'border-emerald-800/60 bg-emerald-950/40 text-emerald-400 font-semibold'
+        : 'border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold shadow-xs';
     }
 
     return darkMode
-      ? 'border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-800 hover:text-slate-50'
-      : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
+      ? 'border-transparent text-slate-300 hover:bg-slate-800 hover:text-slate-100'
+      : 'border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900';
   };
 
   const getSidebarIconClass = (active) => {
     if (active) {
-      return darkMode ? 'text-teal-300' : 'text-primary';
+      return darkMode ? 'text-emerald-400' : 'text-emerald-600';
     }
 
-    return darkMode ? 'text-slate-500 group-hover:text-teal-300' : 'text-slate-400 group-hover:text-primary';
+    return darkMode ? 'text-slate-400 group-hover:text-emerald-400' : 'text-slate-400 group-hover:text-emerald-600';
   };
 
   const getSidebarDescriptionClass = (active) => {
     if (active) {
-      return darkMode ? 'text-teal-200' : 'text-primary/80';
+      return darkMode ? 'text-emerald-400/80' : 'text-emerald-600/80';
     }
 
-    return darkMode ? 'text-slate-500' : 'text-slate-400';
+    return darkMode ? 'text-slate-400' : 'text-slate-400';
   };
 
   const getMobileNavLinkClass = (active) => {
     if (active) {
       return darkMode
-        ? 'border-teal-300/30 bg-teal-400/10 text-slate-50'
-        : 'border-teal-200 bg-teal-50 text-slate-950';
+        ? 'border-emerald-800/60 bg-emerald-950/40 text-emerald-400 font-semibold'
+        : 'border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold';
     }
 
     return darkMode
-      ? 'border-transparent text-slate-300 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
-      : 'border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950';
+      ? 'border-transparent text-slate-300 hover:bg-slate-800 hover:text-white'
+      : 'border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900';
   };
 
   const getMobileNavDescriptionClass = (active) => {
     if (active) {
-      return darkMode ? 'text-teal-200' : 'text-primary';
+      return darkMode ? 'text-emerald-400/80' : 'text-emerald-600/80';
     }
 
     return darkMode ? 'text-slate-400' : 'text-slate-500';
@@ -1335,13 +1447,13 @@ export default function Layout({ children, onLogout }) {
           <Link
             to={defaultRoute}
             className={`flex items-center rounded-2xl transition ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}
-            title={sidebarCollapsed ? 'SmartCanteen' : undefined}
+            title={sidebarCollapsed ? 'MEALS' : undefined}
           >
             <BrandLogo className="h-11 w-11 rounded-2xl" />
             {!sidebarCollapsed && (
               <div className="min-w-0">
                 <h2 className={`truncate text-lg font-black tracking-tight ${sidebarBrandTitleClass}`}>
-                  SmartCanteen
+                  MEALS
                 </h2>
                 <p className={`mt-0.5 text-[10px] font-bold uppercase tracking-[0.22em] ${sidebarBrandMetaClass}`}>
                   Operations Workspace
@@ -1353,13 +1465,7 @@ export default function Layout({ children, onLogout }) {
         </div>
 
         <div className={`custom-scrollbar flex-1 overflow-y-auto ${sidebarCollapsed ? 'px-3' : 'px-4'} transition-all duration-300`}>
-          {!sidebarCollapsed && (
-            <div className={`mb-2 px-3 text-[10px] font-bold uppercase tracking-widest ${sidebarSectionLabelClass}`}>
-              Operational Menu
-            </div>
-          )}
-
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {visibleNavItems.map((item) => {
               const active = isActive(item.path);
 
@@ -1369,7 +1475,7 @@ export default function Layout({ children, onLogout }) {
                   to={item.path}
                   title={sidebarCollapsed ? item.name : undefined}
                   aria-current={active ? 'page' : undefined}
-                  className={`sidebar-item ${active ? 'sidebar-item-active' : ''} group relative flex items-center rounded-2xl border py-3 transition-all duration-200 ${getSidebarNavLinkClass(active)} ${
+                  className={`sidebar-item ${active ? 'sidebar-item-active' : ''} group relative flex items-center rounded-xl border py-3 transition-all duration-200 ${getSidebarNavLinkClass(active)} ${
                     sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-3.5 pr-8'
                   }`}
                 >
@@ -1379,26 +1485,23 @@ export default function Layout({ children, onLogout }) {
                     }`}
                   />
                   {!sidebarCollapsed && (
-                    <>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-black">{item.name}</span>
-                        <span className={`mt-0.5 block truncate text-[11px] font-semibold ${getSidebarDescriptionClass(active)}`}>
-                          {getNavDescription(item.path)}
-                        </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-black">{item.name}</span>
+                      <span className={`mt-0.5 block truncate text-[11px] font-semibold ${getSidebarDescriptionClass(active)}`}>
+                        {getNavDescription(item.path)}
                       </span>
-                    </>
+                    </span>
                   )}
                   {active && (
                     <span
-                      className={`sidebar-active-dot absolute h-2 w-2 rounded-full ${
-                        sidebarCollapsed ? 'right-2 top-2' : 'right-3 top-1/2 -translate-y-1/2'
-                      } ${darkMode ? 'bg-teal-400 shadow-[0_0_0_4px_rgba(20,184,166,0.14)]' : 'bg-primary'}`}
+                      className={`sidebar-active-dot absolute rounded-full ${
+                        sidebarCollapsed ? 'right-2 top-2 h-2 w-2' : 'right-3 top-1/2 h-7 w-1.5 -translate-y-1/2'
+                      } ${darkMode ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]' : 'bg-emerald-600 shadow-[0_0_8px_rgba(16,185,129,0.3)]'}`}
                     />
                   )}
                 </Link>
               );
             })}
-
           </div>
         </div>
 
@@ -1417,14 +1520,14 @@ export default function Layout({ children, onLogout }) {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="relative z-20 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200/70 bg-white/95 px-4 py-2 shadow-sm backdrop-blur sm:px-6">
+        <header className="relative z-20 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2 shadow-xs dark:border-slate-800 dark:bg-slate-900 sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               onClick={openMobileMenu}
-              className="-ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-50 hover:text-slate-800 lg:hidden"
+              className="-ml-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 lg:hidden"
               aria-label="Open navigation menu"
             >
-              <Bars3Icon className="h-6 w-6" />
+              <Bars3Icon className="h-5 w-5" />
             </button>
 
             <button
@@ -1432,10 +1535,10 @@ export default function Layout({ children, onLogout }) {
               onClick={() => setSidebarCollapsed((value) => !value)}
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 lg:inline-flex"
+              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 lg:inline-flex"
             >
               <ChevronRightIcon
-                className={`h-5 w-5 transition-transform duration-300 ${
+                className={`h-4 w-4 transition-transform duration-300 ${
                   sidebarCollapsed ? '' : 'rotate-180'
                 }`}
               />
@@ -1449,22 +1552,22 @@ export default function Layout({ children, onLogout }) {
               type="button"
               onClick={handleWorkspaceRefresh}
               disabled={workspaceRefreshing}
-              className="hidden items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 md:flex"
+              className="hidden items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-xs transition hover:bg-emerald-200/80 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800/60 dark:bg-emerald-900/40 dark:text-emerald-400 md:flex"
               title={workspaceRefreshing ? 'Refreshing workspace data' : workspaceStatus}
             >
               <span
-                className={`h-2.5 w-2.5 rounded-full ${
-                  isSynced ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]' : 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.14)]'
+                className={`h-2 w-2 rounded-full ${
+                  isSynced ? 'bg-emerald-600' : 'bg-amber-500'
                 }`}
               />
               {workspaceRefreshing ? 'Refreshing' : isSynced ? 'Online' : 'Offline'}
             </button>
-            <div className="hidden rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 shadow-sm xl:block">
+            <div className="hidden rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300 xl:block">
               {formattedDate}
-              <span className="mx-2 text-slate-300">|</span>
+              <span className="mx-2 text-slate-400 dark:text-slate-600">|</span>
               {formattedTime}
             </div>
-            <div className="relative">
+            <div className={`relative ${notificationsModuleEnabled ? '' : 'hidden'}`}>
               <button
                 type="button"
                 onClick={() => (notificationsOpen ? setNotificationsOpen(false) : openNotifications())}
@@ -1517,7 +1620,7 @@ export default function Layout({ children, onLogout }) {
                           <button
                             type="button"
                             onClick={markNotificationsRead}
-                            className="notification-action rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-900"
+                            className="notification-action theme-emphasis-surface rounded-lg px-3 py-2 text-xs font-semibold transition"
                           >
                             Read all
                           </button>
@@ -1539,17 +1642,19 @@ export default function Layout({ children, onLogout }) {
                           <ArrowPathIcon className={`h-4 w-4 ${alertsLoading || accountNoticesLoading ? 'animate-spin' : ''}`} />
                           Refresh
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNotificationsOpen(false);
-                            navigate('/inventory');
-                          }}
-                          className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Inventory
-                          <ChevronRightIcon className="h-4 w-4" />
-                        </button>
+                        {inventoryModuleEnabled && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNotificationsOpen(false);
+                              navigate('/inventory');
+                            }}
+                            className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Inventory
+                            <ChevronRightIcon className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1719,7 +1824,7 @@ export default function Layout({ children, onLogout }) {
               )}
             </div>
 
-            <div className="relative">
+            <div className={`relative ${notificationsModuleEnabled && demandForecastModuleEnabled ? '' : 'hidden'}`}>
               <button
                 type="button"
                 onClick={() => (remindersOpen ? setRemindersOpen(false) : openReminders())}
@@ -1772,7 +1877,7 @@ export default function Layout({ children, onLogout }) {
                           <button
                             type="button"
                             onClick={markHighDemandRemindersRead}
-                            className="notification-action rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-900"
+                            className="notification-action theme-emphasis-surface rounded-lg px-3 py-2 text-xs font-semibold transition"
                           >
                             Read all
                           </button>
@@ -1794,17 +1899,19 @@ export default function Layout({ children, onLogout }) {
                           <ArrowPathIcon className={`h-4 w-4 ${alertsLoading || accountNoticesLoading ? 'animate-spin' : ''}`} />
                           Refresh
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setRemindersOpen(false);
-                            navigate('/predictions');
-                          }}
-                          className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Predictions
-                          <ChevronRightIcon className="h-4 w-4" />
-                        </button>
+                        {demandForecastModuleEnabled && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRemindersOpen(false);
+                              navigate('/predictions');
+                            }}
+                            className="notification-action inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Predictions
+                            <ChevronRightIcon className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -2250,7 +2357,7 @@ export default function Layout({ children, onLogout }) {
               <div className="flex min-w-0 items-center gap-3">
                 <BrandLogo className="h-10 w-10" />
                 <div className="min-w-0">
-                  <h2 className="mobile-sidebar-brand truncate text-lg font-semibold text-slate-950">SmartCanteen</h2>
+                  <h2 className="mobile-sidebar-brand truncate text-lg font-semibold text-slate-950">MEALS</h2>
                   <p className="mobile-sidebar-role mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wider text-primary">
                     {user.role || 'staff'} workspace
                   </p>
@@ -2265,7 +2372,7 @@ export default function Layout({ children, onLogout }) {
               </button>
             </div>
 
-            <div className="mobile-sidebar-nav custom-scrollbar flex-1 space-y-1.5 overflow-y-auto px-3 pb-4">
+            <div className="mobile-sidebar-nav custom-scrollbar flex-1 space-y-2 overflow-y-auto px-3 pb-4">
               {visibleNavItems.map((item) => {
                 const active = isActive(item.path);
 
@@ -2274,19 +2381,25 @@ export default function Layout({ children, onLogout }) {
                     key={item.name}
                     to={item.path}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={`mobile-sidebar-link ${active ? 'mobile-sidebar-link-active' : ''} flex items-center gap-3 rounded-lg border px-3.5 py-3 transition-all ${getMobileNavLinkClass(active)}`}
+                    className={`mobile-sidebar-link ${active ? 'mobile-sidebar-link-active' : ''} flex items-center gap-3 rounded-xl border px-3.5 py-3 transition-all ${getMobileNavLinkClass(active)}`}
                   >
-                    <item.icon className={`mobile-sidebar-icon h-5 w-5 shrink-0 ${active ? 'text-primary' : 'text-slate-400'}`} />
+                    <item.icon className={`mobile-sidebar-icon h-5 w-5 shrink-0 ${active ? (darkMode ? 'text-emerald-400' : 'text-emerald-600') : 'text-slate-400'}`} />
                     <span className="min-w-0 flex-1">
                       <span className="mobile-sidebar-title block truncate text-sm font-semibold">{item.name}</span>
                       <span className={`mobile-sidebar-desc mt-0.5 block truncate text-xs leading-4 ${getMobileNavDescriptionClass(active)}`}>
                         {getNavDescription(item.path)}
                       </span>
                     </span>
+                    {active && (
+                      <span
+                        className={`h-6 w-1.5 shrink-0 rounded-full ${
+                          darkMode ? 'bg-emerald-400' : 'bg-emerald-600'
+                        }`}
+                      />
+                    )}
                   </Link>
                 );
               })}
-
             </div>
 
             <div className="mobile-sidebar-footer border-t border-slate-200 p-3">

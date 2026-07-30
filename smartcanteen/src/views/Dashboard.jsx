@@ -1,29 +1,36 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API } from '../services/api';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
+import { useModuleSettings } from '../contexts/useModuleSettings';
+import { MODULE_KEYS, isModuleEnabled } from '../config/modules';
 import {
   formatPhilippineDate,
   formatPhilippineDateTime,
-  formatPhilippineTime,
-  getDaysInPhilippineMonth,
-  getPhilippineDateKey,
   getPhilippineDateParts,
 } from '../utils/dateTime';
+import { getThemeToken, getThemeTokens, useThemeMode } from '../utils/theme';
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
+  ArrowTrendingDownIcon,
+  ArrowTrendingUpIcon,
+  BanknotesIcon,
+  CalendarDaysIcon,
+  ChartBarIcon,
   ChartPieIcon,
   CheckCircleIcon,
   ClipboardDocumentCheckIcon,
   ClockIcon,
   CurrencyDollarIcon,
-  CubeIcon,
-  ExclamationTriangleIcon,
-  FireIcon,
+  DocumentTextIcon,
+  MinusIcon,
+  PencilSquareIcon,
+  PlusCircleIcon,
+  PrinterIcon,
+  ScaleIcon,
   ShoppingCartIcon,
-  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import {
   ArcElement,
@@ -32,26 +39,57 @@ import {
   Chart as ChartJS,
   Legend,
   LinearScale,
+  LineElement,
+  PointElement,
   Title,
   Tooltip,
 } from 'chart.js';
-import { Bar, Doughnut } from 'react-chartjs-2';
+import { Bar, Line, Pie } from 'react-chartjs-2';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  Title,
+  Tooltip,
+  Legend,
+  ArcElement
+);
 
-const PERIOD_OPTIONS = [
-  { key: 'day', label: 'Day' },
-  { key: 'month', label: 'Month' },
-  { key: 'year', label: 'Year' },
+const EXPENSE_LABELS = [
+  'Transportation/Freight',
+  'Gas',
+  'Supplies',
+  'Helpers',
+  'Repair',
+  'Purchase from Losses of Tools',
+  'Other Expenses',
 ];
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const EXPENSE_LABEL_FIXES = {
+  'purchase from the looses of tools': 'Purchase from Losses of Tools',
+  'purchase from losses of tools': 'Purchase from Losses of Tools',
+  'other expenses': 'Other Expenses',
+};
+
+function getStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem('sc_user') || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function toMoney(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
 
 function formatCurrency(value) {
-  const numeric = Number(value || 0);
-  const hasFraction = Math.abs(numeric % 1) > 0;
-
-  return `PHP ${numeric.toLocaleString('en-PH', {
-    minimumFractionDigits: hasFraction ? 2 : 0,
+  return `PHP ${toMoney(value).toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 }
@@ -60,1283 +98,1198 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString('en-PH');
 }
 
-function escapeCsvValue(value) {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`;
+function formatPercent(value) {
+  return `${Number(value || 0).toFixed(2)}%`;
 }
 
-function getPeriodTitle(period) {
-  return PERIOD_OPTIONS.find((option) => option.key === period)?.label || 'Day';
+function getMonthKeyFromReport(report) {
+  if (!report) return '';
+  return `${report.calendar_year}-${String(report.month_number).padStart(2, '0')}`;
 }
 
-function getPeriodDescription(period, referenceDate) {
-  if (period === 'month') {
-    return formatPhilippineDate(referenceDate, {
-      month: 'long',
-      year: 'numeric',
-    });
-  }
-
-  if (period === 'year') {
-    return String(getPhilippineDateParts(referenceDate)?.year || new Date().getFullYear());
-  }
-
-  return formatPhilippineDate(referenceDate, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+function getCurrentMonthKey() {
+  const parts = getPhilippineDateParts(new Date());
+  const year = parts?.year || new Date().getFullYear();
+  const month = parts?.month || new Date().getMonth() + 1;
+  return `${year}-${String(month).padStart(2, '0')}`;
 }
 
-function buildPeriodRange(period, selectedDate, selectedMonth, selectedYear) {
-  if (period === 'year') {
-    return {
-      startDate: `${selectedYear}-01-01`,
-      endDate: `${selectedYear}-12-31`,
-    };
+function getReportDateRange(report) {
+  if (!report?.calendar_year || !report?.month_number) {
+    return { startDate: '', endDate: '' };
   }
 
-  if (period === 'month') {
-    const [rawYear, rawMonth] = String(selectedMonth || '').split('-');
-    const year = Number(rawYear);
-    const month = Number(rawMonth);
-    const lastDay = year && month ? new Date(year, month, 0).getDate() : 31;
-    return {
-      startDate: `${selectedMonth}-01`,
-      endDate: `${selectedMonth}-${String(lastDay).padStart(2, '0')}`,
-    };
-  }
-
+  const year = Number(report.calendar_year);
+  const month = Number(report.month_number);
+  const lastDay = new Date(year, month, 0).getDate();
   return {
-    startDate: selectedDate,
-    endDate: selectedDate,
+    startDate: `${year}-${String(month).padStart(2, '0')}-01`,
+    endDate: `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
   };
 }
 
-function buildReferenceDate(period, selectedDate, selectedMonth, selectedYear) {
-  if (period === 'year') {
-    return new Date(`${selectedYear}-01-01T12:00:00+08:00`);
-  }
-
-  if (period === 'month') {
-    return new Date(`${selectedMonth}-01T12:00:00+08:00`);
-  }
-
-  return new Date(`${selectedDate}T12:00:00+08:00`);
+function hasReportEntries(report) {
+  if (!report) return false;
+  return [
+    report.beginning_cash_on_hand,
+    report.current_sales,
+    report.other_income,
+    report.cost_of_sales,
+    report.total_operating_expenses,
+  ].some((value) => Math.abs(toMoney(value)) > 0);
 }
 
-function buildYearOptions(selectedYear) {
-  const currentYear = getPhilippineDateParts(new Date())?.year || new Date().getFullYear();
-  const years = Array.from({ length: 8 }, (_, index) => String(currentYear - index));
-
-  if (selectedYear && !years.includes(String(selectedYear))) {
-    years.push(String(selectedYear));
-  }
-
-  return years.sort((left, right) => Number(right) - Number(left));
+function normalizeExpenseLabel(label) {
+  const normalized = String(label || '').trim();
+  return EXPENSE_LABEL_FIXES[normalized.toLowerCase()] || normalized || 'Other Expenses';
 }
 
-function normalizeDailySales(value) {
-  return Array.isArray(value)
-    ? value.map((item) => ({
-        date: item?.date || '',
-        revenue: Number(item?.revenue || 0),
-        transactions: Number(item?.transactions || 0),
-      }))
-    : [];
-}
-
-function normalizeCategorySplit(value) {
-  return Array.isArray(value)
-    ? value
-        .map((item) => ({
-          category: item?.category || 'Uncategorized',
-          value: Number(item?.value || 0),
-        }))
-        .filter((item) => item.value > 0)
-        .slice(0, 4)
-    : [];
-}
-
-function normalizeTopProducts(value) {
-  return Array.isArray(value)
-    ? value.map((item, index) => ({
-        id: item?.product_id || item?.product_name || `product-${index}`,
-        name: item?.product_name || `Product ${index + 1}`,
-        category: item?.category || 'Uncategorized',
-        quantity: Number(item?.total_qty || 0),
-        revenue: Number(item?.revenue || 0),
-      }))
-    : [];
-}
-
-function getPeakTrendPoint(trend) {
-  const peak = trend.values.reduce(
-    (best, value, index) => {
-      const numericValue = Number(value || 0);
-      return numericValue > best.value
-        ? { label: trend.labels[index] || 'N/A', value: numericValue }
-        : best;
-    },
-    { label: 'N/A', value: 0 }
+function sumAllocations(report, key) {
+  return (report?.allocations || []).reduce(
+    (total, allocation) => total + toMoney(allocation?.[key]),
+    0
   );
-
-  return peak.value > 0 ? peak : null;
 }
 
-function getPeakMetricTitle(period) {
-  if (period === 'year') return 'Best Month';
-  if (period === 'month') return 'Best Day';
-  return 'Busiest Hour';
+function getCurrentBalance(report) {
+  if (!report) return 0;
+  const fundBalance = Number(report.fund_current_balance_total);
+  return Number.isFinite(fundBalance) ? fundBalance : toMoney(report.ending_cash);
 }
 
-function buildManagerChecklist({ summary, predictions, topProducts, periodTransactionCount }) {
-  const restockPredictions = predictions.filter(
-    (prediction) =>
-      prediction.recommendation_type === 'restock' ||
-      Number(prediction.stock_gap || 0) > 0 ||
-      String(prediction.recommendation || '').toLowerCase().includes('restock')
-  );
-  const useFirstPredictions = predictions.filter(
-    (prediction) =>
-      prediction.recommendation_type === 'reduce_waste' ||
-      Number(prediction.overstock_units || 0) > 0 ||
-      String(prediction.recommendation || '').toLowerCase().includes('waste')
-  );
-  const checklist = [];
+function getProfitMargin(report) {
+  const totalIncome = toMoney(report?.current_sales) + toMoney(report?.other_income);
+  if (totalIncome <= 0) return 0;
+  return (toMoney(report?.net_profit) / totalIncome) * 100;
+}
 
-  if (Number(summary?.low_stock_count || 0) > 0) {
-    checklist.push({
-      title: 'Check low stock',
-      message: `${formatNumber(summary.low_stock_count)} product${
-        Number(summary.low_stock_count) === 1 ? '' : 's'
-      } below minimum stock.`,
-      tone: 'red',
-      route: '/inventory',
-    });
-  }
+function getPreviousReport(reports, report) {
+  const selectedIndex = Number(report?.month_index ?? -1);
+  return reports.find((item) => Number(item.month_index) === selectedIndex - 1) || null;
+}
 
-  if (restockPredictions.length > 0) {
-    const topRestock = [...restockPredictions].sort(
-      (left, right) => Number(right.stock_gap || 0) - Number(left.stock_gap || 0)
-    )[0];
-
-    checklist.push({
-      title: 'Restock before service',
-      message: `${topRestock.product_name} needs attention for the next selling day.`,
-      tone: 'amber',
-      route: '/predictions',
-    });
-  }
-
-  if (useFirstPredictions.length > 0) {
-    const topUseFirst = [...useFirstPredictions].sort(
-      (left, right) => Number(right.overstock_units || 0) - Number(left.overstock_units || 0)
-    )[0];
-
-    checklist.push({
-      title: 'Use extra stock first',
-      message: `${topUseFirst.product_name} has more stock than expected demand.`,
-      tone: 'amber',
-      route: '/predictions',
-    });
-  }
-
-  if (periodTransactionCount === 0) {
-    checklist.push({
-      title: 'No sales in this period',
-      message: 'Open POS when service starts so the dashboard can track activity.',
-      tone: 'slate',
-      route: '/pos',
-    });
-  }
-
-  if (topProducts.length > 0) {
-    checklist.push({
-      title: 'Keep best seller ready',
-      message: `${topProducts[0].name} is leading with ${formatNumber(topProducts[0].quantity)} sold.`,
-      tone: 'emerald',
-      route: '/analytics',
-    });
-  }
-
-  if (checklist.length === 0) {
-    checklist.push({
-      title: 'Ready for service',
-      message: 'Sales, stock, and prediction checks look calm for now.',
-      tone: 'emerald',
-      route: '/predictions',
-    });
-  }
-
-  return checklist.slice(0, 4);
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename || 'download';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 function mapRecentTransactions(transactions) {
-  return transactions.slice(0, 5).map((transaction) => ({
+  return (transactions || []).slice(0, 5).map((transaction) => ({
     id: `TXN-${String(transaction.id).padStart(6, '0')}`,
     date: formatPhilippineDate(transaction.created_at, {
       year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
     }),
-    time:
-      formatPhilippineTime(transaction.created_at, {
-        hour: 'numeric',
-        minute: '2-digit',
-        second: '2-digit',
-      }) || 'N/A',
-    amount: Number(transaction.total || 0),
-    method:
-      String(transaction.payment_type || 'cash').toLowerCase() === 'cash'
-        ? 'Cash'
-        : 'Legacy payment',
+    amount: toMoney(transaction.total),
+    label: String(transaction.payment_type || 'cash').toLowerCase() === 'cash' ? 'Cash sale' : 'Sale',
   }));
 }
 
-function buildTrend(period, dailySales, hourlySales, now) {
-  if (period === 'year') {
-    const revenueByMonth = Array.from({ length: 12 }, () => 0);
-    dailySales.forEach((item) => {
-      const month = getPhilippineDateParts(item.date)?.month;
-      if (!month) {
-        return;
-      }
-      revenueByMonth[month - 1] += Number(item.revenue || 0);
-    });
-
-    return {
-      title: 'Yearly Revenue Trend',
-      labels: MONTH_LABELS,
-      values: revenueByMonth.map((value) => Number(value.toFixed(2))),
-    };
-  }
-
-  if (period === 'month') {
-    const daysInMonth = getDaysInPhilippineMonth(now);
-    const revenueByDay = Array.from({ length: daysInMonth }, () => 0);
-
-    dailySales.forEach((item) => {
-      const day = getPhilippineDateParts(item.date)?.day;
-      if (!day) {
-        return;
-      }
-      revenueByDay[day - 1] += Number(item.revenue || 0);
-    });
-
-    return {
-      title: 'Monthly Revenue Trend',
-      labels: Array.from({ length: daysInMonth }, (_, index) => `${index + 1}`),
-      values: revenueByDay.map((value) => Number(value.toFixed(2))),
-    };
-  }
-
-  const revenueByHour = Array.from({ length: 24 }, () => 0);
-  hourlySales.forEach((item) => {
-    const hour = Number(item.hour);
-    if (hour >= 0 && hour < 24) {
-      revenueByHour[hour] += Number(item.sales || 0);
-    }
+function buildExpenseBreakdown(report) {
+  const totals = Object.fromEntries(EXPENSE_LABELS.map((label) => [label, 0]));
+  (report?.expenses || []).forEach((expense) => {
+    const label = normalizeExpenseLabel(expense.category);
+    totals[label] = toMoney(totals[label]) + toMoney(expense.amount);
   });
+  return EXPENSE_LABELS.map((label) => ({ label, value: toMoney(totals[label]) }));
+}
 
-  return {
-      title: 'Daily Revenue Trend',
-      labels: Array.from({ length: 24 }, (_, hour) =>
-        formatPhilippineTime(`2000-01-01T${String(hour).padStart(2, '0')}:00:00+08:00`, {
-          hour: 'numeric',
-        })
-    ),
-    values: revenueByHour.map((value) => Number(value.toFixed(2))),
-  };
+function buildLatestExpenseEntries(reports) {
+  return [...(reports || [])]
+    .sort((left, right) => Number(right.month_index) - Number(left.month_index))
+    .flatMap((report) =>
+      (report.expenses || [])
+        .filter((expense) => toMoney(expense.amount) > 0)
+        .map((expense) => ({
+          id: `${report.id}-${expense.id || expense.category}`,
+          title: normalizeExpenseLabel(expense.category),
+          detail: report.month_label,
+          value: formatCurrency(expense.amount),
+        }))
+    )
+    .slice(0, 5);
+}
+
+function buildReportUpdates(reports) {
+  return [...(reports || [])]
+    .filter((report) => report.updated_at)
+    .sort((left, right) => new Date(right.updated_at) - new Date(left.updated_at))
+    .slice(0, 5)
+    .map((report) => ({
+      id: `report-${report.id}`,
+      title: report.month_label,
+      detail: formatPhilippineDateTime(report.updated_at),
+      value: formatCurrency(report.net_profit),
+    }));
+}
+
+function buildClosedMonthEntries(reports) {
+  return [...(reports || [])]
+    .filter(hasReportEntries)
+    .sort((left, right) => Number(right.month_index) - Number(left.month_index))
+    .slice(0, 5)
+    .map((report) => ({
+      id: `closed-${report.id}`,
+      title: report.month_label,
+      detail: 'Closed',
+      value: formatCurrency(getCurrentBalance(report)),
+    }));
 }
 
 function EmptyPanel({ message }) {
   return (
-    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-slate-500">
+    <div className="flex h-full min-h-[220px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-base text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
       {message}
     </div>
-  );
-}
-
-function SnapshotCard({ title, value, detail, icon, tone = 'slate', onClick }) {
-  const IconComponent = icon;
-  const toneClasses = {
-    emerald: 'border-emerald-200 bg-emerald-50/70 text-emerald-600',
-    sky: 'border-sky-200 bg-sky-50/70 text-sky-600',
-    amber: 'border-amber-200 bg-amber-50/70 text-amber-600',
-    rose: 'border-rose-200 bg-rose-50/70 text-rose-600',
-    slate: 'border-slate-200 bg-white text-slate-600',
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group flex min-h-[120px] items-start justify-between gap-4 rounded-[20px] border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:p-5 ${
-        toneClasses[tone] || toneClasses.slate
-      }`}
-    >
-      <div className="min-w-0">
-        <div className="text-[11px] font-black uppercase tracking-widest text-slate-500">
-          {title}
-        </div>
-        <div className="mt-2 truncate text-2xl font-black text-slate-950">{value}</div>
-        <div className="mt-1 text-sm leading-5 text-slate-500">{detail}</div>
-      </div>
-      <div className="rounded-xl bg-white/80 p-2 shadow-sm transition group-hover:scale-105">
-        <IconComponent className="h-5 w-5" />
-      </div>
-    </button>
-  );
-}
-
-function ManagerChecklistCard({ item, onClick }) {
-  const toneClasses = {
-    red: 'border-red-200 bg-red-50/80 text-red-700',
-    amber: 'border-amber-200 bg-amber-50/80 text-amber-700',
-    emerald: 'border-emerald-200 bg-emerald-50/80 text-emerald-700',
-    slate: 'border-slate-200 bg-slate-50 text-slate-600',
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${
-        toneClasses[item.tone] || toneClasses.slate
-      }`}
-    >
-      <div className="mt-0.5 rounded-xl bg-white/80 p-2 shadow-sm">
-        <CheckCircleIcon className="h-4 w-4" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-black text-slate-900">{item.title}</div>
-        <div className="mt-1 text-sm leading-5 text-slate-600">{item.message}</div>
-      </div>
-      <ArrowTopRightOnSquareIcon className="mt-1 h-4 w-4 shrink-0 opacity-60" />
-    </button>
   );
 }
 
 function DashboardSkeleton() {
   return (
     <div className="view-shell">
-      <div className="shrink-0 space-y-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <SkeletonText lines={['w-56 h-8', 'w-40 h-4']} />
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Skeleton className="h-12 w-44 rounded-xl" />
-            <div className="flex flex-wrap gap-3">
-              <Skeleton className="h-11 w-24 rounded-xl" />
-              <Skeleton className="h-11 w-36 rounded-xl" />
-            </div>
-          </div>
+      <div className="view-header">
+        <SkeletonText lines={['w-72 h-8', 'w-48 h-5']} />
+        <div className="flex gap-3">
+          <Skeleton className="h-12 w-44 rounded-lg" />
+          <Skeleton className="h-12 w-44 rounded-lg" />
         </div>
       </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => (
-          <div
-            key={index}
-            className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <SkeletonText lines={['w-28 h-3', 'w-24 h-8']} className="flex-1" />
-              <Skeleton className="h-10 w-10 rounded-xl" />
-            </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 8 }, (_, index) => (
+          <div key={index} className="panel-card min-h-[150px]">
+            <SkeletonText lines={['w-36 h-5', 'w-44 h-9', 'w-28 h-4']} />
           </div>
         ))}
       </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => (
-          <div
-            key={index}
-            className="min-h-[120px] rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <SkeletonText lines={['w-28 h-3', 'w-32 h-8', 'w-40 h-4']} className="flex-1" />
-              <Skeleton className="h-10 w-10 rounded-xl" />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid h-auto min-h-[350px] shrink-0 grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
-          <div className="mb-4 flex items-center justify-between">
-            <Skeleton className="h-5 w-52" />
-            <Skeleton className="h-4 w-4 rounded-md" />
-          </div>
-          <Skeleton className="h-[250px] w-full rounded-2xl" />
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
-            <Skeleton className="h-5 w-40" />
-            <Skeleton className="h-4 w-4 rounded-md" />
-          </div>
-          <div className="flex h-[250px] items-center justify-center">
-            <Skeleton className="h-44 w-44 rounded-full" />
-          </div>
-        </div>
-      </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-6 xl:grid-cols-3">
-        {Array.from({ length: 3 }, (_, index) => (
-          <div key={index} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-5 flex items-center justify-between">
-              <SkeletonText lines={['h-5 w-36', 'h-4 w-52']} />
-              <Skeleton className="h-6 w-6 rounded-lg" />
-            </div>
-            <div className="space-y-3">
-              {Array.from({ length: 3 }, (_, rowIndex) => (
-                <Skeleton key={rowIndex} className="h-16 rounded-2xl" />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-6 lg:grid-cols-2">
-        {Array.from({ length: 2 }, (_, index) => (
-          <div
-            key={index}
-            className="rounded-2xl border border-slate-200 bg-white shadow-sm"
-          >
-            <div className="border-b border-slate-100 p-6">
-              <Skeleton className="h-5 w-48" />
-            </div>
-            <div className="space-y-4 p-6">
-              {Array.from({ length: 5 }, (_, rowIndex) => (
-                <div
-                  key={rowIndex}
-                  className="flex items-center justify-between gap-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-4"
-                >
-                  <SkeletonText lines={['w-32 h-4', 'w-24 h-3']} className="flex-1" />
-                  <Skeleton className="h-6 w-20 rounded-full" />
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Skeleton className="h-[320px] rounded-lg" />
+        <Skeleton className="h-[320px] rounded-lg" />
       </div>
     </div>
+  );
+}
+
+function SummaryCard({ title, value, detail, icon: IconComponent, tone = 'slate' }) {
+  const toneClasses = {
+    blue: {
+      border: 'border-l-4 border-l-blue-500',
+      icon: 'bg-blue-100 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    green: {
+      border: 'border-l-4 border-l-emerald-500',
+      icon: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    orange: {
+      border: 'border-l-4 border-l-orange-500',
+      icon: 'bg-orange-100 text-orange-600 dark:bg-orange-950/60 dark:text-orange-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    yellow: {
+      border: 'border-l-4 border-l-amber-500',
+      icon: 'bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    red: {
+      border: 'border-l-4 border-l-rose-500',
+      icon: 'bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    teal: {
+      border: 'border-l-4 border-l-teal-500',
+      icon: 'bg-teal-100 text-teal-600 dark:bg-teal-950/60 dark:text-teal-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    purple: {
+      border: 'border-l-4 border-l-purple-500',
+      icon: 'bg-purple-100 text-purple-600 dark:bg-purple-950/60 dark:text-purple-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    cyan: {
+      border: 'border-l-4 border-l-cyan-500',
+      icon: 'bg-cyan-100 text-cyan-600 dark:bg-cyan-950/60 dark:text-cyan-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    indigo: {
+      border: 'border-l-4 border-l-indigo-500',
+      icon: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+    slate: {
+      border: 'border-l-4 border-l-slate-400',
+      icon: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+      detail: 'text-slate-500 dark:text-slate-400',
+    },
+  };
+  const classes = toneClasses[tone] || toneClasses.slate;
+
+  return (
+    <section className={`group relative flex min-h-[135px] flex-col justify-between overflow-hidden rounded-xl border-y border-r border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 ${classes.border}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            {title}
+          </div>
+          <div className="mt-2 break-words text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+            {value}
+          </div>
+        </div>
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform duration-200 group-hover:scale-105 ${classes.icon}`}>
+          <IconComponent className="h-5 w-5 stroke-[1.8]" />
+        </div>
+      </div>
+      <div className={`mt-3 text-xs font-medium ${classes.detail}`}>
+        {detail}
+      </div>
+    </section>
+  );
+}
+
+function OverviewMetric({ label, value }) {
+  return (
+    <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-4.5 transition-all duration-200 hover:border-slate-300/80 hover:bg-slate-100/60 dark:border-slate-800 dark:bg-slate-800/40 dark:hover:border-slate-700">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</div>
+      <div className="mt-2 break-words text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{value}</div>
+    </div>
+  );
+}
+
+function ChartPanel({ title, icon: IconComponent, children }) {
+  return (
+    <section className="min-h-[330px] rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-5 flex items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-900/50">
+          <IconComponent className="h-4.5 w-4.5" />
+        </span>
+        <h2 className="text-base font-bold text-slate-900 dark:text-white">{title}</h2>
+      </div>
+      <div className="h-[250px]">{children}</div>
+    </section>
+  );
+}
+
+function ComparisonIndicator({ value, inverse = false }) {
+  const numeric = toMoney(value);
+  if (numeric === 0) {
+    return <MinusIcon className="h-4.5 w-4.5 text-slate-400" />;
+  }
+
+  const improved = inverse ? numeric < 0 : numeric > 0;
+  const IconComponent = numeric > 0 ? ArrowTrendingUpIcon : ArrowTrendingDownIcon;
+  return (
+    <IconComponent className={`h-4.5 w-4.5 ${improved ? 'text-emerald-600' : 'text-rose-600'}`} />
+  );
+}
+
+function ActivityList({ title, icon: IconComponent, items, emptyMessage }) {
+  return (
+    <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400">
+          <IconComponent className="h-4 w-4" />
+        </span>
+        <h2 className="text-base font-bold text-slate-900 dark:text-white">{title}</h2>
+      </div>
+      <div className="space-y-2.5">
+        {items.length > 0 ? (
+          items.map((item) => (
+            <div
+              key={item.id}
+              className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/40 p-3 transition-all duration-200 hover:border-emerald-200 hover:bg-emerald-50/30 dark:border-slate-800 dark:bg-slate-900/60 dark:hover:border-slate-700"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-xs font-bold text-slate-900 dark:text-white">{item.title}</div>
+                <div className="mt-0.5 truncate text-[11px] font-medium text-slate-500 dark:text-slate-400">{item.detail}</div>
+              </div>
+              <div className="shrink-0 text-right text-xs font-black text-slate-900 dark:text-white">
+                {item.value}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-4 text-center text-xs font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+            {emptyMessage}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function QuickActionButton({ icon: IconComponent, label, onClick, primary = false, disabled = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`${primary ? 'primary-action-button' : 'action-button'} min-h-11 w-full justify-start text-xs font-semibold`}
+    >
+      <IconComponent className="h-4.5 w-4.5 stroke-[1.8]" />
+      {label}
+    </button>
   );
 }
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const todayKey = getPhilippineDateKey(new Date());
-  const todayParts = getPhilippineDateParts(new Date());
-  const defaultMonth = `${todayParts?.year || new Date().getFullYear()}-${String(
-    todayParts?.month || new Date().getMonth() + 1
-  ).padStart(2, '0')}`;
-  const defaultYear = String(todayParts?.year || new Date().getFullYear());
-  const [overviewLoading, setOverviewLoading] = useState(true);
-  const [transactionsLoading, setTransactionsLoading] = useState(true);
-  const [overviewError, setOverviewError] = useState('');
-  const [transactionsError, setTransactionsError] = useState('');
-  const [period, setPeriod] = useState('day');
-  const [selectedDate, setSelectedDate] = useState(todayKey);
-  const [selectedMonth, setSelectedMonth] = useState(defaultMonth);
-  const [selectedYear, setSelectedYear] = useState(defaultYear);
-  const [data, setData] = useState({
+  const user = getStoredUser();
+  const { modules } = useModuleSettings();
+  const financialReportsEnabled = isModuleEnabled(modules, MODULE_KEYS.FINANCIAL_REPORTS);
+  const posEnabled = isModuleEnabled(modules, MODULE_KEYS.POS);
+  const transactionsEnabled = isModuleEnabled(modules, MODULE_KEYS.TRANSACTIONS);
+  const inventoryEnabled = isModuleEnabled(modules, MODULE_KEYS.INVENTORY);
+  const analyticsEnabled = isModuleEnabled(modules, MODULE_KEYS.ANALYTICS);
+  const demandForecastEnabled = isModuleEnabled(modules, MODULE_KEYS.DEMAND_FORECAST);
+  const auditLogsEnabled = isModuleEnabled(modules, MODULE_KEYS.AUDIT_LOGS);
+  const canAccessFinancialReports =
+    financialReportsEnabled && ['admin', 'staff'].includes(String(user.role || '').toLowerCase());
+  const isAdmin = String(user.role || '').toLowerCase() === 'admin';
+  const defaultMonthKey = useMemo(() => getCurrentMonthKey(), []);
+  const [financialLoading, setFinancialLoading] = useState(canAccessFinancialReports);
+  const [financialError, setFinancialError] = useState('');
+  const [activityError, setActivityError] = useState('');
+  const [schoolYears, setSchoolYears] = useState([]);
+  const [selectedSchoolYearId, setSelectedSchoolYearId] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [selectedReportId, setSelectedReportId] = useState('');
+  const [transactions, setTransactions] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [operationsData, setOperationsData] = useState({
     summary: null,
-    transactions: [],
-    dailySales: [],
-    hourlySales: [],
-    categorySplit: [],
-    topProducts: [],
     predictions: [],
+    topProducts: [],
   });
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadOverview() {
-      setOverviewLoading(true);
-      setOverviewError('');
-
-      const [summaryResult, predictionsResult] = await Promise.allSettled([
-        API.getSummary(),
-        API.getPredictions(),
-      ]);
-
-      if (cancelled) {
+    async function loadSchoolYears() {
+      if (!canAccessFinancialReports) {
+        setFinancialLoading(false);
         return;
       }
 
-      setData((previous) => ({
-        ...previous,
+      setFinancialLoading(true);
+      setFinancialError('');
+      try {
+        const schoolYearList = await API.getFinancialSchoolYears();
+        if (cancelled) return;
+
+        const normalized = Array.isArray(schoolYearList) ? schoolYearList : [];
+        const preferred =
+          normalized.find((schoolYear) => schoolYear.is_active) ||
+          normalized.find((schoolYear) => Number(schoolYear.months_with_entries || 0) > 0) ||
+          normalized[0] ||
+          null;
+
+        setSchoolYears(normalized);
+        setSelectedSchoolYearId((previous) => {
+          const stillExists = normalized.some((schoolYear) => String(schoolYear.id) === String(previous));
+          return stillExists ? previous : preferred?.id ? String(preferred.id) : '';
+        });
+
+        if (normalized.length === 0) {
+          setDetail(null);
+          setFinancialLoading(false);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setFinancialError(error.message || 'Unable to load financial school years.');
+        setSchoolYears([]);
+        setDetail(null);
+        setFinancialLoading(false);
+      }
+    }
+
+    loadSchoolYears();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canAccessFinancialReports]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDetail() {
+      if (!canAccessFinancialReports || !selectedSchoolYearId) {
+        return;
+      }
+
+      setFinancialLoading(true);
+      setFinancialError('');
+      try {
+        const schoolYearDetail = await API.getFinancialSchoolYearDetail(selectedSchoolYearId);
+        if (cancelled) return;
+
+        const reports = Array.isArray(schoolYearDetail?.reports) ? schoolYearDetail.reports : [];
+        const preferredReport =
+          reports.find((report) => getMonthKeyFromReport(report) === defaultMonthKey) ||
+          reports.find(hasReportEntries) ||
+          reports[0] ||
+          null;
+
+        setDetail(schoolYearDetail);
+        setSelectedReportId((previous) => {
+          const stillExists = reports.some((report) => String(report.id) === String(previous));
+          return stillExists ? previous : preferredReport?.id ? String(preferredReport.id) : '';
+        });
+      } catch (error) {
+        if (cancelled) return;
+        setFinancialError(error.message || 'Unable to load financial report details.');
+        setDetail(null);
+      } finally {
+        if (!cancelled) {
+          setFinancialLoading(false);
+        }
+      }
+    }
+
+    loadDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canAccessFinancialReports, defaultMonthKey, selectedSchoolYearId]);
+
+  const reports = detail?.reports || [];
+  const selectedReport =
+    reports.find((report) => String(report.id) === String(selectedReportId)) || reports[0] || null;
+  const previousReport = getPreviousReport(reports, selectedReport);
+  const selectedMonthLabel = selectedReport?.month_label || 'No month selected';
+  const selectedSchoolYearName = detail?.school_year?.name || 'No school year';
+  const currentBalance = getCurrentBalance(selectedReport);
+  const cashOnBank = sumAllocations(selectedReport, 'fund_cash_on_bank');
+  const interestOnBank = sumAllocations(selectedReport, 'fund_interest');
+  const cashOnHand = currentBalance - cashOnBank;
+  const totalIncome = toMoney(selectedReport?.current_sales) + toMoney(selectedReport?.other_income);
+  const profitMargin = getProfitMargin(selectedReport);
+  const reportStatus = selectedReport?.status || 'Open';
+  const closedMonthCount = reports.filter(hasReportEntries).length;
+  const remainingMonthCount = Math.max(0, reports.length - closedMonthCount);
+  const latestBalanceReport =
+    [...reports].reverse().find(hasReportEntries) || reports[reports.length - 1] || null;
+  const schoolYearBalance = getCurrentBalance(latestBalanceReport);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadActivity() {
+      if (!selectedReport) {
+        setTransactions([]);
+        setAuditLogs([]);
+        return;
+      }
+
+      setActivityError('');
+      const { startDate, endDate } = getReportDateRange(selectedReport);
+      const salesRequest = canAccessFinancialReports
+        ? API.getTransactions(startDate, endDate, { limit: 5 })
+        : Promise.resolve([]);
+      const auditRequest = isAdmin && auditLogsEnabled ? API.getAuditLogs() : Promise.resolve([]);
+
+      const [salesResult, auditResult] = await Promise.allSettled([salesRequest, auditRequest]);
+      if (cancelled) return;
+
+      setTransactions(
+        salesResult.status === 'fulfilled' && Array.isArray(salesResult.value)
+          ? salesResult.value
+          : []
+      );
+      setAuditLogs(
+        auditResult.status === 'fulfilled' && Array.isArray(auditResult.value)
+          ? auditResult.value
+          : []
+      );
+
+      const failures = [
+        salesResult.status === 'rejected' ? salesResult.reason?.message || 'Sales entries failed.' : null,
+        auditResult.status === 'rejected' ? auditResult.reason?.message || 'Financial updates failed.' : null,
+      ].filter(Boolean);
+      setActivityError(failures.join(' | '));
+    }
+
+    loadActivity();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auditLogsEnabled, canAccessFinancialReports, isAdmin, selectedReport]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOperationsData() {
+      const shouldLoadSummary = inventoryEnabled || analyticsEnabled || posEnabled || transactionsEnabled;
+      const [summaryResult, predictionsResult, topProductsResult] = await Promise.allSettled([
+        shouldLoadSummary ? API.getSummary() : Promise.resolve(null),
+        demandForecastEnabled ? API.getPredictions() : Promise.resolve({ predictions: [] }),
+        analyticsEnabled && posEnabled ? API.getTopProducts({ days: 30, limit: 5 }) : Promise.resolve([]),
+      ]);
+
+      if (cancelled) return;
+
+      setOperationsData({
         summary: summaryResult.status === 'fulfilled' ? summaryResult.value : null,
         predictions:
           predictionsResult.status === 'fulfilled'
             ? predictionsResult.value?.predictions || []
             : [],
-      }));
-
-      const failures = [
-        summaryResult.status === 'rejected' ? summaryResult.reason?.message || 'Summary failed.' : null,
-        predictionsResult.status === 'rejected'
-          ? predictionsResult.reason?.message || 'Predictions failed.'
-          : null,
-      ].filter(Boolean);
-
-      if (failures.length > 0) {
-        setOverviewError(`Some dashboard data could not be loaded: ${failures.join(' | ')}`);
-      }
-
-      setOverviewLoading(false);
+        topProducts:
+          topProductsResult.status === 'fulfilled' && Array.isArray(topProductsResult.value)
+            ? topProductsResult.value
+            : [],
+      });
     }
 
-    loadOverview();
+    loadOperationsData();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [analyticsEnabled, demandForecastEnabled, inventoryEnabled, posEnabled, transactionsEnabled]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const isDark = useThemeMode();
 
-    async function loadPeriodData() {
-      setTransactionsLoading(true);
-      setTransactionsError('');
+  const chartTextColor = isDark ? '#cbd5e1' : '#64748b';
+  const chartGridColor = isDark ? 'rgba(51, 65, 85, 0.4)' : 'rgba(226, 232, 240, 0.7)';
+  const chartPrimaryColor = isDark ? '#34d399' : '#10b981';
+  const chartRoseColor = isDark ? '#fb7185' : '#f43f5e';
+  const chartBlueColor = isDark ? '#60a5fa' : '#2563eb';
+  const chartBlueSoftColor = isDark ? 'rgba(96, 165, 250, 0.16)' : 'rgba(37, 99, 235, 0.12)';
+  const chartNeutralColor = isDark ? '#94a3b8' : '#64748b';
+  const chartNeutralSoftColor = isDark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(100, 116, 139, 0.12)';
+  const piePalette = isDark
+    ? ['#34d399', '#60a5fa', '#fbbf24', '#fb7185', '#a78bfa', '#38bdf8', '#4ade80']
+    : ['#10b981', '#2563eb', '#f59e0b', '#f43f5e', '#8b5cf6', '#06b6d4', '#10b981'];
+  const commonChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: {
+          color: chartTextColor,
+          font: { size: 14 },
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context) => `${context.dataset.label || context.label}: ${formatCurrency(context.parsed.y ?? context.parsed)}`,
+        },
+      },
+    },
+    scales: {
+      x: {
+        ticks: { color: chartTextColor, font: { size: 13 } },
+        grid: { color: chartGridColor },
+      },
+      y: {
+        ticks: {
+          color: chartTextColor,
+          font: { size: 13 },
+          callback: (value) => formatCurrency(value).replace('.00', ''),
+        },
+        grid: { color: chartGridColor },
+      },
+    },
+  };
 
-      const { startDate, endDate } = buildPeriodRange(
-        period,
-        selectedDate,
-        selectedMonth,
-        selectedYear
-      );
-      const queryOptions = { startDate, endDate };
-      const hourlyRequest =
-        period === 'day'
-          ? API.getHourlyHeatmap(queryOptions)
-          : Promise.resolve([]);
-
-      try {
-        const [
-          dailyResult,
-          categoryResult,
-          topProductsResult,
-          recentTransactionsResult,
-          hourlyResult,
-        ] = await Promise.allSettled([
-          API.getDailySales(queryOptions),
-          API.getCategorySales(queryOptions),
-          API.getTopProducts(queryOptions),
-          API.getTransactions(startDate, endDate, { limit: 5 }),
-          hourlyRequest,
-        ]);
-        if (cancelled) {
-          return;
-        }
-
-        setData((previous) => ({
-          ...previous,
-          dailySales:
-            dailyResult.status === 'fulfilled'
-              ? normalizeDailySales(dailyResult.value)
-              : [],
-          categorySplit:
-            categoryResult.status === 'fulfilled'
-              ? normalizeCategorySplit(categoryResult.value)
-              : [],
-          topProducts:
-            topProductsResult.status === 'fulfilled'
-              ? normalizeTopProducts(topProductsResult.value)
-              : [],
-          transactions:
-            recentTransactionsResult.status === 'fulfilled' && Array.isArray(recentTransactionsResult.value)
-              ? recentTransactionsResult.value
-              : [],
-          hourlySales:
-            hourlyResult.status === 'fulfilled' && Array.isArray(hourlyResult.value)
-              ? hourlyResult.value
-              : [],
-        }));
-
-        const failures = [
-          dailyResult.status === 'rejected' ? dailyResult.reason?.message || 'Daily sales failed.' : null,
-          categoryResult.status === 'rejected' ? categoryResult.reason?.message || 'Category sales failed.' : null,
-          topProductsResult.status === 'rejected' ? topProductsResult.reason?.message || 'Top products failed.' : null,
-          recentTransactionsResult.status === 'rejected'
-            ? recentTransactionsResult.reason?.message || 'Recent transactions failed.'
-            : null,
-          hourlyResult.status === 'rejected' ? hourlyResult.reason?.message || 'Hourly sales failed.' : null,
-        ].filter(Boolean);
-
-        if (failures.length > 0) {
-          setTransactionsError(`Some selected-period data could not be loaded: ${failures.join(' | ')}`);
-        }
-      } catch (loadError) {
-        if (cancelled) {
-          return;
-        }
-
-        setTransactionsError(
-          loadError?.message || 'Transactions could not be loaded for the selected period.'
-        );
-        setData((previous) => ({
-          ...previous,
-          transactions: [],
-          dailySales: [],
-          hourlySales: [],
-          categorySplit: [],
-          topProducts: [],
-        }));
-      } finally {
-        if (!cancelled) {
-          setTransactionsLoading(false);
-        }
-      }
-    }
-
-    loadPeriodData();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [period, selectedDate, selectedMonth, selectedYear]);
-
-  const now = new Date();
-  const referenceDate = buildReferenceDate(period, selectedDate, selectedMonth, selectedYear);
-  const yearOptions = buildYearOptions(selectedYear);
-  const error = [overviewError, transactionsError].filter(Boolean).join(' | ');
-  const initialLoading =
-    overviewLoading &&
-    transactionsLoading &&
-    !data.summary &&
-    data.dailySales.length === 0 &&
-    data.transactions.length === 0 &&
-    data.predictions.length === 0;
-
-  if (initialLoading) {
-    return <DashboardSkeleton />;
-  }
-
-  const periodTitle = getPeriodTitle(period);
-  const { summary, transactions, predictions, dailySales, hourlySales } = data;
-  const recentTxns = mapRecentTransactions(transactions);
-  const categorySplit = data.categorySplit;
-  const trend = buildTrend(period, dailySales, hourlySales, referenceDate);
-  const periodRevenue = dailySales.reduce(
-    (sum, item) => sum + Number(item.revenue || 0),
-    0
-  );
-  const periodTransactionCount = dailySales.reduce(
-    (sum, item) => sum + Number(item.transactions || 0),
-    0
-  );
-  const averageOrderValue =
-    periodTransactionCount > 0 ? periodRevenue / periodTransactionCount : 0;
-  const topProducts = data.topProducts;
-  const topProduct = topProducts[0] || null;
-  const peakTrendPoint = getPeakTrendPoint(trend);
-  const topCategory = categorySplit[0] || null;
-  const managerChecklist = buildManagerChecklist({
-    summary,
-    predictions,
-    topProducts,
-    periodTransactionCount,
-  });
-  const hasTrendData = trend.values.some((value) => value > 0);
-  const hasCategoryData = categorySplit.length > 0;
-
-  function handleExportSummary() {
-    const rows = [
-      ['SmartCanteen Dashboard Summary'],
-      [],
-      ['Generated At', formatPhilippineDateTime(now)],
-      ['Period', `${periodTitle} - ${getPeriodDescription(period, referenceDate)}`],
-      [],
-      ['Overview'],
-      ['Revenue', formatCurrency(periodRevenue)],
-      ['Transactions', periodTransactionCount],
-      ['Low Stock Alerts', summary?.low_stock_count || 0],
-      ['Today Revenue', formatCurrency(summary?.today_revenue || 0)],
-      ['Today Transactions', summary?.today_transactions || 0],
-      ['Active Products', summary?.total_products || 0],
-      ['All-Time Revenue', formatCurrency(summary?.total_revenue || 0)],
-      ['Average Order', formatCurrency(averageOrderValue)],
-      [getPeakMetricTitle(period), peakTrendPoint ? peakTrendPoint.label : 'N/A'],
-      ['Top Category', topCategory ? topCategory.category : 'N/A'],
-      ['Top Product', topProduct ? topProduct.name : 'N/A'],
-      [],
-      ['Sales by Category'],
-      ['Category', 'Revenue'],
-      ...(categorySplit.length > 0
-        ? categorySplit.map((entry) => [entry.category, formatCurrency(entry.value)])
-        : [['No category data available', '']]),
-      [],
-      ['Top Products'],
-      ['Product', 'Category', 'Units Sold', 'Revenue'],
-      ...(topProducts.length > 0
-        ? topProducts.map((entry) => [
-            entry.name,
-            entry.category,
-            entry.quantity,
-            formatCurrency(entry.revenue),
-          ])
-        : [['No product data available', '', '', '']]),
-      [],
-      ['Manager Checklist'],
-      ['Task', 'Details'],
-      ...managerChecklist.map((entry) => [entry.title, entry.message]),
-      [],
-      ['Recent Transactions'],
-      ['Transaction ID', 'Date', 'Time', 'Method', 'Amount'],
-      ...(recentTxns.length > 0
-        ? recentTxns.map((txn) => [txn.id, txn.date, txn.time, txn.method, formatCurrency(txn.amount)])
-        : [['No transactions available', '', '', '', '']]),
-    ];
-
-    const csv = rows.map((row) => row.map((value) => escapeCsvValue(value)).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-
-    link.href = url;
-    link.download = `dashboard-summary-${period}-${
-      period === 'day' ? selectedDate : period === 'month' ? selectedMonth : selectedYear
-    }.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-
-    if (window.showToast) {
-      window.showToast('Dashboard summary exported.', 'success');
-    }
-  }
-
-  const barChartData = {
-    labels: trend.labels,
+  const monthLabels = reports.map((report) => report.month_short || report.month_name);
+  const salesTrendData = {
+    labels: monthLabels,
     datasets: [
       {
-        label: 'Revenue (PHP)',
-        data: trend.values,
-        backgroundColor: 'rgba(15, 118, 110, 0.72)',
+        label: 'Sales',
+        data: reports.map((report) => toMoney(report.current_sales)),
+        backgroundColor: chartPrimaryColor,
         borderRadius: 6,
       },
     ],
   };
-
-  const doughnutData = {
-    labels: categorySplit.map((entry) => entry.category),
+  const expensesTrendData = {
+    labels: monthLabels,
     datasets: [
       {
-        data: categorySplit.map((entry) => entry.value),
-        backgroundColor: ['#0f766e', '#25636d', '#ca8a04', '#64748b'],
-        borderWidth: 0,
-        hoverOffset: 4,
+        label: 'Expenses',
+        data: reports.map((report) => toMoney(report.total_expenses)),
+        backgroundColor: chartRoseColor,
+        borderRadius: 6,
       },
     ],
   };
+  const profitTrendData = {
+    labels: monthLabels,
+    datasets: [
+      {
+        label: 'Profit',
+        data: reports.map((report) => toMoney(report.net_profit)),
+        borderColor: chartBlueColor,
+        backgroundColor: chartBlueSoftColor,
+        tension: 0.25,
+        pointRadius: 4,
+      },
+    ],
+  };
+  const balanceTrendData = {
+    labels: monthLabels,
+    datasets: [
+      {
+        label: 'Current Balance',
+        data: reports.map(getCurrentBalance),
+        borderColor: chartNeutralColor,
+        backgroundColor: chartNeutralSoftColor,
+        tension: 0.25,
+        pointRadius: 4,
+      },
+    ],
+  };
+  const expenseBreakdown = buildExpenseBreakdown(selectedReport);
+  const expenseBreakdownData = {
+    labels: expenseBreakdown.map((item) => item.label),
+    datasets: [
+      {
+        data: expenseBreakdown.map((item) => item.value),
+        backgroundColor: piePalette,
+        borderWidth: 0,
+      },
+    ],
+  };
+  const hasExpenseBreakdown = expenseBreakdown.some((item) => item.value > 0);
+  const pieOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: {
+          color: chartTextColor,
+          font: { size: 14 },
+          boxWidth: 14,
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context) => `${context.label}: ${formatCurrency(context.parsed)}`,
+        },
+      },
+    },
+  };
 
-  return (
-    <div className="view-shell custom-scrollbar">
-      <div className="shrink-0">
+  const summaryCards = [
+    ['Beginning Cash', formatCurrency(selectedReport?.beginning_cash_on_hand), BanknotesIcon, 'blue'],
+    ['Current Sales', formatCurrency(selectedReport?.current_sales), CurrencyDollarIcon, 'green'],
+    ['Cost of Sales', formatCurrency(selectedReport?.cost_of_sales), ScaleIcon, 'orange'],
+    ['Gross Income', formatCurrency(selectedReport?.gross_income), ChartBarIcon, 'yellow'],
+    ['Total Expenses', formatCurrency(selectedReport?.total_expenses), ClipboardDocumentCheckIcon, 'red'],
+    ['Net Profit', formatCurrency(selectedReport?.net_profit), ArrowTrendingUpIcon, 'green'],
+    ['Current Balance', formatCurrency(currentBalance), BanknotesIcon, 'blue'],
+    ['Cash on Hand', formatCurrency(cashOnHand), CurrencyDollarIcon, 'teal'],
+    ['Cash on Bank', formatCurrency(cashOnBank), BanknotesIcon, 'purple'],
+    ['Other Income', formatCurrency(selectedReport?.other_income), PlusCircleIcon, 'cyan'],
+    ['Interest on Bank', formatCurrency(interestOnBank), ScaleIcon, 'indigo'],
+  ];
+
+  const comparisonRows = [
+    {
+      label: 'Sales',
+      current: toMoney(selectedReport?.current_sales),
+      previous: toMoney(previousReport?.current_sales),
+    },
+    {
+      label: 'Expenses',
+      current: toMoney(selectedReport?.total_expenses),
+      previous: toMoney(previousReport?.total_expenses),
+      inverse: true,
+    },
+    {
+      label: 'Profit',
+      current: toMoney(selectedReport?.net_profit),
+      previous: toMoney(previousReport?.net_profit),
+    },
+    {
+      label: 'Current Balance',
+      current: currentBalance,
+      previous: getCurrentBalance(previousReport),
+    },
+  ].map((row) => ({
+    ...row,
+    difference: row.current - row.previous,
+  }));
+
+  const salesEntries = mapRecentTransactions(transactions).map((transaction) => ({
+    id: transaction.id,
+    title: transaction.id,
+    detail: `${transaction.date} - ${transaction.label}`,
+    value: formatCurrency(transaction.amount),
+  }));
+  const expenseEntries = buildLatestExpenseEntries(reports);
+  const reportUpdatesFromAudit = auditLogs
+    .filter((entry) => String(entry.action || '').startsWith('FINANCIAL_REPORT'))
+    .slice(0, 5)
+    .map((entry) => ({
+      id: `audit-${entry.id}`,
+      title: String(entry.action || '').replaceAll('_', ' '),
+      detail: entry.timestamp ? formatPhilippineDateTime(entry.timestamp) : entry.details || 'Financial report',
+      value: entry.details || 'Updated',
+    }));
+  const reportUpdates = reportUpdatesFromAudit.length > 0 ? reportUpdatesFromAudit : buildReportUpdates(reports);
+  const closedMonthEntries = buildClosedMonthEntries(reports);
+  const operationsCards = [
+    inventoryEnabled
+      ? {
+          title: 'Low Stock Alerts',
+          value: formatNumber(operationsData.summary?.low_stock_count || 0),
+          detail: 'Inventory',
+          route: '/inventory',
+        }
+      : null,
+    analyticsEnabled
+      ? {
+          title: 'All-Time Revenue',
+          value: formatCurrency(operationsData.summary?.total_revenue || 0),
+          detail: 'Operations',
+          route: '/analytics',
+        }
+      : null,
+    demandForecastEnabled
+      ? {
+          title: 'Restock Priorities',
+          value: formatNumber(operationsData.predictions.length),
+          detail: 'Forecast',
+          route: '/predictions',
+        }
+      : null,
+  ].filter(Boolean);
+
+  async function handleExportExcel() {
+    if (!detail?.school_year?.id || !selectedReport?.id) {
+      return;
+    }
+
+    setExportingExcel(true);
+    try {
+      const file = await API.downloadFinancialSchoolYearWorkbook(detail.school_year.id, selectedReport.id);
+      if (file?.blob) {
+        downloadBlob(file.blob, file.filename);
+        window.showToast?.(`Excel report exported for ${selectedMonthLabel}.`, 'success');
+      }
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to export the Excel report.', 'error');
+    } finally {
+      setExportingExcel(false);
+    }
+  }
+
+  function handlePrintPdf() {
+    window.print();
+  }
+
+  const error = [financialError, activityError].filter(Boolean).join(' | ');
+
+  if (financialLoading && !detail && canAccessFinancialReports) {
+    return <DashboardSkeleton />;
+  }
+
+  if (!canAccessFinancialReports) {
+    return (
+      <div className="view-shell custom-scrollbar">
         <div className="view-header">
           <div>
-            <h1 className="view-title">Dashboard Overview</h1>
-            <p className="view-subtitle">{getPeriodDescription(period, referenceDate)}</p>
+            <h1 className="view-title">Financial Overview Dashboard</h1>
+            <p className="view-subtitle">Financial reports are available for administrators and canteen managers.</p>
+          </div>
+        </div>
+
+        <DismissibleAlert resetKey="financial-access" tone="amber" className="rounded-lg">
+          Sign in with an administrator or staff account to view financial reporting data.
+        </DismissibleAlert>
+
+        {operationsCards.length > 0 ? (
+          <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {operationsCards.map((card) => (
+              <button
+                key={card.title}
+                type="button"
+                onClick={() => navigate(card.route)}
+                className="panel-card min-h-[130px] text-left transition hover:border-primary"
+              >
+                <div className="text-base font-semibold text-slate-600 dark:text-slate-300">{card.title}</div>
+                <div className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{card.value}</div>
+                <div className="mt-2 text-base text-slate-500 dark:text-slate-300">{card.detail}</div>
+              </button>
+            ))}
+          </section>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (!selectedReport) {
+    return (
+      <div className="view-shell custom-scrollbar">
+        <div className="panel-card flex min-h-[320px] flex-col justify-center">
+          <h1 className="text-2xl font-black text-slate-950 dark:text-white">Financial Overview Dashboard</h1>
+          <p className="mt-3 text-base text-slate-600 dark:text-slate-300">
+            No financial school year is available yet.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate('/financial-reports')}
+            className="primary-action-button mt-6 w-fit"
+          >
+            <PlusCircleIcon className="h-5 w-5" />
+            Open Financial Report
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="view-shell custom-scrollbar gap-6 sm:gap-8">
+      <div className="view-header">
+        <div>
+          <h1 className="view-title">Financial Overview Dashboard</h1>
+          <p className="view-subtitle">
+            {selectedMonthLabel} | {selectedSchoolYearName}
+          </p>
+        </div>
+
+        <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:w-auto">
+          <label className="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-all hover:border-slate-400 focus-within:ring-2 focus-within:ring-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <CalendarDaysIcon className="h-4.5 w-4.5 shrink-0 text-slate-400 dark:text-slate-400" />
+            <select
+              value={selectedSchoolYearId}
+              onChange={(event) => setSelectedSchoolYearId(event.target.value)}
+              className="min-w-0 flex-1 cursor-pointer bg-white text-xs font-semibold text-slate-700 outline-none dark:bg-slate-800 dark:text-slate-200"
+            >
+              {schoolYears.map((schoolYear) => (
+                <option key={schoolYear.id} value={schoolYear.id} className="bg-white text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  {schoolYear.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-all hover:border-slate-400 focus-within:ring-2 focus-within:ring-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <ClockIcon className="h-4.5 w-4.5 shrink-0 text-slate-400 dark:text-slate-400" />
+            <select
+              value={selectedReportId}
+              onChange={(event) => setSelectedReportId(event.target.value)}
+              className="min-w-0 flex-1 cursor-pointer bg-white text-xs font-semibold text-slate-700 outline-none dark:bg-slate-800 dark:text-slate-200"
+            >
+              {reports.map((report) => (
+                <option key={report.id} value={report.id} className="bg-white text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  {report.month_label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {error ? (
+        <DismissibleAlert resetKey={error} tone="amber" className="rounded-xl">
+          {error}
+        </DismissibleAlert>
+      ) : null}
+
+      {/* KPI Cards */}
+      <section className="grid grid-cols-1 gap-5 md:grid-cols-3">
+        <div className="group flex min-h-[110px] items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Current Month</div>
+            <div className="mt-1.5 text-xl font-bold tracking-tight text-slate-900 dark:text-white">{selectedMonthLabel}</div>
+          </div>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 transition-transform duration-200 group-hover:scale-105 dark:bg-emerald-950/60 dark:text-emerald-400">
+            <CalendarDaysIcon className="h-5 w-5" />
+          </span>
+        </div>
+        <div className="group flex min-h-[110px] items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Current School Year</div>
+            <div className="mt-1.5 text-xl font-bold tracking-tight text-slate-900 dark:text-white">{selectedSchoolYearName}</div>
+          </div>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 transition-transform duration-200 group-hover:scale-105 dark:bg-blue-950/60 dark:text-blue-400">
+            <DocumentTextIcon className="h-5 w-5" />
+          </span>
+        </div>
+        <div className="group flex min-h-[110px] items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Report Status</div>
+            <div className="mt-1.5 text-xl font-bold tracking-tight text-slate-900 dark:text-white">{reportStatus}</div>
+          </div>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-transform duration-200 group-hover:scale-105 dark:bg-slate-800 dark:text-slate-300">
+            <CheckCircleIcon className="h-5 w-5" />
+          </span>
+        </div>
+      </section>
+
+      {/* Summary Cards */}
+      <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+        {summaryCards.map(([title, value, icon, tone]) => (
+          <SummaryCard
+            key={title}
+            title={title}
+            value={value}
+            detail={selectedMonthLabel}
+            icon={icon}
+            tone={tone}
+          />
+        ))}
+      </section>
+
+      {/* Monthly Financial Overview */}
+      <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-5 flex items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-900/50">
+            <ChartBarIcon className="h-4.5 w-4.5" />
+          </span>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">Monthly Financial Overview</h2>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <OverviewMetric label="Total Income" value={formatCurrency(totalIncome)} />
+          <OverviewMetric label="Total Expenses" value={formatCurrency(selectedReport.total_expenses)} />
+          <OverviewMetric label="Net Profit" value={formatCurrency(selectedReport.net_profit)} />
+          <OverviewMetric label="Current Balance" value={formatCurrency(currentBalance)} />
+          <OverviewMetric label="Profit Margin" value={formatPercent(profitMargin)} />
+        </div>
+      </section>
+
+      {/* Trend Charts */}
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <ChartPanel title="Monthly Sales Trend" icon={ChartBarIcon}>
+          <Bar data={salesTrendData} options={commonChartOptions} />
+        </ChartPanel>
+        <ChartPanel title="Monthly Expenses Trend" icon={ChartBarIcon}>
+          <Bar data={expensesTrendData} options={commonChartOptions} />
+        </ChartPanel>
+        <ChartPanel title="Profit Trend" icon={ArrowTrendingUpIcon}>
+          <Line data={profitTrendData} options={commonChartOptions} />
+        </ChartPanel>
+        <ChartPanel title="Current Balance Trend" icon={BanknotesIcon}>
+          <Line data={balanceTrendData} options={commonChartOptions} />
+        </ChartPanel>
+      </section>
+
+      {/* Breakdown & Comparison */}
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+        <ChartPanel title="Expense Breakdown" icon={ChartPieIcon}>
+          {hasExpenseBreakdown ? (
+            <Pie data={expenseBreakdownData} options={pieOptions} />
+          ) : (
+            <EmptyPanel message="No expenses recorded for this month." />
+          )}
+        </ChartPanel>
+
+        <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 xl:col-span-2">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-900/50">
+              <ScaleIcon className="h-4.5 w-4.5" />
+            </span>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">Financial Comparison</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
+                <tr>
+                  <th className="px-3.5 py-3 font-semibold">Category</th>
+                  <th className="px-3.5 py-3 text-right font-semibold">Current Month</th>
+                  <th className="px-3.5 py-3 text-right font-semibold">Previous Month</th>
+                  <th className="px-3.5 py-3 text-right font-semibold">Difference</th>
+                  <th className="px-3.5 py-3 text-center font-semibold">Trend</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {comparisonRows.map((row) => (
+                  <tr key={row.label} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-800/40">
+                    <td className="px-3.5 py-3.5 font-bold text-slate-900 dark:text-white">{row.label}</td>
+                    <td className="px-3.5 py-3.5 text-right font-semibold text-slate-700 dark:text-slate-300">
+                      {formatCurrency(row.current)}
+                    </td>
+                    <td className="px-3.5 py-3.5 text-right font-semibold text-slate-700 dark:text-slate-300">
+                      {formatCurrency(row.previous)}
+                    </td>
+                    <td className="px-3.5 py-3.5 text-right font-bold text-slate-900 dark:text-white">
+                      {formatCurrency(row.difference)}
+                    </td>
+                    <td className="px-3.5 py-3.5">
+                      <div className="flex justify-center">
+                        <ComparisonIndicator value={row.difference} inverse={row.inverse} />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      {/* School Year Summary */}
+      <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-5 flex items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-900/50">
+            <CalendarDaysIcon className="h-4.5 w-4.5" />
+          </span>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">School Year Summary</h2>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <OverviewMetric label="Current School Year" value={selectedSchoolYearName} />
+          <OverviewMetric label="Total Sales" value={formatCurrency(detail?.dashboard?.total_monthly_sales)} />
+          <OverviewMetric label="Total Expenses" value={formatCurrency(detail?.dashboard?.total_expenses)} />
+          <OverviewMetric label="Total Profit" value={formatCurrency(detail?.dashboard?.net_profit)} />
+          <OverviewMetric label="School Year Balance" value={formatCurrency(schoolYearBalance)} />
+          <OverviewMetric label="Closed Months" value={formatNumber(closedMonthCount)} />
+          <OverviewMetric label="Remaining Months" value={formatNumber(remainingMonthCount)} />
+        </div>
+      </section>
+
+      {/* Activity Lists */}
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-4">
+        <ActivityList
+          title="Expense Entries"
+          icon={ClipboardDocumentCheckIcon}
+          items={expenseEntries}
+          emptyMessage="No recent expense entries."
+        />
+        <ActivityList
+          title="Sales Entries"
+          icon={ShoppingCartIcon}
+          items={salesEntries}
+          emptyMessage="No recent sales entries."
+        />
+        <ActivityList
+          title="Report Updates"
+          icon={PencilSquareIcon}
+          items={reportUpdates}
+          emptyMessage="No recent report updates."
+        />
+        <ActivityList
+          title="Monthly Closings"
+          icon={CheckCircleIcon}
+          items={closedMonthEntries}
+          emptyMessage="No monthly closings yet."
+        />
+      </section>
+
+      {/* Quick Actions & Period */}
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+        <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 xl:col-span-2">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-900/50">
+              <ArrowTopRightOnSquareIcon className="h-4.5 w-4.5" />
+            </span>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">Quick Actions</h2>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <QuickActionButton
+              icon={DocumentTextIcon}
+              label="Open Financial Report"
+              primary
+              onClick={() => navigate('/financial-reports')}
+            />
+            <QuickActionButton icon={PlusCircleIcon} label="Add Expense" onClick={() => navigate('/expenses')} />
+            <QuickActionButton
+              icon={ShoppingCartIcon}
+              label="Record Sales"
+              onClick={() => navigate(posEnabled ? '/pos' : '/financial-reports')}
+            />
+            <QuickActionButton icon={PrinterIcon} label="Export PDF" onClick={handlePrintPdf} />
+            <QuickActionButton
+              icon={ArrowDownTrayIcon}
+              label={exportingExcel ? 'Exporting Excel...' : 'Export Excel'}
+              onClick={handleExportExcel}
+              disabled={exportingExcel}
+            />
+            <QuickActionButton
+              icon={CheckCircleIcon}
+              label="Monthly Closing"
+              onClick={() => navigate('/reports')}
+            />
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-900/50">
+              <ClockIcon className="h-4.5 w-4.5" />
+            </span>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">Current Period</h2>
+          </div>
+          <div className="space-y-2.5 text-sm">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">Month</span>
+              <span className="font-bold text-slate-900 dark:text-white">{selectedMonthLabel}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">School Year</span>
+              <span className="font-bold text-slate-900 dark:text-white">{selectedSchoolYearName}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">Status</span>
+              <span className="font-bold text-slate-900 dark:text-white">{reportStatus}</span>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      {operationsCards.length > 0 || operationsData.topProducts.length > 0 ? (
+        <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs transition-all duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100/80 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-900/50">
+              <ChartBarIcon className="h-4.5 w-4.5" />
+            </span>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">Operations Snapshot</h2>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {operationsCards.map((card) => (
+              <button
+                key={card.title}
+                type="button"
+                onClick={() => navigate(card.route)}
+                className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 text-left transition-all duration-200 hover:border-emerald-300 hover:bg-slate-100/70 dark:border-slate-800 dark:bg-slate-800/40 dark:hover:bg-slate-800"
+              >
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{card.title}</div>
+                <div className="mt-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{card.value}</div>
+                <div className="mt-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">{card.detail}</div>
+              </button>
+            ))}
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-              {PERIOD_OPTIONS.map((option) => (
+          {operationsData.topProducts.length > 0 ? (
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+              {operationsData.topProducts.slice(0, 5).map((product, index) => (
                 <button
-                  key={option.key}
+                  key={product.product_id || product.product_name || index}
                   type="button"
-                  onClick={() => setPeriod(option.key)}
-                  className={`rounded-lg px-4 py-2 text-sm font-bold transition-all ${
-                    period === option.key
-                      ? 'bg-slate-900 text-white shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
+                  onClick={() => navigate('/analytics')}
+                  className="rounded-xl border border-slate-200/80 bg-white p-4 text-left shadow-2xs transition-all duration-200 hover:border-emerald-300 hover:shadow-xs dark:border-slate-800 dark:bg-slate-900"
                 >
-                  {option.label}
+                  <div className="text-xs font-bold text-slate-900 dark:text-white">
+                    {product.product_name || `Product ${index + 1}`}
+                  </div>
+                  <div className="mt-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                    {formatNumber(product.total_qty || 0)} sold
+                  </div>
+                  <div className="mt-2 text-base font-bold text-slate-900 dark:text-white">
+                    {formatCurrency(product.revenue || 0)}
+                  </div>
                 </button>
               ))}
             </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {period === 'day' && (
-                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm">
-                  <span>Pick day</span>
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(event) => {
-                      const nextDate = event.target.value;
-                      const [year, month] = nextDate.split('-');
-                      setSelectedDate(nextDate);
-                      if (year && month) {
-                        setSelectedMonth(`${year}-${month}`);
-                        setSelectedYear(year);
-                      }
-                    }}
-                    className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
-                  />
-                </label>
-              )}
-
-              {period === 'month' && (
-                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm">
-                  <span>Pick month</span>
-                  <input
-                    type="month"
-                    value={selectedMonth}
-                    onChange={(event) => {
-                      const nextMonth = event.target.value;
-                      const [year] = nextMonth.split('-');
-                      setSelectedMonth(nextMonth);
-                      if (year) {
-                        setSelectedYear(year);
-                      }
-                    }}
-                    className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
-                  />
-                </label>
-              )}
-
-              {period === 'year' && (
-                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm">
-                  <span>Pick year</span>
-                  <select
-                    value={selectedYear}
-                    onChange={(event) => setSelectedYear(event.target.value)}
-                    className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-700 outline-none transition focus:border-primary"
-                  >
-                    {yearOptions.map((year) => (
-                      <option key={year} value={year}>
-                        {year}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <button
-                type="button"
-                onClick={handleExportSummary}
-                className="action-button"
-              >
-                <ArrowDownTrayIcon className="h-5 w-5" /> Export Summary
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {error && (
-          <DismissibleAlert resetKey={error} tone="amber" className="mt-4 rounded-xl">
-            {error}
-          </DismissibleAlert>
-        )}
-
-        {transactionsLoading && !initialLoading && (
-          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-            Updating dashboard range...
-          </p>
-        )}
-      </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-3">
-        <StatCard
-          title={`${periodTitle} Revenue`}
-          value={formatCurrency(periodRevenue)}
-          icon={CurrencyDollarIcon}
-          color="emerald"
-          onClick={() => navigate('/analytics')}
-        />
-        <StatCard
-          title={`${periodTitle} Transactions`}
-          value={periodTransactionCount}
-          icon={ShoppingCartIcon}
-          color="blue"
-          onClick={() => navigate('/transactions')}
-        />
-        <StatCard
-          title="Low Stock Alerts"
-          value={summary?.low_stock_count || 0}
-          icon={ExclamationTriangleIcon}
-          color="red"
-          alert={summary?.low_stock_count > 0}
-          onClick={() => navigate('/inventory')}
-        />
-      </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <SnapshotCard
-          title="Average Order"
-          value={formatCurrency(averageOrderValue)}
-          detail={
-            periodTransactionCount > 0
-              ? `${formatNumber(periodTransactionCount)} order${
-                  periodTransactionCount === 1 ? '' : 's'
-                } in this ${periodTitle.toLowerCase()}`
-              : 'No paid orders in this period'
-          }
-          icon={CurrencyDollarIcon}
-          tone="emerald"
-          onClick={() => navigate('/transactions')}
-        />
-        <SnapshotCard
-          title={getPeakMetricTitle(period)}
-          value={peakTrendPoint?.label || 'No peak yet'}
-          detail={
-            peakTrendPoint
-              ? `${formatCurrency(peakTrendPoint.value)} recorded at the highest point`
-              : 'Peak sales will appear after transactions'
-          }
-          icon={FireIcon}
-          tone="rose"
-          onClick={() => navigate('/analytics')}
-        />
-        <SnapshotCard
-          title="Top Category"
-          value={topCategory?.category || 'No category yet'}
-          detail={
-            topCategory
-              ? `${formatCurrency(topCategory.value)} from selected period`
-              : 'Category sales will appear after itemized orders'
-          }
-          icon={ChartPieIcon}
-          tone="sky"
-          onClick={() => navigate('/analytics')}
-        />
-        <SnapshotCard
-          title="Best Seller"
-          value={topProduct?.name || 'No item yet'}
-          detail={
-            topProduct
-              ? `${formatNumber(topProduct.quantity)} sold | ${formatCurrency(topProduct.revenue)}`
-              : 'Top product will appear after sales'
-          }
-          icon={CubeIcon}
-          tone="amber"
-          onClick={() => navigate('/analytics')}
-        />
-      </div>
-
-      <div className="grid h-auto min-h-[350px] shrink-0 grid-cols-1 gap-5 lg:grid-cols-3">
-        <div
-          onClick={() => navigate('/analytics')}
-          className="panel-card group flex cursor-pointer flex-col transition-all hover:-translate-y-0.5 hover:shadow-md lg:col-span-2"
-        >
-          <h3 className="mb-4 flex items-center justify-between text-sm font-bold uppercase tracking-wider text-slate-800">
-            <span className="flex items-center gap-2">
-              <CurrencyDollarIcon className="h-5 w-5 text-slate-400" /> {trend.title}
-            </span>
-            <ArrowTopRightOnSquareIcon className="h-4 w-4 text-slate-300 transition-colors group-hover:text-primary" />
-          </h3>
-          <div className="min-h-[250px] flex-1">
-            {hasTrendData ? (
-              <Bar
-                data={barChartData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: { legend: { display: false } },
-                  interaction: { mode: 'index', intersect: false },
-                }}
-              />
-            ) : (
-              <EmptyPanel message={`No ${period.toLowerCase()} revenue trend is available yet.`} />
-            )}
-          </div>
-        </div>
-
-        <div
-          onClick={() => navigate('/analytics')}
-          className="panel-card group flex cursor-pointer flex-col transition-all hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <h3 className="mb-4 flex items-center justify-between text-sm font-bold uppercase tracking-wider text-slate-800">
-            <span className="flex items-center gap-2">
-              <ChartPieIcon className="h-5 w-5 text-slate-400" /> Sales by Category
-            </span>
-            <ArrowTopRightOnSquareIcon className="h-4 w-4 text-slate-300 transition-colors group-hover:text-primary" />
-          </h3>
-          <div className="relative flex min-h-[250px] flex-1 items-center justify-center">
-            {hasCategoryData ? (
-              <>
-                <div className="h-[80%] w-[80%]">
-                  <Doughnut
-                    data={doughnutData}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      cutout: '70%',
-                      plugins: {
-                        legend: {
-                          position: 'bottom',
-                          labels: { usePointStyle: true, boxWidth: 8 },
-                        },
-                      },
-                    }}
-                  />
-                </div>
-                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center pb-6">
-                  <span className="text-3xl font-black text-slate-800">{periodTransactionCount}</span>
-                  <span className="text-[10px] font-bold uppercase text-slate-400">
-                    {periodTitle} Orders
-                  </span>
-                </div>
-              </>
-            ) : (
-              <EmptyPanel message={`No ${period.toLowerCase()} category sales data is available yet.`} />
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-5 lg:grid-cols-2">
-        <section className="panel-card">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
-                Top Products
-              </h3>
-              <p className="mt-1 text-sm text-slate-500">Best-selling items in the selected period.</p>
-            </div>
-            <CubeIcon className="h-6 w-6 text-amber-500" />
-          </div>
-
-          <div className="mt-5 space-y-3">
-            {topProducts.length > 0 ? (
-              topProducts.map((product, index) => (
-                <button
-                  key={product.id}
-                  type="button"
-                  onClick={() => navigate('/analytics')}
-                  className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-white"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-sm font-black text-slate-700 shadow-sm">
-                      {index + 1}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-black text-slate-900">
-                        {product.name}
-                      </div>
-                      <div className="mt-0.5 truncate text-xs font-semibold text-slate-500">
-                        {product.category} | {formatNumber(product.quantity)} sold
-                      </div>
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right text-sm font-black text-slate-900">
-                    {formatCurrency(product.revenue)}
-                  </div>
-                </button>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                No product sales found in this period.
-              </div>
-            )}
-          </div>
+          ) : null}
         </section>
-
-        <section className="panel-card">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
-                Manager Checklist
-              </h3>
-              <p className="mt-1 text-sm text-slate-500">Quick tasks based on sales, stock, and forecast signals.</p>
-            </div>
-            <ClipboardDocumentCheckIcon className="h-6 w-6 text-primary" />
-          </div>
-
-          <div className="mt-5 space-y-3">
-            {managerChecklist.map((item) => (
-              <ManagerChecklistCard
-                key={`${item.title}-${item.message}`}
-                item={item}
-                onClick={() => navigate(item.route)}
-              />
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <div className="grid shrink-0 grid-cols-1 gap-5 lg:grid-cols-2">
-        <div
-          onClick={() => navigate('/transactions')}
-          className="data-card group flex cursor-pointer flex-col transition-all hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 p-6">
-            <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
-              <ClockIcon className="h-5 w-5 text-slate-400" /> Recent Transactions
-            </h3>
-            <span className="flex items-center gap-1 text-xs font-bold text-primary opacity-0 transition-opacity group-hover:opacity-100">
-              View History <ArrowTopRightOnSquareIcon className="h-3 w-3" />
-            </span>
-          </div>
-          <div className="hidden flex-1 md:block">
-            {recentTxns.length > 0 ? (
-              <table className="w-full text-left text-sm text-slate-600">
-                <thead className="border-b border-slate-100 bg-white text-xs font-bold uppercase text-slate-400">
-                  <tr>
-                    <th className="px-6 py-3">TXN ID</th>
-                    <th className="px-6 py-3">Date & Time</th>
-                    <th className="px-6 py-3">Method</th>
-                    <th className="px-6 py-3 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {recentTxns.map((txn) => (
-                    <tr key={txn.id} className="transition-colors hover:bg-slate-50">
-                      <td className="px-6 py-4 font-mono text-xs font-bold text-slate-700">{txn.id}</td>
-                      <td className="px-6 py-4 text-xs">
-                        <div className="font-bold text-slate-700">{txn.date}</div>
-                        <div className="text-slate-400">{txn.time}</div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`rounded px-2 py-1 text-[10px] font-black uppercase ${
-                            txn.method === 'Cash'
-                              ? 'bg-emerald-50 text-emerald-600'
-                              : 'bg-blue-50 text-blue-600'
-                          }`}
-                        >
-                          {txn.method}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right font-black text-slate-900">
-                        {formatCurrency(txn.amount)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div className="flex h-full min-h-[220px] items-center justify-center px-6 text-sm text-slate-500">
-                No {period.toLowerCase()} transactions yet.
-              </div>
-            )}
-          </div>
-          <div className="flex-1 p-4 md:hidden">
-            {recentTxns.length > 0 ? (
-              <div className="space-y-3">
-                {recentTxns.map((txn) => (
-                  <div key={txn.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-mono text-xs font-bold text-slate-700">{txn.id}</div>
-                        <div className="mt-1 text-sm font-bold text-slate-800">{txn.date}</div>
-                        <div className="text-xs text-slate-400">{txn.time}</div>
-                      </div>
-                      <span
-                        className={`rounded px-2 py-1 text-[10px] font-black uppercase ${
-                          txn.method === 'Cash'
-                            ? 'bg-emerald-50 text-emerald-600'
-                            : 'bg-blue-50 text-blue-600'
-                        }`}
-                      >
-                        {txn.method}
-                      </span>
-                    </div>
-                    <div className="mt-4 text-right">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Total</div>
-                      <div className="mt-1 text-lg font-black text-slate-900">{formatCurrency(txn.amount)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex h-full min-h-[220px] items-center justify-center px-2 text-center text-sm text-slate-500">
-                No {period.toLowerCase()} transactions yet.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div
-          onClick={() => navigate('/predictions')}
-          className="panel-card group flex cursor-pointer flex-col overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-800">
-              <SparklesIcon className="h-5 w-5 text-primary" /> Restock Priorities
-            </h3>
-            <span className="flex items-center gap-1 text-xs font-bold text-primary opacity-0 transition-opacity group-hover:opacity-100">
-              View Forecast <ArrowTopRightOnSquareIcon className="h-3 w-3" />
-            </span>
-          </div>
-          <div className="custom-scrollbar flex-1 space-y-4 overflow-y-auto pr-2">
-            {predictions.slice(0, 5).map((prediction) => (
-              <div
-                key={prediction.product_id}
-                className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-3 transition-all group-hover:border-primary/20"
-              >
-                <div>
-                  <div className="text-sm font-bold text-slate-800">{prediction.product_name}</div>
-                  <div className="mt-0.5 max-w-[220px] truncate text-xs font-medium text-slate-500">
-                    {prediction.recommendation}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div
-                    className={`whitespace-nowrap rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
-                      prediction.confidence === 'high'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : prediction.confidence === 'medium'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    {prediction.confidence}
-                  </div>
-                  <div className="mt-1 text-xs font-bold text-slate-400">
-                    Need: <span className="text-slate-800">{prediction.predicted_quantity}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {predictions.length === 0 && (
-              <div className="py-10 text-center text-sm font-medium text-slate-400">
-                No predictions generated yet.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ title, value, icon, color, alert = false, onClick }) {
-  const colorClasses = {
-    emerald: { iconBg: 'bg-emerald-500/10', iconText: 'text-emerald-500', orb: 'bg-emerald-500' },
-    blue: { iconBg: 'bg-blue-500/10', iconText: 'text-blue-500', orb: 'bg-blue-500' },
-    red: { iconBg: 'bg-red-500/10', iconText: 'text-red-500', orb: 'bg-red-500' },
-    teal: { iconBg: 'bg-teal-50', iconText: 'text-primary', orb: 'bg-primary' },
-  };
-
-  const palette = colorClasses[color] || colorClasses.blue;
-  const IconComponent = icon;
-
-  return (
-    <div
-      onClick={onClick}
-      className={`group relative flex cursor-pointer flex-col justify-center overflow-hidden rounded-[20px] border bg-white p-4 shadow-sm transition-all hover:-translate-y-1 hover:shadow-md sm:p-5 ${
-        alert ? 'border-red-300 bg-red-50/30 ring-1 ring-red-100' : 'border-slate-200'
-      }`}
-    >
-      <div className="z-10 flex items-start justify-between">
-        <div>
-          <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-            {title}
-            <ArrowTopRightOnSquareIcon className="h-3 w-3 text-primary opacity-0 transition-opacity group-hover:opacity-100" />
-          </p>
-          <p className="mt-1 text-2xl font-black tracking-tight text-slate-900">{value}</p>
-        </div>
-        <div className={`rounded-xl p-2 ${palette.iconBg} ${palette.iconText} transition-transform group-hover:scale-110`}>
-          <IconComponent className="h-6 w-6" />
-        </div>
-      </div>
-      <div className={`pointer-events-none absolute -bottom-6 -right-6 h-24 w-24 rounded-full blur-xl transition-opacity group-hover:opacity-[0.08] ${palette.orb} opacity-[0.03]`} />
+      ) : null}
     </div>
   );
 }

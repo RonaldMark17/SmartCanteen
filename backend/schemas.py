@@ -261,12 +261,29 @@ class AlertStateUpdateRequest(BaseModel):
     signatures: List[str]
 
 
+# Module visibility settings
+
+class ModuleSettingInput(BaseModel):
+    module_key: str
+    enabled: bool
+
+
+class ModuleSettingsUpdate(BaseModel):
+    modules: List[ModuleSettingInput]
+
+
 # Financial reports
 
 class FinancialSchoolYearCreate(BaseModel):
     start_year: int
     end_year: Optional[int] = None
     set_active: bool = True
+
+
+class FinancialSchoolYearUpdate(BaseModel):
+    start_year: Optional[int] = None
+    end_year: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 class FinancialReportUpdate(BaseModel):

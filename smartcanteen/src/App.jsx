@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import { useState } from 'react';
 import Layout from './components/Layout';
 import Toaster from './components/Toaster';
@@ -12,11 +12,16 @@ import Predictions from './views/Predictions';
 import AuditLog from './views/AuditLog';
 import TransactionHistory from './views/TransactionHistory';
 import ManageAccounts from './views/ManageAccounts';
+import Settings from './views/Settings';
+import { ModuleSettingsProvider } from './contexts/ModuleSettingsContext';
+import { useModuleSettings } from './contexts/useModuleSettings';
 import {
   APP_ROUTE_ACCESS,
   getDefaultRoute,
   isValidRole,
+  isRouteEnabled,
 } from './config/access';
+import { getModuleLabel } from './config/modules';
 
 function getStoredUser() {
   try {
@@ -33,12 +38,108 @@ function clearSession() {
   localStorage.removeItem('sc_offline_session');
 }
 
-function RoleRoute({ allowedRoles, role, fallbackPath, element }) {
-  if (!allowedRoles.includes(role)) {
+function ModuleDisabled({ moduleLabel, fallbackPath }) {
+  return (
+    <div className="view-shell">
+      <div className="panel-card flex min-h-[320px] flex-col justify-center">
+        <div className="max-w-2xl">
+          <div className="text-sm font-black uppercase tracking-widest text-primary">
+            Module disabled
+          </div>
+          <h1 className="mt-3 text-2xl font-black text-slate-950">
+            This module is currently disabled by the Administrator.
+          </h1>
+          <p className="mt-3 text-base leading-7 text-slate-600">
+            {moduleLabel} is still installed and its data is preserved. An administrator can enable it again from Module Management.
+          </p>
+          <Link to={fallbackPath} className="primary-action-button mt-6 w-fit">
+            Return to workspace
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModuleSettingsLoading() {
+  return (
+    <div className="view-shell">
+      <div className="panel-card flex min-h-[220px] items-center justify-center text-sm font-semibold text-slate-500">
+        Loading module settings...
+      </div>
+    </div>
+  );
+}
+
+function RoleRoute({ route, role, fallbackPath, element }) {
+  const { modules, loading } = useModuleSettings();
+
+  if (!route.allowedRoles.includes(role)) {
     return <Navigate to={fallbackPath} replace />;
   }
 
+  if (loading) {
+    return <ModuleSettingsLoading />;
+  }
+
+  if (!isRouteEnabled(route, modules)) {
+    return (
+      <ModuleDisabled
+        moduleLabel={getModuleLabel(route.moduleKey)}
+        fallbackPath={fallbackPath}
+      />
+    );
+  }
+
   return element;
+}
+
+function AuthenticatedWorkspace({ role, onLogout }) {
+  const { modules } = useModuleSettings();
+  const defaultRoute = getDefaultRoute(role, modules);
+  const routeElements = {
+    dashboard: <Dashboard />,
+    pos: <POS />,
+    inventory: <Inventory />,
+    analytics: <Analytics />,
+    financialReports: <FinancialReports mode="financial" />,
+    dailySales: <FinancialReports mode="daily-sales" />,
+    expenseManagement: <FinancialReports mode="expenses" />,
+    schoolYearManagement: <FinancialReports mode="school-years" />,
+    reports: <FinancialReports mode="reports" />,
+    transactions: <TransactionHistory />,
+    predictions: <Predictions />,
+    audit: <AuditLog />,
+    accounts: <ManageAccounts />,
+    settings: <Settings />,
+  };
+
+  return (
+    <Layout onLogout={onLogout}>
+      <Routes>
+        <Route path="/" element={<Navigate to={defaultRoute} replace />} />
+
+        {APP_ROUTE_ACCESS.map((route) => (
+          <Route
+            key={route.key}
+            path={route.path}
+            element={
+              <RoleRoute
+                route={route}
+                role={role}
+                fallbackPath={defaultRoute}
+                element={routeElements[route.key]}
+              />
+            }
+          />
+        ))}
+
+        <Route path="/inventory/inactive" element={<Navigate to="/inventory" replace />} />
+
+        <Route path="*" element={<Navigate to={defaultRoute} replace />} />
+      </Routes>
+    </Layout>
+  );
 }
 
 export default function App() {
@@ -66,52 +167,19 @@ export default function App() {
     );
   }
 
-  const defaultRoute = getDefaultRoute(role);
-  const routeElements = {
-    dashboard: <Dashboard />,
-    pos: <POS />,
-    inventory: <Inventory />,
-    analytics: <Analytics />,
-    financialReports: <FinancialReports />,
-    transactions: <TransactionHistory />,
-    predictions: <Predictions />,
-    audit: <AuditLog />,
-    accounts: <ManageAccounts />,
-  };
-
   return (
     <BrowserRouter>
       <Toaster />
 
-      <Layout
-        onLogout={() => {
-          clearSession();
-          setIsAuthenticated(false);
-        }}
-      >
-        <Routes>
-          <Route path="/" element={<Navigate to={defaultRoute} replace />} />
-
-          {APP_ROUTE_ACCESS.map((route) => (
-            <Route
-              key={route.key}
-              path={route.path}
-              element={
-                <RoleRoute
-                  allowedRoles={route.allowedRoles}
-                  role={role}
-                  fallbackPath={defaultRoute}
-                  element={routeElements[route.key]}
-                />
-              }
-            />
-          ))}
-
-          <Route path="/inventory/inactive" element={<Navigate to="/inventory" replace />} />
-
-          <Route path="*" element={<Navigate to={defaultRoute} replace />} />
-        </Routes>
-      </Layout>
+      <ModuleSettingsProvider>
+        <AuthenticatedWorkspace
+          role={role}
+          onLogout={() => {
+            clearSession();
+            setIsAuthenticated(false);
+          }}
+        />
+      </ModuleSettingsProvider>
     </BrowserRouter>
   );
 }

@@ -85,7 +85,7 @@ AUTHENTICATOR_RECOVERY_STATUS_MESSAGES = {
 }
 AUTHENTICATOR_RECOVERY_APPROVED_STATUSES = {"approved", "appeal_approved"}
 AUTHENTICATOR_RECOVERY_OPEN_STATUSES = {"pending", "approved", "appealed", "appeal_approved", "expired"}
-AUTHENTICATOR_ISSUER = os.environ.get("SMARTCANTEEN_AUTHENTICATOR_ISSUER", "SmartCanteen")
+AUTHENTICATOR_ISSUER = os.environ.get("SMARTCANTEEN_AUTHENTICATOR_ISSUER", "MEALS")
 AUTHENTICATOR_PERIOD_SECONDS = 30
 AUTHENTICATOR_DIGITS = 6
 AUTHENTICATOR_WINDOW_STEPS = 1
@@ -980,7 +980,7 @@ _ensure_authenticator_recovery_request_columns()
 
 
 app = FastAPI(
-    title="SmartCanteen",
+    title="MEALS",
     description="Predictive Inventory & Sales System",
     version="1.0.0",
 )
@@ -1064,7 +1064,7 @@ def _frontend_index_response():
     index_file = _resolve_frontend_file("index.html")
     if index_file:
         return FileResponse(index_file)
-    return {"message": "SmartCanteen API is running. Visit /docs for Swagger UI."}
+    return {"message": "MEALS API is running. Visit /docs for Swagger UI."}
 
 
 if FRONTEND_DIR:

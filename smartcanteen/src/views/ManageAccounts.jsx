@@ -670,7 +670,7 @@ export default function ManageAccounts() {
               return (
                 <article key={`reset-request-${request.id}`} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                    <div className="theme-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold">
                       {getInitials({ full_name: request.full_name, username: request.username || request.identifier })}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -811,7 +811,7 @@ export default function ManageAccounts() {
               return (
                 <article key={`auth-recovery-request-${request.id}`} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                    <div className="theme-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold">
                       {getInitials({ full_name: request.full_name, username: request.username || request.identifier })}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -948,7 +948,7 @@ export default function ManageAccounts() {
               return (
                 <article key={`recovery-${user.id}`} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                    <div className="theme-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold">
                       {getInitials(user)}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -1053,7 +1053,7 @@ export default function ManageAccounts() {
                     <tr key={user.id} className="transition-colors hover:bg-slate-50">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                          <div className="theme-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold">
                             {getInitials(user)}
                           </div>
                           <div className="min-w-0">
@@ -1135,7 +1135,7 @@ export default function ManageAccounts() {
               return (
                 <article key={user.id} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                    <div className="theme-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold">
                       {getInitials(user)}
                     </div>
                     <div className="min-w-0 flex-1">

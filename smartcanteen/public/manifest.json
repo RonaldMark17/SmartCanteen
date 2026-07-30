@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "SmartCanteen",
-  "short_name": "SmartCanteen",
+  "name": "MEALS",
+  "short_name": "MEALS",
   "description": "Canteen POS, inventory, financial reporting, and demand planning workspace.",
   "start_url": "/",
   "scope": "/",
@@ -12,9 +12,9 @@
   "categories": ["business", "food", "productivity"],
   "icons": [
     {
-      "src": "/favicon.svg",
+      "src": "/logo.png",
       "sizes": "any",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     },
     {
@@ -34,7 +34,7 @@
     {
       "name": "Dashboard",
       "short_name": "Dashboard",
-      "description": "Open the SmartCanteen dashboard",
+      "description": "Open the MEALS dashboard",
       "url": "/dashboard",
       "icons": [{ "src": "/pwa-icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },

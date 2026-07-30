@@ -1,9 +1,13 @@
 import calendar
 import os
+import posixpath
+import re
 import shutil
 import tempfile
 from datetime import datetime
 from typing import Optional
+from xml.etree import ElementTree as ET
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -21,7 +25,7 @@ from backend.time_utils import build_ph_date_range_bounds, get_ph_today
 
 router = APIRouter(tags=["Financial Reports"])
 
-FINANCIAL_REPORT_ROLES = {"admin", "staff"}
+FINANCIAL_REPORT_ROLES = {"admin", "administrator", "staff"}
 TEMPLATE_FILENAME = "CANTEEN-REPORT-2025-2026-2 (1).xlsx"
 MONTH_SEQUENCE = [
     (0, 6, "June"),
@@ -67,6 +71,13 @@ FUND_MONITORING_COLUMNS = ("B", "C", "D", "E", "F", "G")
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 FUTURE_FINANCIAL_REPORT_ERROR = "You cannot add a financial report for a future school year."
 CURRENT_FINANCIAL_REPORT_ERROR = "Financial reports can only be saved for the current active school year."
+OOXML_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+OOXML_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+OOXML_PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+XML_NS = "http://www.w3.org/XML/1998/namespace"
+CELL_REF_RE = re.compile(r"^([A-Z]+)([1-9][0-9]*)$")
+ET.register_namespace("", OOXML_MAIN_NS)
+ET.register_namespace("r", OOXML_REL_NS)
 DEMO_BEGINNING_CASH_ON_HAND = 11834.59
 DEMO_MONTHLY_REPORT_ROWS = [
     {
@@ -211,7 +222,7 @@ DEMO_MONTHLY_REPORTS_BY_INDEX = {
 def require_financial_report_user(
     current_user: models.User = Depends(auth.get_current_user),
 ) -> models.User:
-    if current_user.role not in FINANCIAL_REPORT_ROLES:
+    if str(current_user.role or "").strip().lower() not in FINANCIAL_REPORT_ROLES:
         raise HTTPException(status_code=403, detail="Admin or staff access required")
     return current_user
 
@@ -1151,6 +1162,17 @@ def _build_school_year_summary(db: Session, school_year: models.SchoolYear) -> d
             ]
         )
     )
+    final_balance = _calculate_school_year_final_current_balance(db, school_year)
+    opening_beginning_cash = (
+        _round_money(serialized_reports[0]["beginning_cash_on_hand"])
+        if serialized_reports
+        else 0.0
+    )
+    ending_balance = (
+        _round_money(final_balance["amount"])
+        if final_balance
+        else _round_money(serialized_reports[-1]["ending_cash"] if serialized_reports else 0.0)
+    )
 
     return {
         "id": school_year.id,
@@ -1158,6 +1180,9 @@ def _build_school_year_summary(db: Session, school_year: models.SchoolYear) -> d
         "start_year": school_year.start_year,
         "end_year": school_year.end_year,
         "is_active": bool(school_year.is_active),
+        "status": "Active" if school_year.is_active else "Closed",
+        "opening_beginning_cash": opening_beginning_cash,
+        "ending_balance": ending_balance,
         "months_with_entries": months_with_entries,
         "report_count": len(serialized_reports),
         "total_sales": dashboard["total_monthly_sales"],
@@ -1210,37 +1235,265 @@ def _remove_file_if_exists(path: str) -> None:
         pass
 
 
-def _prepare_workbook_recalculation(workbook) -> None:
-    workbook.calculation.fullCalcOnLoad = True
-    workbook.calculation.forceFullCalc = True
-    workbook.calculation.calcMode = "auto"
+def _ooxml_name(local_name: str) -> str:
+    return f"{{{OOXML_MAIN_NS}}}{local_name}"
 
 
-def _populate_report_worksheet(
-    worksheet,
+def _ooxml_rel_name(local_name: str) -> str:
+    return f"{{{OOXML_REL_NS}}}{local_name}"
+
+
+def _package_rel_name(local_name: str) -> str:
+    return f"{{{OOXML_PACKAGE_REL_NS}}}{local_name}"
+
+
+def _serialize_ooxml(root: ET.Element) -> bytes:
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _column_letters_to_index(letters: str) -> int:
+    column_index = 0
+    for letter in letters:
+        column_index = column_index * 26 + (ord(letter) - ord("A") + 1)
+    return column_index
+
+
+def _split_cell_ref(cell_ref: str) -> tuple[str, int]:
+    match = CELL_REF_RE.match(str(cell_ref or "").upper())
+    if not match:
+        raise ValueError(f"Invalid Excel cell reference: {cell_ref}")
+    return match.group(1), int(match.group(2))
+
+
+def _cell_sort_key(cell_ref: str) -> tuple[int, int]:
+    column_letters, row_number = _split_cell_ref(cell_ref)
+    return row_number, _column_letters_to_index(column_letters)
+
+
+def _find_or_create_row(sheet_data: ET.Element, row_number: int) -> ET.Element:
+    for row in sheet_data.findall(_ooxml_name("row")):
+        if int(row.attrib.get("r", "0") or 0) == row_number:
+            return row
+
+    row_element = ET.Element(_ooxml_name("row"), {"r": str(row_number)})
+    rows = list(sheet_data.findall(_ooxml_name("row")))
+    insert_at = len(rows)
+    for index, row in enumerate(rows):
+        if int(row.attrib.get("r", "0") or 0) > row_number:
+            insert_at = index
+            break
+    sheet_data.insert(insert_at, row_element)
+    return row_element
+
+
+def _find_or_create_cell(root: ET.Element, cell_ref: str) -> ET.Element:
+    normalized_ref = str(cell_ref or "").upper()
+    column_letters, row_number = _split_cell_ref(normalized_ref)
+    column_index = _column_letters_to_index(column_letters)
+    sheet_data = root.find(_ooxml_name("sheetData"))
+    if sheet_data is None:
+        sheet_data = ET.SubElement(root, _ooxml_name("sheetData"))
+
+    row = _find_or_create_row(sheet_data, row_number)
+    for cell in row.findall(_ooxml_name("c")):
+        if cell.attrib.get("r") == normalized_ref:
+            return cell
+
+    cell = ET.Element(_ooxml_name("c"), {"r": normalized_ref})
+    cells = list(row.findall(_ooxml_name("c")))
+    insert_at = len(cells)
+    for index, existing_cell in enumerate(cells):
+        existing_ref = existing_cell.attrib.get("r", "")
+        if existing_ref and _cell_sort_key(existing_ref)[1] > column_index:
+            insert_at = index
+            break
+    row.insert(insert_at, cell)
+    return cell
+
+
+def _remove_cell_children(cell: ET.Element, names: set[str]) -> None:
+    for child in list(cell):
+        if child.tag in names:
+            cell.remove(child)
+
+
+def _set_ooxml_number_cell(
+    root: ET.Element,
+    cell_ref: str,
+    value,
+    *,
+    overwrite_formula: bool = False,
+) -> bool:
+    cell = _find_or_create_cell(root, cell_ref)
+    if cell.find(_ooxml_name("f")) is not None and not overwrite_formula:
+        return False
+
+    _remove_cell_children(
+        cell,
+        {_ooxml_name("f"), _ooxml_name("v"), _ooxml_name("is")},
+    )
+    cell.attrib.pop("t", None)
+    value_element = ET.SubElement(cell, _ooxml_name("v"))
+    value_element.text = str(_round_money(value))
+    return True
+
+
+def _set_ooxml_text_cell(
+    root: ET.Element,
+    cell_ref: str,
+    value: str,
+    *,
+    overwrite_formula: bool = False,
+) -> bool:
+    cell = _find_or_create_cell(root, cell_ref)
+    if cell.find(_ooxml_name("f")) is not None and not overwrite_formula:
+        return False
+
+    _remove_cell_children(
+        cell,
+        {_ooxml_name("f"), _ooxml_name("v"), _ooxml_name("is")},
+    )
+    cell.set("t", "inlineStr")
+    inline_string = ET.SubElement(cell, _ooxml_name("is"))
+    text = ET.SubElement(inline_string, _ooxml_name("t"))
+    text_value = str(value or "")
+    if text_value != text_value.strip():
+        text.set(f"{{{XML_NS}}}space", "preserve")
+    text.text = text_value
+    return True
+
+
+def _set_ooxml_cell(
+    root: ET.Element,
+    cell_ref: str,
+    value,
+    *,
+    value_type: str = "number",
+    overwrite_formula: bool = False,
+) -> bool:
+    if value_type == "text":
+        return _set_ooxml_text_cell(
+            root,
+            cell_ref,
+            str(value or ""),
+            overwrite_formula=overwrite_formula,
+        )
+    return _set_ooxml_number_cell(
+        root,
+        cell_ref,
+        value,
+        overwrite_formula=overwrite_formula,
+    )
+
+
+def _normalize_workbook_target(target: str) -> str:
+    target = str(target or "").replace("\\", "/")
+    if target.startswith("/"):
+        return target.lstrip("/")
+    return posixpath.normpath(posixpath.join("xl", target))
+
+
+def _sheet_paths_by_name(workbook_archive: ZipFile) -> dict[str, str]:
+    workbook_root = ET.fromstring(workbook_archive.read("xl/workbook.xml"))
+    rels_root = ET.fromstring(workbook_archive.read("xl/_rels/workbook.xml.rels"))
+    relationship_targets = {
+        relationship.attrib.get("Id"): _normalize_workbook_target(
+            relationship.attrib.get("Target", "")
+        )
+        for relationship in rels_root.findall(_package_rel_name("Relationship"))
+    }
+
+    sheets = workbook_root.find(_ooxml_name("sheets"))
+    if sheets is None:
+        return {}
+
+    return {
+        sheet.attrib.get("name", ""): relationship_targets.get(
+            sheet.attrib.get(_ooxml_rel_name("id")),
+            "",
+        )
+        for sheet in sheets.findall(_ooxml_name("sheet"))
+        if sheet.attrib.get("name")
+    }
+
+
+def _prepare_workbook_xml_for_recalculation(
+    workbook_xml: bytes,
+    *,
+    active_sheet_name: Optional[str] = None,
+) -> bytes:
+    root = ET.fromstring(workbook_xml)
+
+    if active_sheet_name:
+        sheets = root.find(_ooxml_name("sheets"))
+        sheet_names = [
+            sheet.attrib.get("name", "")
+            for sheet in sheets.findall(_ooxml_name("sheet"))
+        ] if sheets is not None else []
+        if active_sheet_name in sheet_names:
+            active_index = sheet_names.index(active_sheet_name)
+            book_views = root.find(_ooxml_name("bookViews"))
+            workbook_view = (
+                book_views.find(_ooxml_name("workbookView"))
+                if book_views is not None
+                else None
+            )
+            if workbook_view is not None:
+                workbook_view.set("activeTab", str(active_index))
+
+    calc_pr = root.find(_ooxml_name("calcPr"))
+    if calc_pr is None:
+        calc_pr = ET.SubElement(root, _ooxml_name("calcPr"))
+
+    calc_pr.set("calcMode", "auto")
+    calc_pr.set("fullCalcOnLoad", "1")
+    calc_pr.set("forceFullCalc", "1")
+    return _serialize_ooxml(root)
+
+
+def _set_sheet_tab_selected(root: ET.Element, selected: bool) -> None:
+    sheet_views = root.find(_ooxml_name("sheetViews"))
+    if sheet_views is None:
+        return
+
+    for sheet_view in sheet_views.findall(_ooxml_name("sheetView")):
+        if selected:
+            sheet_view.set("tabSelected", "1")
+        else:
+            sheet_view.attrib.pop("tabSelected", None)
+
+
+def _build_report_cell_updates(
     report: models.MonthlyReport,
     *,
     financial_values: Optional[dict] = None,
-) -> dict:
+) -> tuple[list[tuple[str, object, str]], dict]:
     financial_values = financial_values or {}
     current_sales = _round_money(financial_values.get("current_sales", report.current_sales))
     beginning_cash = _round_money(
         financial_values.get("beginning_cash_on_hand", report.beginning_cash_on_hand)
     )
     cost_of_sales = _round_money(
-        _round_money(report.purchases)
-        + _round_money(report.inventory_used)
-        + _round_money(report.product_cost)
+        financial_values.get(
+            "cost_of_sales",
+            _round_money(report.purchases)
+            + _round_money(report.inventory_used)
+            + _round_money(report.product_cost),
+        )
     )
 
-    worksheet["A13"] = f"For the Month of {report.month_name} {report.calendar_year}"
-    worksheet["C15"] = beginning_cash
-    worksheet["F16"] = current_sales
-    worksheet["F17"] = cost_of_sales
-    worksheet["F18"] = _round_money(current_sales - cost_of_sales)
+    updates: list[tuple[str, object, str]] = [
+        ("A13", f"For the Month of {report.month_name} {report.calendar_year}", "text"),
+        ("C15", beginning_cash, "number"),
+        ("F16", current_sales, "number"),
+        ("F17", cost_of_sales, "number"),
+        ("G32", 0.0, "number"),
+        ("G33", 0.0, "number"),
+        ("G34", _round_money(report.other_income), "number"),
+    ]
 
     for cell_address in EXPENSE_CELL_BY_CATEGORY.values():
-        worksheet[cell_address] = 0.0
+        updates.append((cell_address, 0.0, "number"))
 
     total_operating_expenses = 0.0
     for expense in sorted(report.expenses, key=lambda item: (item.sort_order, item.id)):
@@ -1248,7 +1501,7 @@ def _populate_report_worksheet(
         cell_address = EXPENSE_CELL_BY_CATEGORY.get(category)
         if cell_address:
             amount = _round_money(expense.amount)
-            worksheet[cell_address] = amount
+            updates.append((cell_address, amount, "number"))
             total_operating_expenses += amount
 
     total_operating_expenses = _round_money(total_operating_expenses)
@@ -1256,14 +1509,7 @@ def _populate_report_worksheet(
     net_profit = _round_money(current_sales - cost_of_sales - total_operating_expenses + additional_income)
     ending_cash = _round_money(beginning_cash + net_profit)
 
-    worksheet["G32"] = 0.0
-    worksheet["G33"] = 0.0
-    worksheet["G34"] = additional_income
-    worksheet["F28"] = total_operating_expenses
-    worksheet["F35"] = additional_income
-    worksheet["F36"] = net_profit
-
-    return {
+    return updates, {
         "beginning_cash": beginning_cash,
         "current_sales": current_sales,
         "cost_of_sales": cost_of_sales,
@@ -1274,15 +1520,21 @@ def _populate_report_worksheet(
     }
 
 
-def _populate_fund_monitoring_worksheet(
-    worksheet,
+def _format_allocation_header(allocation: models.Allocation) -> str:
+    label = str(allocation.label or "Fund").strip().upper()
+    percentage = round(float(allocation.percentage or 0.0), 2)
+    return f"{label} {percentage:.2f}%"
+
+
+def _build_fund_monitoring_cell_updates(
     allocations: list[models.Allocation],
     *,
     net_profit: float,
     previous_balances: dict[str, float],
     fund_entries_by_key: dict[str, models.FundMonitoringEntry],
-) -> dict[str, float]:
+) -> tuple[list[tuple[str, object, str]], dict[str, float]]:
     next_balances = dict(previous_balances)
+    updates: list[tuple[str, object, str]] = []
 
     for column_letter, allocation in zip(FUND_MONITORING_COLUMNS, allocations):
         category_key = str(allocation.category_key or "").strip()
@@ -1299,26 +1551,39 @@ def _populate_fund_monitoring_worksheet(
             previous_balance + interest + net_income - total_current_expenses
         )
 
-        worksheet[f"{column_letter}38"] = f"{str(allocation.label or '').upper()}\n{percentage:.2f}%"
-        worksheet[f"{column_letter}39"] = previous_balance
-        worksheet[f"{column_letter}40"] = interest
-        worksheet[f"{column_letter}41"] = net_income
-        worksheet[f"{column_letter}42"] = expenses
-        worksheet[f"{column_letter}43"] = others
-        worksheet[f"{column_letter}44"] = total_current_expenses
-        worksheet[f"{column_letter}45"] = current_balance
-        worksheet[f"{column_letter}46"] = cash_on_bank
+        updates.extend(
+            [
+                (f"{column_letter}38", _format_allocation_header(allocation), "text"),
+                (f"{column_letter}39", previous_balance, "number"),
+                (f"{column_letter}40", interest, "number"),
+                (f"{column_letter}41", net_income, "number"),
+                (f"{column_letter}42", expenses, "number"),
+                (f"{column_letter}43", others, "number"),
+                (f"{column_letter}44", total_current_expenses, "number"),
+                (f"{column_letter}45", current_balance, "number"),
+                (f"{column_letter}46", cash_on_bank, "number"),
+            ]
+        )
 
         next_balances[category_key] = current_balance
 
     for column_letter in FUND_MONITORING_COLUMNS[len(allocations):]:
         for row_number in range(39, 47):
-            worksheet[f"{column_letter}{row_number}"] = 0.0
+            updates.append((f"{column_letter}{row_number}", 0.0, "number"))
 
-    worksheet["H45"] = _round_money(
-        sum(next_balances.get(str(allocation.category_key or "").strip(), 0.0) for allocation in allocations)
+    updates.append(
+        (
+            "H45",
+            _round_money(
+                sum(
+                    next_balances.get(str(allocation.category_key or "").strip(), 0.0)
+                    for allocation in allocations
+                )
+            ),
+            "number",
+        )
     )
-    return next_balances
+    return updates, next_balances
 
 
 def _build_school_year_workbook_export(
@@ -1341,9 +1606,6 @@ def _build_school_year_workbook_export(
             raise HTTPException(status_code=404, detail="Selected monthly report not found")
         active_sheet_name = selected_report.month_name
 
-    workbook = load_workbook(template_path)
-    _prepare_workbook_recalculation(workbook)
-
     allocations = sorted(school_year.allocations, key=lambda item: (item.sort_order, item.id))[
         :len(FUND_MONITORING_COLUMNS)
     ]
@@ -1351,34 +1613,6 @@ def _build_school_year_workbook_export(
         report["id"]: report
         for report in _serialize_school_year_detail(db, school_year).get("reports", [])
     }
-    previous_fund_balances: dict[str, float] = {
-        str(allocation.category_key or "").strip(): _round_money(
-            getattr(allocation, "opening_balance", 0.0)
-        )
-        for allocation in allocations
-    }
-    for report in sorted(school_year.monthly_reports, key=lambda item: item.month_index):
-        if report.month_name in workbook.sheetnames:
-            worksheet = workbook[report.month_name]
-            result = _populate_report_worksheet(
-                worksheet,
-                report,
-                financial_values=effective_reports_by_id.get(report.id),
-            )
-            previous_fund_balances = _populate_fund_monitoring_worksheet(
-                worksheet,
-                allocations,
-                net_profit=result["net_profit"],
-                previous_balances=previous_fund_balances,
-                fund_entries_by_key=_fund_entry_map(report),
-            )
-
-    if active_sheet_name and active_sheet_name in workbook.sheetnames:
-        for worksheet in workbook.worksheets:
-            worksheet.sheet_view.tabSelected = False
-        active_worksheet = workbook[active_sheet_name]
-        workbook.active = active_worksheet
-        active_worksheet.sheet_view.tabSelected = True
 
     export_file = tempfile.NamedTemporaryFile(
         delete=False,
@@ -1389,12 +1623,50 @@ def _build_school_year_workbook_export(
     export_file.close()
 
     try:
+        workbook = load_workbook(template_path, data_only=False)
+        worksheet_names = workbook.sheetnames
+        if active_sheet_name and active_sheet_name in worksheet_names:
+            workbook.active = worksheet_names.index(active_sheet_name)
+
+        previous_fund_balances: dict[str, float] = {
+            str(allocation.category_key or "").strip(): _round_money(
+                getattr(allocation, "opening_balance", 0.0)
+            )
+            for allocation in allocations
+        }
+
+        for report in sorted(school_year.monthly_reports, key=lambda item: item.month_index):
+            if report.month_name not in workbook.sheetnames:
+                continue
+
+            worksheet = workbook[report.month_name]
+            report_updates, result = _build_report_cell_updates(
+                report,
+                financial_values=effective_reports_by_id.get(report.id),
+            )
+            fund_updates, previous_fund_balances = _build_fund_monitoring_cell_updates(
+                allocations,
+                net_profit=result["net_profit"],
+                previous_balances=previous_fund_balances,
+                fund_entries_by_key=_fund_entry_map(report),
+            )
+
+            for cell_ref, value, value_type in [*report_updates, *fund_updates]:
+                cell = worksheet[cell_ref]
+                if cell.data_type == "f":
+                    continue
+                cell.value = value
+
+        for worksheet in workbook.worksheets:
+            worksheet.sheet_view.tabSelected = worksheet.title == active_sheet_name
+
+        workbook.calculation.calcMode = "auto"
+        workbook.calculation.fullCalcOnLoad = True
+        workbook.calculation.forceFullCalc = True
         workbook.save(export_path)
     except Exception:
         _remove_file_if_exists(export_path)
         raise
-    finally:
-        workbook.close()
 
     return export_path
 
@@ -1457,6 +1729,7 @@ def create_school_year(
     db.add(school_year)
     db.flush()
     _ensure_school_year_defaults(db, school_year)
+    _apply_beginning_cash_carry_forward(db, school_year)
     _audit_log(
         db,
         user_id=current.id,
@@ -1467,6 +1740,140 @@ def create_school_year(
     db.commit()
 
     return _serialize_school_year_detail(db, _ensure_and_reload_school_year(db, school_year.id))
+
+
+@router.put("/api/financial-reports/school-years/{school_year_id}")
+def update_school_year(
+    school_year_id: int,
+    payload: schemas.FinancialSchoolYearUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    school_year = _load_school_year(db, school_year_id)
+    if not school_year:
+        raise HTTPException(status_code=404, detail="School year not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    next_start_year = int(updates.get("start_year", school_year.start_year))
+    next_end_year = int(updates.get("end_year", school_year.end_year))
+    if next_end_year <= next_start_year:
+        raise HTTPException(status_code=400, detail="End year must be after the start year")
+
+    next_name = _format_school_year_name(next_start_year, next_end_year)
+    duplicate = (
+        db.query(models.SchoolYear)
+        .filter(
+            models.SchoolYear.id != school_year.id,
+            models.SchoolYear.name == next_name,
+        )
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(status_code=409, detail="School year already exists")
+
+    if updates.get("is_active") is False and school_year.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Activate another school year before archiving the active school year.",
+        )
+
+    if updates.get("is_active") is True:
+        db.query(models.SchoolYear).update({models.SchoolYear.is_active: False})
+
+    school_year.start_year = next_start_year
+    school_year.end_year = next_end_year
+    school_year.name = next_name
+    if "is_active" in updates:
+        school_year.is_active = bool(updates["is_active"])
+
+    for report in school_year.monthly_reports:
+        report.calendar_year = _month_calendar_year(school_year, int(report.month_number or 1))
+
+    _ensure_school_year_defaults(db, school_year)
+    _audit_log(
+        db,
+        user_id=current.id,
+        action="FINANCIAL_REPORT_SCHOOL_YEAR_UPDATED",
+        details=f"Updated school year {next_name}",
+        request=request,
+    )
+    db.commit()
+
+    return _serialize_school_year_detail(db, _ensure_and_reload_school_year(db, school_year.id))
+
+
+def _set_school_year_active_state(
+    school_year_id: int,
+    *,
+    is_active: bool,
+    request: Request,
+    db: Session,
+    current: models.User,
+) -> dict:
+    school_year = _load_school_year(db, school_year_id)
+    if not school_year:
+        raise HTTPException(status_code=404, detail="School year not found")
+
+    if is_active:
+        db.query(models.SchoolYear).update({models.SchoolYear.is_active: False})
+        school_year.is_active = True
+        action = "FINANCIAL_REPORT_SCHOOL_YEAR_ACTIVATED"
+        verb = "activated"
+    else:
+        if school_year.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="Activate another school year before archiving the active school year.",
+            )
+        school_year.is_active = False
+        action = "FINANCIAL_REPORT_SCHOOL_YEAR_ARCHIVED"
+        verb = "archived"
+
+    _audit_log(
+        db,
+        user_id=current.id,
+        action=action,
+        details=f"School year {school_year.name} {verb}",
+        request=request,
+    )
+    db.commit()
+
+    detail = _serialize_school_year_detail(db, _ensure_and_reload_school_year(db, school_year.id))
+    detail["message"] = f"School year {detail['school_year']['name']} {verb}."
+    return detail
+
+
+@router.post("/api/financial-reports/school-years/{school_year_id}/activate")
+def activate_school_year(
+    school_year_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    return _set_school_year_active_state(
+        school_year_id,
+        is_active=True,
+        request=request,
+        db=db,
+        current=current,
+    )
+
+
+@router.post("/api/financial-reports/school-years/{school_year_id}/archive")
+def archive_school_year(
+    school_year_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    return _set_school_year_active_state(
+        school_year_id,
+        is_active=False,
+        request=request,
+        db=db,
+        current=current,
+    )
 
 
 @router.delete("/api/financial-reports/school-years/{school_year_id}")

@@ -9,6 +9,7 @@ import {
   getPhilippineDateParts,
   getPhilippineWeekday,
 } from '../utils/dateTime';
+import { getThemeToken, getThemeTokens } from '../utils/theme';
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
@@ -59,17 +60,17 @@ const EMPTY_HEATMAP = Array.from(
   })
 );
 
-const TOP_PRODUCT_COLORS = [
-  '#0f766e',
-  '#25636d',
-  '#64748b',
-  '#ca8a04',
-  '#dc2626',
-  '#475569',
-  '#14b8a6',
-  '#65a30d',
-  '#c2410c',
-  '#94a3b8',
+const TOP_PRODUCT_COLOR_TOKENS = [
+  '--sc-chart-primary',
+  '--sc-info-text',
+  '--sc-chart-neutral',
+  '--sc-warning-text',
+  '--sc-danger-text',
+  '--sc-chart-muted',
+  '--sc-primary',
+  '--sc-success-text',
+  '--sc-warning-text',
+  '--sc-chart-grid',
 ];
 
 const HEATMAP_INTENSITY_CLASSES = [
@@ -80,9 +81,9 @@ const HEATMAP_INTENSITY_CLASSES = [
   'border-teal-200 bg-teal-100 text-teal-900',
   'border-teal-300 bg-teal-200 text-teal-950',
   'border-emerald-300 bg-emerald-300 text-emerald-950',
-  'border-emerald-500 bg-emerald-500 text-white',
-  'border-teal-700 bg-teal-700 text-white',
-  'border-slate-900 bg-slate-900 text-white',
+  'border-emerald-400 bg-emerald-300 text-emerald-950',
+  'border-teal-400 bg-teal-300 text-teal-950',
+  'border-teal-500 bg-teal-400 text-teal-950',
 ];
 
 const PERIOD_OPTIONS = [
@@ -749,6 +750,16 @@ export default function Analytics() {
     trendPoints.counts.some((count) => count > 0);
   const hasTopData = data.top.length > 0;
   const hasHeatmapData = heatmapBuckets.some((item) => item.sales > 0);
+  const chartPrimaryColor = getThemeToken('--sc-chart-primary', '#0f766e');
+  const chartPrimarySoftColor = getThemeToken('--sc-chart-primary-soft', 'rgba(20, 184, 166, 0.12)');
+  const chartTextColor = getThemeToken('--sc-chart-text', '#475569');
+  const chartMutedColor = getThemeToken('--sc-chart-muted', '#64748b');
+  const chartGridColor = getThemeToken('--sc-chart-grid', 'rgba(148, 163, 184, 0.24)');
+  const chartTooltipBg = getThemeToken('--sc-chart-tooltip-bg', 'rgba(255, 255, 255, 0.98)');
+  const chartTooltipTitle = getThemeToken('--sc-chart-tooltip-title', '#0f172a');
+  const chartTooltipBody = getThemeToken('--sc-chart-tooltip-body', '#334155');
+  const chartTooltipBorder = getThemeToken('--sc-chart-tooltip-border', 'rgba(226, 232, 240, 0.95)');
+  const topProductColors = getThemeTokens(TOP_PRODUCT_COLOR_TOKENS);
   const summary = useMemo(() => {
     const totalRevenue = data.daily.reduce(
       (sum, item) => sum + item.revenue,
@@ -783,10 +794,10 @@ export default function Analytics() {
         {
           label: 'Revenue',
           data: trendPoints.values,
-          borderColor: '#0f766e',
-          backgroundColor: 'rgba(20, 184, 166, 0.12)',
-          pointBackgroundColor: '#0f766e',
-          pointBorderColor: '#ffffff',
+          borderColor: chartPrimaryColor,
+          backgroundColor: chartPrimarySoftColor,
+          pointBackgroundColor: chartPrimaryColor,
+          pointBorderColor: chartTooltipBg,
           pointBorderWidth: 2,
           pointHoverRadius: 6,
           pointRadius: 4,
@@ -795,7 +806,7 @@ export default function Analytics() {
         },
       ],
     }),
-    [trendPoints]
+    [chartPrimaryColor, chartPrimarySoftColor, chartTooltipBg, trendPoints]
   );
 
   const barChartData = useMemo(
@@ -806,7 +817,7 @@ export default function Analytics() {
           label: 'Units Sold',
           data: data.top.map((item) => item.total_qty),
           backgroundColor: data.top.map(
-            (_, index) => TOP_PRODUCT_COLORS[index % TOP_PRODUCT_COLORS.length]
+            (_, index) => topProductColors[index % topProductColors.length]
           ),
           borderRadius: 8,
           borderSkipped: false,
@@ -814,7 +825,7 @@ export default function Analytics() {
         },
       ],
     }),
-    [data.top]
+    [data.top, topProductColors]
   );
 
   const lineChartOptions = useMemo(
@@ -825,13 +836,13 @@ export default function Analytics() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#0f172a',
-          bodyColor: '#e2e8f0',
-          borderColor: 'rgba(148, 163, 184, 0.24)',
+          backgroundColor: chartTooltipBg,
+          bodyColor: chartTooltipBody,
+          borderColor: chartTooltipBorder,
           borderWidth: 1,
           displayColors: false,
           padding: 12,
-          titleColor: '#ffffff',
+          titleColor: chartTooltipTitle,
           callbacks: {
             label: (context) => `Revenue: ${formatCurrency(context.parsed.y)}`,
             afterLabel: (context) => {
@@ -844,20 +855,20 @@ export default function Analytics() {
       scales: {
         x: {
           grid: { display: false },
-          ticks: { color: '#64748b', font: { weight: '600' } },
+          ticks: { color: chartMutedColor, font: { weight: '600' } },
         },
         y: {
           beginAtZero: true,
           border: { display: false },
-          grid: { color: 'rgba(148, 163, 184, 0.18)' },
+          grid: { color: chartGridColor },
           ticks: {
-            color: '#64748b',
+            color: chartMutedColor,
             callback: (value) => formatCurrency(value),
           },
         },
       },
     }),
-    [trendPoints]
+    [chartGridColor, chartMutedColor, chartTooltipBg, chartTooltipBody, chartTooltipBorder, chartTooltipTitle, trendPoints]
   );
 
   const barChartOptions = useMemo(
@@ -868,13 +879,13 @@ export default function Analytics() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#0f172a',
-          bodyColor: '#e2e8f0',
-          borderColor: 'rgba(148, 163, 184, 0.24)',
+          backgroundColor: chartTooltipBg,
+          bodyColor: chartTooltipBody,
+          borderColor: chartTooltipBorder,
           borderWidth: 1,
           displayColors: false,
           padding: 12,
-          titleColor: '#ffffff',
+          titleColor: chartTooltipTitle,
           callbacks: {
             label: (context) => `Sold: ${formatNumber(context.parsed.x)} units`,
           },
@@ -884,16 +895,16 @@ export default function Analytics() {
         x: {
           beginAtZero: true,
           border: { display: false },
-          grid: { color: 'rgba(148, 163, 184, 0.18)' },
+          grid: { color: chartGridColor },
           ticks: {
-            color: '#64748b',
+            color: chartMutedColor,
             precision: 0,
           },
         },
         y: {
           grid: { display: false },
           ticks: {
-            color: '#334155',
+            color: chartTextColor,
             font: { weight: '700' },
             callback(value) {
               const label = this.getLabelForValue(value);
@@ -903,7 +914,7 @@ export default function Analytics() {
         },
       },
     }),
-    []
+    [chartGridColor, chartMutedColor, chartTextColor, chartTooltipBg, chartTooltipBody, chartTooltipBorder, chartTooltipTitle]
   );
 
   const maxHeatmapSales = Math.max(0, ...heatmapBuckets.map((item) => item.sales));
@@ -949,7 +960,7 @@ export default function Analytics() {
     const exportKey = getExportFilterKey(period, selectedDate, selectedMonth, selectedYear);
     const trendLabel = period === 'day' ? 'Hour' : period === 'year' ? 'Month' : 'Date';
     const rows = [
-      ['SmartCanteen Analytics Report'],
+      ['MEALS Analytics Report'],
       [],
       ['Generated At', formatPhilippineDateTime(new Date())],
       ['Filter', `${periodTitle} - ${periodDescription}`],
@@ -1011,7 +1022,7 @@ export default function Analytics() {
     const link = document.createElement('a');
 
     link.href = url;
-    link.download = `SmartCanteen_Analytics_${period}_${exportKey}.csv`;
+    link.download = `MEALS_Analytics_${period}_${exportKey}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

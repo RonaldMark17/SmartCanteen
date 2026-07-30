@@ -121,6 +121,6 @@ def get_current_user(
 
 def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
     """Raises 403 if the caller is not an admin."""
-    if current_user.role != "admin":
+    if str(current_user.role or "").strip().lower() not in {"admin", "administrator"}:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user

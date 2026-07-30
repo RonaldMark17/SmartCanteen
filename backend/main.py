@@ -331,6 +331,63 @@ def _queue_stock_alert_refresh(background_tasks: BackgroundTasks, reason: str, *
     background_tasks.add_task(_broadcast_realtime_event, "alerts.changed", details)
 
 
+SYSTEM_MODULE_DEFAULTS = [
+    ("dashboard", True),
+    ("financialReports", True),
+    ("dailySales", True),
+    ("expenseManagement", True),
+    ("schoolYearManagement", True),
+    ("reports", True),
+    ("userManagement", True),
+    ("auditLogs", True),
+    ("settings", True),
+    ("pos", False),
+    ("transactions", False),
+    ("inventory", False),
+    ("demandForecast", False),
+    ("analytics", False),
+    ("notifications", False),
+]
+SYSTEM_MODULE_KEYS = {module_key for module_key, _enabled in SYSTEM_MODULE_DEFAULTS}
+LOCKED_ENABLED_MODULE_KEYS = {"settings"}
+
+
+def _ensure_system_module_settings(db: Session) -> dict:
+    existing_settings = {
+        setting.module_key: setting
+        for setting in db.query(models.SystemModuleSetting).all()
+    }
+    created_defaults = False
+
+    for module_key, enabled in SYSTEM_MODULE_DEFAULTS:
+        if module_key not in existing_settings:
+            setting = models.SystemModuleSetting(
+                module_key=module_key,
+                enabled=enabled,
+            )
+            db.add(setting)
+            existing_settings[module_key] = setting
+            created_defaults = True
+
+    if created_defaults:
+        db.commit()
+
+    return existing_settings
+
+
+def _serialize_module_settings(db: Session) -> dict:
+    settings = _ensure_system_module_settings(db)
+    return {
+        "modules": [
+            {
+                "module_key": module_key,
+                "enabled": bool(settings[module_key].enabled),
+            }
+            for module_key, _enabled in SYSTEM_MODULE_DEFAULTS
+        ]
+    }
+
+
 def _normalize_transaction_items(items) -> List[dict]:
     normalized_items = []
 
@@ -863,7 +920,6 @@ def _build_frontend_dist_once():
     if FRONTEND_BUILD_ATTEMPTED or not _frontend_auto_build_enabled():
         return
 
-    FRONTEND_BUILD_ATTEMPTED = True
     frontend_source_dir = _find_frontend_source_dir()
     if not frontend_source_dir:
         FRONTEND_BUILD_ERROR = "Frontend source directory not found."
@@ -872,21 +928,129 @@ def _build_frontend_dist_once():
     npm_command = "npm.cmd" if os.name == "nt" else "npm"
     try:
         subprocess.run(
-            [npm_command, "run", "build", "--", "--configLoader", "native"],
+            [npm_command, "run", "build"],
             cwd=frontend_source_dir,
             check=True,
             text=True,
         )
+        FRONTEND_BUILD_ERROR = None
+        FRONTEND_BUILD_ATTEMPTED = True
     except (OSError, subprocess.CalledProcessError) as exc:
         FRONTEND_BUILD_ERROR = str(exc)
+        FRONTEND_BUILD_ATTEMPTED = False
 
 
 FRONTEND_DIR = _find_frontend_dir()
 RESERVED_FRONTEND_PREFIXES = {"api", "docs", "redoc", "openapi.json"}
+FRONTEND_SOURCE_EXCLUDED_DIRS = {
+    ".git",
+    ".vite",
+    "android",
+    "dist",
+    "node_modules",
+}
+FRONTEND_SOURCE_EXTENSIONS = {
+    ".css",
+    ".html",
+    ".js",
+    ".jsx",
+    ".json",
+    ".mjs",
+    ".png",
+    ".svg",
+    ".ts",
+    ".tsx",
+}
+
+
+def _frontend_rebuild_stale_enabled():
+    value = os.environ.get("SMARTCANTEEN_REBUILD_STALE_FRONTEND", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _newest_mtime_in_dir(root_dir: str, *, include_extensions: Optional[set[str]] = None) -> float:
+    newest_mtime = 0.0
+    if not root_dir or not os.path.isdir(root_dir):
+        return newest_mtime
+
+    for current_root, dirnames, filenames in os.walk(root_dir):
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if dirname not in FRONTEND_SOURCE_EXCLUDED_DIRS
+        ]
+
+        for filename in filenames:
+            extension = os.path.splitext(filename)[1].lower()
+            if include_extensions and extension not in include_extensions:
+                continue
+
+            try:
+                newest_mtime = max(newest_mtime, os.path.getmtime(os.path.join(current_root, filename)))
+            except OSError:
+                continue
+
+    return newest_mtime
+
+
+def _frontend_dist_is_stale(frontend_dir: Optional[str] = None) -> bool:
+    if not _frontend_rebuild_stale_enabled():
+        return False
+
+    frontend_source_dir = _find_frontend_source_dir()
+    if not frontend_source_dir:
+        return False
+
+    frontend_dir = frontend_dir or _find_frontend_dir()
+    index_file = os.path.join(frontend_dir, "index.html") if frontend_dir else ""
+    if not frontend_dir or not os.path.isfile(index_file):
+        return True
+
+    source_mtime = _newest_mtime_in_dir(
+        frontend_source_dir,
+        include_extensions=FRONTEND_SOURCE_EXTENSIONS,
+    )
+    dist_mtime = _newest_mtime_in_dir(frontend_dir)
+    return source_mtime > dist_mtime
+
+
+def _ensure_frontend_dist_current():
+    global FRONTEND_BUILD_ATTEMPTED, FRONTEND_DIR
+
+    if not _frontend_dist_is_stale(FRONTEND_DIR):
+        return
+
+    FRONTEND_BUILD_ATTEMPTED = False
+    _build_frontend_dist_once()
+    FRONTEND_DIR = _find_frontend_dir()
+
+
+def _set_frontend_cache_headers(response: Response, file_path: str):
+    filename = os.path.basename(file_path).lower()
+    if filename in {"index.html", "sw.js", "manifest.json"}:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    else:
+        response.headers["Cache-Control"] = "no-cache, must-revalidate, max-age=0"
+    return response
+
+
+def _frontend_file_response(file_path: str):
+    return _set_frontend_cache_headers(FileResponse(file_path), file_path)
+
+
+class FrontendStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        file_path = args[0] if args else ""
+        return _set_frontend_cache_headers(response, str(file_path))
 
 
 def _get_frontend_dir():
     global FRONTEND_DIR
+
+    _ensure_frontend_dist_current()
 
     if FRONTEND_DIR and os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
         return FRONTEND_DIR
@@ -918,7 +1082,7 @@ def _resolve_frontend_file(path: str):
 def _frontend_index_response():
     index_file = _resolve_frontend_file("index.html")
     if index_file:
-        return FileResponse(index_file)
+        return _frontend_file_response(index_file)
     message = "SmartCanteen API is running. Frontend build not found."
     if FRONTEND_BUILD_ERROR:
         message = f"{message} Auto-build failed: {FRONTEND_BUILD_ERROR}"
@@ -928,7 +1092,7 @@ def _frontend_index_response():
 FRONTEND_DIR = _get_frontend_dir()
 
 if FRONTEND_DIR:
-    app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    app.mount("/app", FrontendStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -939,7 +1103,7 @@ def root():
 def favicon():
     favicon_file = _resolve_frontend_file("favicon.ico") or _resolve_frontend_file("favicon.svg")
     if favicon_file:
-        return FileResponse(favicon_file)
+        return _frontend_file_response(favicon_file)
     return Response(status_code=204)
 
 
@@ -4061,6 +4225,72 @@ def restock_alerts(
 # AUDIT LOGS  (admin only)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# System settings
+
+@app.get("/api/settings/modules", tags=["Settings"])
+def get_module_settings(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.get_current_user),
+):
+    return _serialize_module_settings(db)
+
+
+@app.put("/api/settings/modules", tags=["Settings"])
+def update_module_settings(
+    payload: schemas.ModuleSettingsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    requested_settings = {}
+    unknown_keys = []
+
+    for item in payload.modules:
+        module_key = str(item.module_key or "").strip()
+        if module_key not in SYSTEM_MODULE_KEYS:
+            unknown_keys.append(module_key or "(blank)")
+            continue
+        requested_settings[module_key] = bool(item.enabled)
+
+    if unknown_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown system module(s): {', '.join(sorted(set(unknown_keys)))}",
+        )
+
+    settings = _ensure_system_module_settings(db)
+    for module_key, enabled in requested_settings.items():
+        settings[module_key].enabled = True if module_key in LOCKED_ENABLED_MODULE_KEYS else enabled
+
+    for module_key in LOCKED_ENABLED_MODULE_KEYS:
+        if module_key in settings:
+            settings[module_key].enabled = True
+
+    enabled_keys = [
+        module_key
+        for module_key, _default_enabled in SYSTEM_MODULE_DEFAULTS
+        if bool(settings[module_key].enabled)
+    ]
+    disabled_keys = [
+        module_key
+        for module_key, _default_enabled in SYSTEM_MODULE_DEFAULTS
+        if not bool(settings[module_key].enabled)
+    ]
+
+    _add_audit_log(
+        db,
+        action="MODULE_SETTINGS_UPDATED",
+        details=(
+            f"Enabled modules: {', '.join(enabled_keys) or 'none'}; "
+            f"Disabled modules: {', '.join(disabled_keys) or 'none'}"
+        ),
+        user_id=current.id,
+        request=request,
+    )
+    db.commit()
+    return _serialize_module_settings(db)
+
+
 @app.get("/api/audit-logs", tags=["Admin"])
 def audit_logs(
     skip: int = 0, limit: int = 100,
@@ -4087,10 +4317,13 @@ def health():
 def frontend_status():
     frontend_dir = _get_frontend_dir()
     index_file = _resolve_frontend_file("index.html") if frontend_dir else None
+    frontend_source_dir = _find_frontend_source_dir()
     return {
         "frontend_dir": frontend_dir,
+        "frontend_source_dir": frontend_source_dir,
         "index_file": index_file,
         "index_exists": bool(index_file),
+        "dist_is_stale": _frontend_dist_is_stale(frontend_dir),
         "auto_build_attempted": FRONTEND_BUILD_ATTEMPTED,
         "auto_build_error": FRONTEND_BUILD_ERROR,
     }
@@ -4116,7 +4349,7 @@ def frontend_catch_all(full_path: str):
 
     requested_file = _resolve_frontend_file(full_path)
     if requested_file:
-        return FileResponse(requested_file)
+        return _frontend_file_response(requested_file)
 
     if "." in os.path.basename(full_path):
         raise HTTPException(status_code=404, detail="File not found")

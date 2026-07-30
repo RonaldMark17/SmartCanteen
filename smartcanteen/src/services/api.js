@@ -895,6 +895,7 @@ async function requestFile(path) {
 
   const apiBases = [API_BASE, API_FALLBACK_BASE].filter(Boolean);
   let lastConnectionBase = API_BASE;
+  let lastApiError = null;
 
   for (let index = 0; index < apiBases.length; index += 1) {
     const apiBase = apiBases[index];
@@ -944,6 +945,7 @@ async function requestFile(path) {
       try {
         const parsed = raw ? JSON.parse(raw) : null;
         errMsg = parsed?.detail || parsed?.message || errMsg;
+        lastApiError = buildApiError(parsed, errMsg, res.status, res.headers);
       } catch {
         if (raw) {
           errMsg = raw;
@@ -952,6 +954,11 @@ async function requestFile(path) {
 
       if (res.status === 502 || res.status === 503 || res.status === 504) {
         errMsg = `Cannot connect to server at ${apiBase}. Check your backend and API config.`;
+        lastApiError = null;
+      }
+
+      if (lastApiError) {
+        throw lastApiError;
       }
 
       throw new Error(errMsg);
@@ -982,6 +989,7 @@ async function primeOfflineData({ role } = {}) {
   const yearStart = formatLocalDateInputValue(new Date(now.getFullYear(), 0, 1));
 
   const jobs = [
+    () => request('GET', '/settings/modules'),
     () => request('GET', `/products${toQuery({ active_only: true })}`),
     () => request('GET', '/products/low-stock'),
     () =>
@@ -1309,10 +1317,26 @@ export const API = {
   getAlertState: () => request('GET', '/alert-state'),
   updateAlertState: ({ alert_type, state, signatures }) =>
     request('POST', '/alert-state', { alert_type, state, signatures }),
+  getModuleSettings: () => request('GET', '/settings/modules'),
+  updateModuleSettings: async (data) => {
+    const response = await request('PUT', '/settings/modules', data);
+    saveApiCacheEntry({
+      method: 'GET',
+      path: '/settings/modules',
+      data: response,
+    });
+    return response;
+  },
 
   getAuditLogs: () => request('GET', '/audit-logs'),
   getFinancialSchoolYears: () => request('GET', '/financial-reports/school-years'),
   createFinancialSchoolYear: (data) => request('POST', '/financial-reports/school-years', data),
+  updateFinancialSchoolYear: (schoolYearId, data) =>
+    request('PUT', `/financial-reports/school-years/${schoolYearId}`, data),
+  activateFinancialSchoolYear: (schoolYearId) =>
+    request('POST', `/financial-reports/school-years/${schoolYearId}/activate`),
+  archiveFinancialSchoolYear: (schoolYearId) =>
+    request('POST', `/financial-reports/school-years/${schoolYearId}/archive`),
   deleteFinancialSchoolYear: (schoolYearId) => request('DELETE', `/financial-reports/school-years/${schoolYearId}`),
   getFinancialSchoolYearDetail: (schoolYearId) => request('GET', `/financial-reports/school-years/${schoolYearId}`),
   cacheFinancialSchoolYearDetail: (schoolYearId, data) =>

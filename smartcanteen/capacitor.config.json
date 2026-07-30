@@ -1,6 +1,6 @@
 {
   "appId": "com.smartcanteen.app",
-  "appName": "SmartCanteen",
+  "appName": "MEALS",
   "webDir": "dist",
   "server": {
     "androidScheme": "http",

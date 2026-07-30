@@ -10,6 +10,7 @@ import {
   getPhilippineWeekday,
   parseBackendDateTime,
 } from '../utils/dateTime';
+import { getThemeToken } from '../utils/theme';
 import {
   ArchiveBoxIcon,
   ArrowDownTrayIcon,
@@ -2747,6 +2748,17 @@ export default function Predictions() {
       ),
     [event, forecast.summary.expected_revenue, forecast.weeklyTrend, weather, weeklyWeatherForecast]
   );
+  const chartPrimaryColor = getThemeToken('--sc-chart-primary', '#0f766e');
+  const chartPrimarySoftColor = getThemeToken('--sc-chart-primary-soft', 'rgba(15, 118, 110, 0.12)');
+  const chartPrimarySofterColor = getThemeToken('--sc-primary-soft', 'rgba(20, 184, 166, 0.08)');
+  const chartTextColor = getThemeToken('--sc-chart-text', '#475569');
+  const chartMutedColor = getThemeToken('--sc-chart-muted', '#64748b');
+  const chartGridColor = getThemeToken('--sc-chart-grid', 'rgba(148, 163, 184, 0.24)');
+  const chartTooltipBg = getThemeToken('--sc-chart-tooltip-bg', 'rgba(255, 255, 255, 0.98)');
+  const chartTooltipTitle = getThemeToken('--sc-chart-tooltip-title', '#0f172a');
+  const chartTooltipBody = getThemeToken('--sc-chart-tooltip-body', '#334155');
+  const chartTooltipBorder = getThemeToken('--sc-chart-tooltip-border', 'rgba(226, 232, 240, 0.95)');
+  const chartNeutralColor = getThemeToken('--sc-chart-neutral', '#94a3b8');
   const chartData = useMemo(
     () => ({
       labels: schoolWeekSalesOutlook.map((item) => item.date),
@@ -2754,17 +2766,17 @@ export default function Predictions() {
         {
           label: 'Projected Revenue',
           data: schoolWeekSalesOutlook.map((item) => item.predicted_sales),
-          borderColor: '#0f766e',
+          borderColor: chartPrimaryColor,
           backgroundColor(context) {
             const { chart } = context;
             const { ctx, chartArea } = chart;
             if (!chartArea) {
-              return 'rgba(15, 118, 110, 0.12)';
+              return chartPrimarySoftColor;
             }
             const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-            gradient.addColorStop(0, 'rgba(15, 118, 110, 0.24)');
-            gradient.addColorStop(0.55, 'rgba(20, 184, 166, 0.08)');
-            gradient.addColorStop(1, 'rgba(15, 118, 110, 0.015)');
+            gradient.addColorStop(0, chartPrimarySoftColor);
+            gradient.addColorStop(0.55, chartPrimarySofterColor);
+            gradient.addColorStop(1, 'transparent');
             return gradient;
           },
           fill: true,
@@ -2772,14 +2784,14 @@ export default function Predictions() {
           borderWidth: 3,
           pointRadius: 4.5,
           pointHoverRadius: 8,
-          pointBackgroundColor: '#ffffff',
-          pointBorderColor: '#0f766e',
+          pointBackgroundColor: chartTooltipBg,
+          pointBorderColor: chartPrimaryColor,
           pointBorderWidth: 2.5,
         },
         {
           label: 'Real History Baseline',
           data: schoolWeekSalesOutlook.map((item) => item.baseline_sales),
-          borderColor: '#94a3b8',
+          borderColor: chartNeutralColor,
           borderDash: [6, 6],
           fill: false,
           tension: 0.35,
@@ -2788,7 +2800,7 @@ export default function Predictions() {
         },
       ],
     }),
-    [schoolWeekSalesOutlook]
+    [chartNeutralColor, chartPrimaryColor, chartPrimarySoftColor, chartPrimarySofterColor, chartTooltipBg, schoolWeekSalesOutlook]
   );
   const chartOptions = useMemo(
     () => ({
@@ -2804,21 +2816,21 @@ export default function Predictions() {
           labels: {
             boxWidth: 10,
             boxHeight: 10,
-            color: '#475569',
+            color: chartTextColor,
             font: { weight: '500' },
             usePointStyle: true,
           },
         },
         tooltip: {
-          backgroundColor: 'rgba(15, 23, 42, 0.9)',
-          borderColor: 'rgba(255, 255, 255, 0.14)',
+          backgroundColor: chartTooltipBg,
+          borderColor: chartTooltipBorder,
           borderWidth: 1,
           cornerRadius: 16,
           caretPadding: 8,
           padding: 12,
           displayColors: false,
-          titleColor: '#f8fafc',
-          bodyColor: '#e2e8f0',
+          titleColor: chartTooltipTitle,
+          bodyColor: chartTooltipBody,
           titleFont: { weight: '600' },
           bodyFont: { weight: '500' },
           callbacks: {
@@ -2851,13 +2863,13 @@ export default function Predictions() {
       scales: {
         x: {
           grid: { display: false },
-          ticks: { color: '#64748b', font: { weight: '500' } },
+          ticks: { color: chartMutedColor, font: { weight: '500' } },
         },
         y: {
           border: { display: false },
-          grid: { color: 'rgba(148, 163, 184, 0.18)' },
+          grid: { color: chartGridColor },
           ticks: {
-            color: '#64748b',
+            color: chartMutedColor,
             callback(value) {
               return formatCompactCurrency(value);
             },
@@ -2865,7 +2877,7 @@ export default function Predictions() {
         },
       },
     }),
-    [schoolWeekSalesOutlook]
+    [chartGridColor, chartMutedColor, chartTextColor, chartTooltipBg, chartTooltipBody, chartTooltipBorder, chartTooltipTitle, schoolWeekSalesOutlook]
   );
 
   const hasTrendData = useMemo(
@@ -3325,7 +3337,7 @@ export default function Predictions() {
                     Monday to Friday forecast from real transaction history, school calendar notes, {outlookWeatherLabel.toLowerCase()}, and product availability.
                   </p>
                 </div>
-                <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-black text-white shadow-sm">
+                <span className="theme-emphasis-surface rounded-full px-3 py-1.5 text-xs font-black shadow-sm">
                   Demand Forecast
                 </span>
               </div>

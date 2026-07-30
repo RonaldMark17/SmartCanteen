@@ -120,7 +120,7 @@ self.addEventListener('message', (event) => {
     return;
   }
 
-  const title = payload.title || 'SmartCanteen alert';
+  const title = payload.title || 'MEALS alert';
   const options = {
     body: payload.body || '',
     tag: payload.tag || 'smartcanteen-alert',
