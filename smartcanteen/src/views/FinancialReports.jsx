@@ -1745,17 +1745,19 @@ export default function FinancialReports({ mode = 'financial' }) {
             </div>
 
             <section className="panel-card">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_220px]">
-                <label className="relative">
-                  <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="search"
-                    value={salesSearch}
-                    onChange={(event) => setSalesSearch(event.target.value)}
-                    placeholder="Search sales remarks"
-                    className="field-control min-h-12 w-full pl-10 text-base"
-                  />
-                </label>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_220px]">
+                <FormField label="Search Remarks">
+                  <div className="relative">
+                    <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="search"
+                      value={salesSearch}
+                      onChange={(event) => setSalesSearch(event.target.value)}
+                      placeholder="Search sales remarks"
+                      className="field-control min-h-12 w-full pl-10 text-base"
+                    />
+                  </div>
+                </FormField>
                 <FormField label="Filter by Date">
                   <input
                     type="date"
@@ -1982,17 +1984,19 @@ export default function FinancialReports({ mode = 'financial' }) {
             </section>
 
             <section className="panel-card">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_220px_220px]">
-                <label className="relative">
-                  <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="search"
-                    value={expenseSearch}
-                    onChange={(event) => setExpenseSearch(event.target.value)}
-                    placeholder="Search expenses"
-                    className="field-control min-h-12 w-full pl-10 text-base"
-                  />
-                </label>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-[1fr_220px_220px]">
+                <FormField label="Search Expenses">
+                  <div className="relative">
+                    <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="search"
+                      value={expenseSearch}
+                      onChange={(event) => setExpenseSearch(event.target.value)}
+                      placeholder="Search expenses"
+                      className="field-control min-h-12 w-full pl-10 text-base"
+                    />
+                  </div>
+                </FormField>
                 <FormField label="Filter by Category">
                   <select
                     value={expenseCategoryFilter}
