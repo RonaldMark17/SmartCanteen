@@ -1434,23 +1434,23 @@ export default function Layout({ children, onLogout }) {
     <div className="app-shell flex h-screen overflow-hidden bg-slate-50">
       <nav
         className={`z-30 hidden shrink-0 flex-col border-r shadow-2xl transition-[width] duration-300 lg:flex ${sidebarShellClass} ${
-          sidebarCollapsed ? 'w-24' : 'w-80'
+          sidebarCollapsed ? 'w-20' : 'w-64'
         }`}
       >
-        <div className={`${sidebarCollapsed ? 'px-4 py-5' : 'p-5'} shrink-0 transition-all duration-300`}>
+        <div className={`${sidebarCollapsed ? 'px-3 py-4' : 'p-4'} shrink-0 transition-all duration-300`}>
           <Link
             to={defaultRoute}
             className={`flex items-center rounded-2xl transition ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}
             title={sidebarCollapsed ? 'MEALS' : undefined}
           >
-            <BrandLogo className="h-11 w-11 rounded-2xl" />
+            <BrandLogo className="h-10 w-10 rounded-2xl" />
             {!sidebarCollapsed && (
               <div className="min-w-0">
                 <h2 className={`truncate text-lg font-black tracking-tight ${sidebarBrandTitleClass}`}>
                   MEALS
                 </h2>
-                <p className={`mt-0.5 text-[10px] font-bold uppercase tracking-[0.22em] ${sidebarBrandMetaClass}`}>
-                  Operations Workspace
+                <p className={`mt-0.5 text-[10px] font-bold uppercase tracking-wider ${sidebarBrandMetaClass}`}>
+                  OPERATIONS WORKSPACE
                 </p>
               </div>
             )}
@@ -1458,7 +1458,7 @@ export default function Layout({ children, onLogout }) {
 
         </div>
 
-        <div className={`custom-scrollbar flex-1 overflow-y-auto ${sidebarCollapsed ? 'px-3' : 'px-4'} transition-all duration-300`}>
+        <div className={`custom-scrollbar flex-1 overflow-y-auto ${sidebarCollapsed ? 'px-2' : 'px-3'} transition-all duration-300`}>
           <div className="space-y-2">
             {visibleNavItems.map((item) => {
               const active = isActive(item.path);
@@ -1469,8 +1469,8 @@ export default function Layout({ children, onLogout }) {
                   to={item.path}
                   title={sidebarCollapsed ? item.name : undefined}
                   aria-current={active ? 'page' : undefined}
-                  className={`sidebar-item ${active ? 'sidebar-item-active' : ''} group relative flex items-center rounded-xl border py-3 transition-all duration-200 ${getSidebarNavLinkClass(active)} ${
-                    sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-3.5 pr-8'
+                  className={`sidebar-item ${active ? 'sidebar-item-active' : ''} group relative flex items-center rounded-xl border transition-all duration-200 ${getSidebarNavLinkClass(active)} ${
+                    sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-3.5 py-3 pr-8'
                   }`}
                 >
                   <item.icon
@@ -1489,7 +1489,7 @@ export default function Layout({ children, onLogout }) {
                   {active && (
                     <span
                       className={`sidebar-active-dot absolute rounded-full ${
-                        sidebarCollapsed ? 'right-2 top-2 h-2 w-2' : 'right-3 top-1/2 h-7 w-1.5 -translate-y-1/2'
+                        sidebarCollapsed ? 'right-1.5 top-1.5 h-2 w-2' : 'right-3 top-1/2 h-7 w-1.5 -translate-y-1/2'
                       } ${darkMode ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]' : 'bg-emerald-600 shadow-[0_0_8px_rgba(16,185,129,0.3)]'}`}
                     />
                   )}
@@ -1503,8 +1503,8 @@ export default function Layout({ children, onLogout }) {
           <button
             onClick={requestLogout}
             title={sidebarCollapsed ? 'Logout' : undefined}
-            className={`flex w-full items-center rounded-xl border border-transparent py-3 text-sm font-bold transition-all ${sidebarLogoutClass} ${
-              sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-4'
+            className={`flex w-full items-center rounded-xl border border-transparent py-2.5 text-sm font-semibold transition-all ${sidebarLogoutClass} ${
+              sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'
             }`}
           >
             <ArrowRightOnRectangleIcon className="h-5 w-5" />
@@ -2346,7 +2346,7 @@ export default function Layout({ children, onLogout }) {
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <nav className={`mobile-sidebar fixed inset-y-0 left-0 flex w-full flex-col shadow-xl animate-in slide-in-from-left duration-300 sm:w-80 ${mobileSidebarShellClass}`}>
+          <nav className={`mobile-sidebar fixed inset-y-0 left-0 flex w-full flex-col shadow-xl animate-in slide-in-from-left duration-300 sm:w-64 ${mobileSidebarShellClass}`}>
             <div className="flex items-center justify-between px-4 py-4">
               <div className="flex min-w-0 items-center gap-3">
                 <BrandLogo className="h-10 w-10" />
