@@ -675,6 +675,7 @@ async function loadAudit() {
     tbody.innerHTML = logs.map((l) => `
       <tr>
         <td>${new Date(l.timestamp).toLocaleString("en-PH")}</td>
+        <td><span class="badge" style="text-transform: uppercase; font-size: 11px; font-weight: 700;">${l.user_type || "System"}</span></td>
         <td><span class="audit-action">${l.action}</span></td>
         <td>${l.details || "—"}</td>
         <td>${l.ip_address || "—"}</td>

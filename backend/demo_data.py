@@ -581,18 +581,21 @@ def seed_demo_canteen_database(db: Session, *, reset: bool = False):
     db.add_all([
         models.AuditLog(
             user_id=users_by_role["admin"].id,
+            user_type="admin",
             action="DEMO_DATABASE_REBUILT",
             details="Loaded realistic SmartCanteen products, sales, weather, and school event history.",
             timestamp=now_utc,
         ),
         models.AuditLog(
             user_id=users_by_role["staff"].id,
+            user_type="staff",
             action="INVENTORY_REVIEW",
             details="Flagged Chicken Tinola, Calamansi Juice, Mango Float, and Puto Cheese for restock.",
             timestamp=now_utc - timedelta(hours=1),
         ),
         models.AuditLog(
             user_id=users_by_role["cashier"].id,
+            user_type="cashier",
             action="POS_SHIFT_CLOSED",
             details="Closed latest school-day cashier shift with demo sales records.",
             timestamp=now_utc - timedelta(hours=3),

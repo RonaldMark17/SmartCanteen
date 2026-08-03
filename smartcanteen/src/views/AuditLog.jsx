@@ -98,9 +98,29 @@ function getActionTone(action) {
   return 'bg-slate-100 text-slate-700 ring-slate-200';
 }
 
+function getUserTypeTone(userType) {
+  const value = String(userType || '').toLowerCase();
+
+  if (value.includes('admin')) {
+    return 'bg-purple-50 text-purple-700 ring-purple-200/80';
+  }
+  if (value.includes('cashier')) {
+    return 'bg-emerald-50 text-emerald-700 ring-emerald-200/80';
+  }
+  if (value.includes('staff')) {
+    return 'bg-sky-50 text-sky-700 ring-sky-200/80';
+  }
+  if (value.includes('system')) {
+    return 'bg-slate-100 text-slate-600 ring-slate-200/80';
+  }
+
+  return 'bg-amber-50 text-amber-700 ring-amber-200/80';
+}
+
 function getAuditSearchText(log) {
   return [
     log?.timestamp,
+    log?.user_type,
     log?.action,
     log?.details,
     log?.ip_address,
@@ -395,14 +415,15 @@ export default function AuditLog() {
             </div>
           </div>
 
-          <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-auto md:block">
-            <table className="min-w-full text-left text-sm text-slate-600">
+          <div className="custom-scrollbar block w-full min-h-0 flex-1 overflow-x-auto overflow-y-auto">
+            <table className="min-w-[750px] w-full text-left text-sm text-slate-600">
               <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">
                 <tr>
                   <th className="px-6 py-4">Timestamp</th>
+                  <th className="px-6 py-4">User Type</th>
                   <th className="px-6 py-4">Action</th>
                   <th className="px-6 py-4">Details</th>
-                  <th className="px-6 py-4">Real IP Address</th>
+                  <th className="px-6 py-4">IP Address</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -410,6 +431,7 @@ export default function AuditLog() {
                   Array.from({ length: 7 }, (_, index) => (
                     <tr key={`audit-skeleton-${index}`}>
                       <td className="px-6 py-4"><Skeleton className="h-4 w-36" /></td>
+                      <td className="px-6 py-4"><Skeleton className="h-7 w-20 rounded-full" /></td>
                       <td className="px-6 py-4"><Skeleton className="h-7 w-28 rounded-full" /></td>
                       <td className="px-6 py-4"><SkeletonText lines={['h-4 w-full', 'h-4 w-4/5']} /></td>
                       <td className="px-6 py-4"><Skeleton className="h-4 w-24" /></td>
@@ -417,7 +439,7 @@ export default function AuditLog() {
                   ))
                 ) : filteredLogs.length === 0 ? (
                   <tr>
-                    <td colSpan="4" className="text-center py-12 text-slate-500">
+                    <td colSpan="5" className="text-center py-12 text-slate-500">
                       {logs.length === 0 ? 'No audit activity found.' : 'No activity matches these filters.'}
                     </td>
                   </tr>
@@ -426,7 +448,12 @@ export default function AuditLog() {
                     <td className="whitespace-nowrap px-6 py-4 font-semibold text-slate-700">
                       {formatPhilippineDateTime(log.timestamp)}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ring-1 ${getUserTypeTone(log.user_type)}`}>
+                        {log.user_type || 'System'}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4">
                       <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ring-1 ${getActionTone(log.action)}`}>
                         {formatActionLabel(log.action)}
                       </span>
@@ -441,46 +468,6 @@ export default function AuditLog() {
                 ))}
               </tbody>
             </table>
-          </div>
-
-          <div className="p-4 md:hidden">
-            {loading ? (
-              <div className="space-y-3">
-                {Array.from({ length: 5 }, (_, index) => (
-                  <div key={`audit-mobile-skeleton-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <Skeleton className="h-3 w-32" />
-                    <Skeleton className="mt-3 h-7 w-28 rounded-full" />
-                    <SkeletonText lines={['h-4 w-full', 'h-4 w-5/6']} className="mt-3" />
-                    <Skeleton className="mt-3 h-3 w-24" />
-                  </div>
-                ))}
-              </div>
-            ) : filteredLogs.length === 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                {logs.length === 0 ? 'No audit activity found.' : 'No activity matches these filters.'}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {paginatedLogs.map((log, index) => (
-                  <article key={log.id || `${log.timestamp}-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                        {formatPhilippineDateTime(log.timestamp)}
-                      </div>
-                      <ComputerDesktopIcon className="h-4 w-4 shrink-0 text-slate-300" />
-                    </div>
-                    <div className={`mt-3 inline-flex rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-widest ring-1 ${getActionTone(log.action)}`}>
-                      {formatActionLabel(log.action)}
-                    </div>
-                    <div className="mt-3 text-sm leading-6 text-slate-800">{log.details || 'N/A'}</div>
-                    <div className="mt-3 text-xs text-slate-400">
-                      <span className="font-bold uppercase tracking-widest">Real IP</span>{' '}
-                      <span className="font-mono">{log.ip_address || 'N/A'}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
           </div>
 
           {!loading && filteredLogs.length > 0 && (

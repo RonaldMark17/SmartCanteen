@@ -286,10 +286,23 @@ def _add_audit_log(
     action: str,
     details: Optional[str] = None,
     user_id: Optional[int] = None,
+    user_type: Optional[str] = None,
     request: Optional[Request] = None,
 ):
+    resolved_user_type = user_type
+    if not resolved_user_type:
+        if user_id:
+            user = db.query(models.User).filter(models.User.id == user_id).first()
+            if user and user.role:
+                resolved_user_type = user.role
+            else:
+                resolved_user_type = "user"
+        else:
+            resolved_user_type = "system"
+
     db.add(models.AuditLog(
         user_id=user_id,
+        user_type=resolved_user_type,
         action=action,
         details=details,
         ip_address=_get_client_ip(request),
@@ -812,7 +825,34 @@ def _ensure_authenticator_recovery_request_columns():
             print(f"Authenticator recovery request column setup skipped: {exc}")
 
 
+def _ensure_audit_logs_user_type_column():
+    column_statements = [
+        ("user_type", "ALTER TABLE audit_logs ADD COLUMN user_type VARCHAR"),
+    ]
+    try:
+        with engine.begin() as connection:
+            existing_columns = {
+                row["name"]
+                for row in connection.execute(text("PRAGMA table_info(audit_logs)")).mappings()
+            }
+            if existing_columns:
+                for column_name, statement in column_statements:
+                    if column_name not in existing_columns:
+                        connection.execute(text(statement))
+    except Exception:
+        try:
+            with engine.begin() as connection:
+                for _column_name, statement in column_statements:
+                    try:
+                        connection.execute(text(statement))
+                    except Exception:
+                        pass
+        except Exception as exc:
+            print(f"Audit log user_type column setup skipped: {exc}")
+
+
 _ensure_user_authenticator_columns()
+_ensure_audit_logs_user_type_column()
 _ensure_analytics_indexes()
 _ensure_product_quick_sale_columns()
 _ensure_inventory_unit_columns()
@@ -4297,11 +4337,31 @@ def audit_logs(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.require_admin),
 ):
-    return (
+    logs = (
         db.query(models.AuditLog)
         .order_by(models.AuditLog.timestamp.desc())
         .offset(skip).limit(limit).all()
     )
+    result = []
+    for log in logs:
+        utype = log.user_type
+        if not utype:
+            if log.user and log.user.role:
+                utype = log.user.role
+            elif log.user_id:
+                utype = "user"
+            else:
+                utype = "system"
+        result.append({
+            "id": log.id,
+            "user_id": log.user_id,
+            "user_type": utype,
+            "action": log.action,
+            "details": log.details,
+            "ip_address": log.ip_address,
+            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+        })
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -717,10 +717,23 @@ def _add_audit_log(
     action: str,
     details: Optional[str] = None,
     user_id: Optional[int] = None,
+    user_type: Optional[str] = None,
     request: Optional[Request] = None,
 ):
+    resolved_user_type = user_type
+    if not resolved_user_type:
+        if user_id:
+            user = db.query(models.User).filter(models.User.id == user_id).first()
+            if user and user.role:
+                resolved_user_type = user.role
+            else:
+                resolved_user_type = "user"
+        else:
+            resolved_user_type = "system"
+
     db.add(models.AuditLog(
         user_id=user_id,
+        user_type=resolved_user_type,
         action=action,
         details=details,
         ip_address=_get_client_ip(request),

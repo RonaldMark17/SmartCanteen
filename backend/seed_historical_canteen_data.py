@@ -850,11 +850,12 @@ def seed_historical_data(database_path: Path, start_day: date, end_day: date) ->
 
         cur.execute(
             """
-            INSERT INTO audit_logs (user_id, action, details, ip_address, timestamp)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO audit_logs (user_id, user_type, action, details, ip_address, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 users["admin"],
+                "admin",
                 "HISTORICAL_DEMO_DATA_ADDED",
                 (
                     f"Added realistic school canteen history from {start_day.isoformat()} "

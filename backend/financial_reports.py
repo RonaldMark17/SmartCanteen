@@ -1209,11 +1209,24 @@ def _audit_log(
     user_id: int,
     action: str,
     details: str,
+    user_type: Optional[str] = None,
     request: Optional[Request] = None,
 ) -> None:
+    resolved_user_type = user_type
+    if not resolved_user_type:
+        if user_id:
+            user = db.query(models.User).filter(models.User.id == user_id).first()
+            if user and user.role:
+                resolved_user_type = user.role
+            else:
+                resolved_user_type = "user"
+        else:
+            resolved_user_type = "system"
+
     db.add(
         models.AuditLog(
             user_id=user_id,
+            user_type=resolved_user_type,
             action=action,
             details=details,
             ip_address=request.client.host if request and request.client else None,
@@ -1586,6 +1599,41 @@ def _build_fund_monitoring_cell_updates(
     return updates, next_balances
 
 
+def _preserve_template_drawings_and_media(export_path: str, template_path: str) -> None:
+    if not os.path.isfile(template_path) or not os.path.isfile(export_path):
+        return
+
+    temp_zip_path = export_path + ".tmp"
+    try:
+        with ZipFile(template_path, "r") as tmpl_zip:
+            tmpl_media_files = {
+                f: tmpl_zip.read(f)
+                for f in tmpl_zip.namelist()
+                if f.startswith("xl/media/") or f.startswith("xl/drawings/")
+            }
+
+        if not tmpl_media_files:
+            return
+
+        with ZipFile(export_path, "r") as exp_zip, ZipFile(temp_zip_path, "w", compression=ZIP_DEFLATED) as new_zip:
+            for item in exp_zip.infolist():
+                if item.filename.startswith("xl/media/") or item.filename.startswith("xl/drawings/"):
+                    continue
+                new_zip.writestr(item, exp_zip.read(item.filename))
+
+            for filename, data in tmpl_media_files.items():
+                new_zip.writestr(filename, data)
+
+        os.replace(temp_zip_path, export_path)
+    except Exception as exc:
+        print(f"Template media preservation skipped: {exc}")
+        if os.path.exists(temp_zip_path):
+            try:
+                os.remove(temp_zip_path)
+            except Exception:
+                pass
+
+
 def _build_school_year_workbook_export(
     db: Session,
     school_year: models.SchoolYear,
@@ -1664,6 +1712,7 @@ def _build_school_year_workbook_export(
         workbook.calculation.fullCalcOnLoad = True
         workbook.calculation.forceFullCalc = True
         workbook.save(export_path)
+        _preserve_template_drawings_and_media(export_path, template_path)
     except Exception:
         _remove_file_if_exists(export_path)
         raise
