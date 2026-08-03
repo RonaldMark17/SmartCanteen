@@ -1094,7 +1094,7 @@ export default function Dashboard() {
             </span>
             <h2 className="text-base font-bold text-slate-900 dark:text-white">Financial Comparison</h2>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto custom-scrollbar">
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
                 <tr>

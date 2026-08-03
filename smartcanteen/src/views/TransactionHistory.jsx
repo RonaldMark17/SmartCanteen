@@ -317,8 +317,8 @@ export default function TransactionHistory() {
       </div>
 
       <div className="data-card flex shrink-0 flex-col md:min-h-0 md:flex-1 md:shrink">
-        <div className="custom-scrollbar hidden min-h-0 flex-1 overflow-y-auto md:block">
-          <table className="w-full text-left text-sm text-slate-600">
+        <div className="custom-scrollbar block w-full min-h-0 flex-1 overflow-x-auto overflow-y-auto">
+          <table className="w-full min-w-[700px] text-left text-sm text-slate-600">
             <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-500">
               <tr>
                 <th className="px-6 py-4">TXN ID</th>

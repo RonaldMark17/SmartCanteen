@@ -1612,14 +1612,26 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
                 if f.startswith("xl/media/") or f.startswith("xl/drawings/")
             }
 
-        if not tmpl_media_files:
-            return
-
         with ZipFile(export_path, "r") as exp_zip, ZipFile(temp_zip_path, "w", compression=ZIP_DEFLATED) as new_zip:
             for item in exp_zip.infolist():
                 if item.filename.startswith("xl/media/") or item.filename.startswith("xl/drawings/"):
                     continue
-                new_zip.writestr(item, exp_zip.read(item.filename))
+                content = exp_zip.read(item.filename)
+                if item.filename == "[Content_Types].xml":
+                    content_str = content.decode("utf-8")
+                    if 'Extension="jpg"' not in content_str:
+                        if '<Default Extension="jpeg"' in content_str:
+                            content_str = content_str.replace(
+                                '<Default Extension="jpeg"',
+                                '<Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="jpeg"'
+                            )
+                        else:
+                            content_str = content_str.replace(
+                                "</Types>",
+                                '<Default Extension="jpg" ContentType="image/jpeg"/></Types>'
+                            )
+                        content = content_str.encode("utf-8")
+                new_zip.writestr(item, content)
 
             for filename, data in tmpl_media_files.items():
                 new_zip.writestr(filename, data)

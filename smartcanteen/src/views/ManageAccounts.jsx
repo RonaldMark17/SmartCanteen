@@ -1008,8 +1008,8 @@ export default function ManageAccounts() {
           </div>
         </div>
 
-        <div className="custom-scrollbar hidden overflow-x-auto md:block">
-          <table className="min-w-full text-left text-sm text-slate-600">
+        <div className="custom-scrollbar block w-full overflow-x-auto">
+          <table className="min-w-[800px] w-full text-left text-sm text-slate-600">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-6 py-4">Account</th>

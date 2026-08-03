@@ -1768,8 +1768,8 @@ export default function FinancialReports({ mode = 'financial' }) {
                 </FormField>
               </div>
 
-              <div className="mt-5 overflow-hidden rounded-lg border border-slate-200">
-                <table className="w-full text-left text-sm">
+              <div className="mt-5 overflow-x-auto custom-scrollbar rounded-lg border border-slate-200">
+                <table className="w-full min-w-[700px] text-left text-sm">
                   <thead className="bg-slate-50 text-xs font-black uppercase tracking-widest text-slate-500">
                     <tr>
                       <th className="px-4 py-3">Date</th>
@@ -2021,8 +2021,8 @@ export default function FinancialReports({ mode = 'financial' }) {
                 </FormField>
               </div>
 
-              <div className="mt-5 overflow-hidden rounded-lg border border-slate-200">
-                <table className="w-full text-left text-sm">
+              <div className="mt-5 overflow-x-auto custom-scrollbar rounded-lg border border-slate-200">
+                <table className="w-full min-w-[850px] text-left text-sm">
                   <thead className="bg-slate-50 text-xs font-black uppercase tracking-widest text-slate-500">
                     <tr>
                       <th className="px-4 py-3">Type</th>
@@ -2151,8 +2151,8 @@ export default function FinancialReports({ mode = 'financial' }) {
               ))}
             </div>
 
-            <div className="mt-6 overflow-hidden rounded-lg border border-slate-200">
-              <table className="w-full text-left text-sm">
+            <div className="mt-6 overflow-x-auto custom-scrollbar rounded-lg border border-slate-200">
+              <table className="w-full min-w-[650px] text-left text-sm">
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {generatedReportPayload.rows.map((row, rowIndex) => (
                     <tr key={`${row[0]}-${rowIndex}`}>
@@ -2233,8 +2233,8 @@ export default function FinancialReports({ mode = 'financial' }) {
               <CalendarDaysIcon className="h-7 w-7 text-slate-400" />
             </div>
 
-            <div className="mt-5 overflow-hidden rounded-lg border border-slate-200">
-              <table className="w-full text-left text-sm">
+            <div className="mt-5 overflow-x-auto custom-scrollbar rounded-lg border border-slate-200">
+              <table className="w-full min-w-[750px] text-left text-sm">
                 <thead className="bg-slate-50 text-xs font-black uppercase tracking-widest text-slate-500">
                   <tr>
                     <th className="px-4 py-3">School Year</th>

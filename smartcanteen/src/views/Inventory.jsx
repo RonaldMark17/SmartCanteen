@@ -270,8 +270,8 @@ function InventorySection({
         </span>
       </div>
 
-      <div className="custom-scrollbar hidden overflow-x-auto md:block">
-        <table className="w-full text-left text-sm text-slate-600">
+      <div className="custom-scrollbar block w-full overflow-x-auto">
+        <table className="w-full min-w-[750px] text-left text-sm text-slate-600">
           <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
             <tr>
               <th className="px-6 py-4">ID</th>

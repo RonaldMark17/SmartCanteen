@@ -3566,7 +3566,7 @@ export default function Predictions() {
           ) : (
             <div className="space-y-4">
               {prepViewMode === 'table' ? (
-                <div className="overflow-x-auto rounded-[20px] bg-white shadow-sm ring-1 ring-slate-100">
+                <div className="overflow-x-auto custom-scrollbar rounded-[20px] bg-white shadow-sm ring-1 ring-slate-100">
                   <table className="min-w-[900px] w-full border-collapse text-left">
                     <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-widest text-slate-500">
                       <tr>
