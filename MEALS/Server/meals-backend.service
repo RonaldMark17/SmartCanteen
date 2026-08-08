@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=www-data
 Group=www-data
-WorkingDirectory=/var/www/meals/backend
+WorkingDirectory=/var/www/meals
 Environment="PATH=/var/www/meals/venv/bin"
 Environment="JWT_SECRET_KEY=smartcanteen-production-secret-key-replace-with-secure-32-char-random-string"
 Environment="DATABASE_URL=sqlite:////var/www/meals/canteen.db"
