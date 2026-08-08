@@ -483,83 +483,261 @@ function buildStatementReport(selectedReport, draftBeginningCash, draftCurrentSa
 }
 
 function buildPrintableHtml(schoolYearName, report, statement, allocations = []) {
-  const expenseRows = (report.expenses || [])
+  const defaultCategories = [
+    'Transportation/Freight',
+    'Gas',
+    'Supplies',
+    'Helpers',
+    'Repair',
+    'Purchase from the looses of tools',
+    'Other expenses',
+  ];
+
+  const expenseMap = new Map();
+  (report.expenses || []).forEach((exp) => {
+    expenseMap.set(exp.category, toMoney(exp.amount));
+  });
+
+  const expenseRows = defaultCategories
     .map(
-      (expense) => `
+      (cat) => `
         <tr>
-          <td>${expense.category}</td>
-          <td style="text-align:right;">${formatCurrency(expense.amount)}</td>
-        </tr>
-      `
-    )
-    .join('');
-  const allocationRows = allocations
-    .map(
-      (allocation) => `
-        <tr>
-          <td>${allocation.label}</td>
-          <td style="text-align:right;">${formatPercent(allocation.percentage)}</td>
-          <td style="text-align:right;">${formatCurrency(allocation.amount)}</td>
-          <td style="text-align:right;">${formatCurrency(allocation.fund_current_balance ?? allocation.currentBalance ?? 0)}</td>
+          <td style="padding-left: 24px; border: 1px solid #334155;">${cat}</td>
+          <td style="text-align: right; border: 1px solid #334155; font-family: monospace;">${formatCurrency(expenseMap.get(cat) || 0)}</td>
         </tr>
       `
     )
     .join('');
 
+  // Map 6 standard allocations
+  const allocMap = new Map();
+  allocations.forEach((a) => {
+    if (a.category_key) allocMap.set(a.category_key, a);
+  });
+
+  const stdAllocKeys = [
+    { key: 'supplementary_feeding', label: 'SUPPLEMENTARY FEEDING 35%', rate: 0.35 },
+    { key: 'school_clinic', label: 'SCHOOL CLINIC 5%', rate: 0.05 },
+    { key: 'faculty_student_development', label: "FACULTY STUDENTS DEV'T FUND 15%", rate: 0.15 },
+    { key: 'school_operating_fund', label: 'SCHOOL OPERATING FUND 25%', rate: 0.25 },
+    { key: 'he_instructional_fund', label: 'H.E. INSTRUCTIONAL FUND 10%', rate: 0.10 },
+    { key: 'revolving_capital_fund', label: 'REVOLVING CAPITAL FUND 10%', rate: 0.10 },
+  ];
+
+  const netProfit = statement.netProfit || 0;
+
+  const prevBalCells = stdAllocKeys.map(k => {
+    const item = allocMap.get(k.key);
+    const val = item?.opening_balance ?? item?.openingBalance ?? 0;
+    return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">${formatCurrency(val)}</td>`;
+  }).join('');
+
+  const netIncCells = stdAllocKeys.map(k => {
+    const item = allocMap.get(k.key);
+    const val = item?.amount ?? (netProfit * k.rate);
+    return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">${formatCurrency(val)}</td>`;
+  }).join('');
+
+  const expMonthCells = stdAllocKeys.map(() => `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">₱0.00</td>`).join('');
+  const totExpCells = stdAllocKeys.map(() => `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">₱0.00</td>`).join('');
+
+  const currBalCells = stdAllocKeys.map(k => {
+    const item = allocMap.get(k.key);
+    const curBal = item?.fund_current_balance ?? item?.currentBalance ?? ((item?.opening_balance || 0) + (netProfit * k.rate));
+    return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace; font-weight: bold;">${formatCurrency(curBal)}</td>`;
+  }).join('');
+
+  const bankCells = stdAllocKeys.map(() => `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">₱0.00</td>`).join('');
+
   return `
+    <!DOCTYPE html>
     <html>
       <head>
+        <meta charset="utf-8" />
         <title>${schoolYearName} - ${report.month_label}</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 32px; color: #0f172a; }
-          h1, h2 { margin: 0 0 10px; }
-          p { margin: 0 0 8px; color: #475569; }
-          .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 24px 0; }
-          .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
-          .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: #64748b; font-weight: 700; }
-          .value { font-size: 24px; font-weight: 800; margin-top: 6px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 14px; }
-          th, td { border: 1px solid #e2e8f0; padding: 10px 12px; font-size: 14px; }
-          th { background: #f8fafc; text-align: left; }
-          .section { margin-top: 24px; }
+          @page {
+            size: portrait;
+            margin: 10mm 12mm;
+          }
+          body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 16px;
+            color: #0f172a;
+            background: #fff;
+            font-size: 11px;
+            line-height: 1.3;
+          }
+          .header {
+            text-align: center;
+            position: relative;
+            margin-bottom: 16px;
+          }
+          .header-logo {
+            position: absolute;
+            left: 20px;
+            top: 0;
+            width: 75px;
+            height: 75px;
+            object-fit: contain;
+          }
+          .header-title-1 { font-size: 12px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; }
+          .header-title-2 { font-size: 13px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; }
+          .header-sub { font-size: 10px; font-weight: bold; color: #334155; margin-bottom: 1px; }
+          .report-main-title { font-size: 13px; font-weight: 900; text-transform: uppercase; margin-top: 10px; margin-bottom: 2px; text-decoration: underline; }
+          .report-month-title { font-size: 11px; font-weight: bold; margin-bottom: 14px; }
+          
+          table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 10.5px; }
+          th, td { padding: 4px 6px; }
+          .section-heading { font-weight: bold; font-size: 11px; background: #f1f5f9; text-transform: uppercase; }
+          
+          .border-table th, .border-table td { border: 1px solid #334155; }
+          .border-table th { background: #f8fafc; font-weight: bold; text-align: center; font-size: 9.5px; }
+
+          .sig-table { margin-top: 24px; border: none; width: 100%; }
+          .sig-table td { border: none; padding: 4px 8px; vertical-align: top; }
+          .sig-line { margin-top: 35px; font-weight: bold; text-decoration: underline; font-size: 11px; }
+          .sig-role { font-size: 10px; color: #475569; }
+
+          @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+          }
         </style>
       </head>
       <body>
-        <h1>${schoolYearName} Monthly Financial Statement</h1>
-        <p>${report.month_label}</p>
-        <div class="grid">
-          <div class="card"><div class="label">Beginning Cash</div><div class="value">${formatCurrency(statement.beginningCash)}</div></div>
-          <div class="card"><div class="label">Current Sales</div><div class="value">${formatCurrency(statement.currentSales)}</div></div>
-          <div class="card"><div class="label">Gross Income</div><div class="value">${formatCurrency(statement.grossIncome)}</div></div>
-          <div class="card"><div class="label">Current Balance</div><div class="value">${formatCurrency(statement.currentBalance)}</div></div>
+        <div class="header">
+          <img src="/logo.png" alt="Logo" class="header-logo" onerror="this.style.display='none'" />
+          <div class="header-title-1">Republic of the Philippines</div>
+          <div class="header-title-2">Department of Education</div>
+          <div class="header-sub">REGION IV-A CALABARZON</div>
+          <div class="header-sub">SCHOOLS DIVISION OFFICE OF LAGUNA</div>
+          <div class="header-sub">BAY SUB-OFFICE</div>
+          <div class="header-sub" style="font-size: 11px; margin-bottom: 4px;">BAY CENTRAL ELEMENTARY SCHOOL</div>
+          <div class="report-main-title">STATEMENT OF MONTHLY CANTEEN OPERATION</div>
+          <div class="report-month-title">For the Month of ${report.month_label}</div>
         </div>
 
-        <div class="section">
-          <h2>Statement Details</h2>
-          <table>
-            <tbody>
-              <tr><td>Cost of Sales</td><td style="text-align:right;">${formatCurrency(statement.costOfSales)}</td></tr>
-              <tr><td>Operation Expenses</td><td style="text-align:right;">${formatCurrency(statement.operationExpenses)}</td></tr>
-              <tr><td>Net Profit</td><td style="text-align:right;">${formatCurrency(statement.netProfit)}</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <table class="border-table">
+          <tbody>
+            <tr>
+              <td colspan="2" style="font-weight: bold; background: #f8fafc;">Operating Statement</td>
+            </tr>
+            <tr>
+              <td style="width: 70%;">Cash on Hand from previous net</td>
+              <td style="text-align: right; font-family: monospace;">${formatCurrency(statement.beginningCash)}</td>
+            </tr>
+            <tr>
+              <td>Current Sales</td>
+              <td style="text-align: right; font-family: monospace;">${formatCurrency(statement.currentSales)}</td>
+            </tr>
+            <tr>
+              <td>Less: Cost of Sales</td>
+              <td style="text-align: right; font-family: monospace;">${formatCurrency(statement.costOfSales)}</td>
+            </tr>
+            <tr style="font-weight: bold; background: #f1f5f9;">
+              <td>Gross income of the Operation</td>
+              <td style="text-align: right; font-family: monospace;">${formatCurrency(statement.grossIncome)}</td>
+            </tr>
+            <tr>
+              <td colspan="2" style="font-weight: bold; background: #f8fafc;">Less: Operation Expenses</td>
+            </tr>
+            ${expenseRows}
+            <tr style="font-weight: bold;">
+              <td>Total Expenses</td>
+              <td style="text-align: right; font-family: monospace;">${formatCurrency(statement.operationExpenses)}</td>
+            </tr>
+            <tr style="font-weight: bold; background: #e2e8f0; font-size: 11.5px;">
+              <td>Net Profit</td>
+              <td style="text-align: right; font-family: monospace;">${formatCurrency(statement.netProfit)}</td>
+            </tr>
+            <tr>
+              <td colspan="2" style="font-weight: bold; background: #f8fafc;">Additional Income</td>
+            </tr>
+            <tr>
+              <td style="padding-left: 24px;">Catering / Commission / Others</td>
+              <td style="text-align: right; font-family: monospace;">₱0.00</td>
+            </tr>
+            <tr style="font-weight: bold; background: #cbd5e1; font-size: 12px;">
+              <td>Over All Net Profit</td>
+              <td style="text-align: right; font-family: monospace;">${formatCurrency(statement.netProfit)}</td>
+            </tr>
+          </tbody>
+        </table>
 
-        <div class="section">
-          <h2>Operation Expenses</h2>
-          <table>
-            <thead><tr><th>Category</th><th>Amount</th></tr></thead>
-            <tbody>${expenseRows}</tbody>
-          </table>
+        <div style="font-weight: bold; font-size: 11px; margin-top: 14px; margin-bottom: 6px; text-transform: uppercase;">
+          Fund Allocation Monitoring
         </div>
+        <table class="border-table">
+          <thead>
+            <tr>
+              <th style="width: 16%;">${stdAllocKeys[0].label}</th>
+              <th style="width: 16%;">${stdAllocKeys[1].label}</th>
+              <th style="width: 20%;">${stdAllocKeys[2].label}</th>
+              <th style="width: 16%;">${stdAllocKeys[3].label}</th>
+              <th style="width: 16%;">${stdAllocKeys[4].label}</th>
+              <th style="width: 16%;">${stdAllocKeys[5].label}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colspan="6" style="font-weight: bold; background: #f8fafc;">Balance in previous month</td>
+            </tr>
+            <tr>${prevBalCells}</tr>
+            <tr>
+              <td colspan="6" style="font-weight: bold; background: #f8fafc;">Interest on the bank</td>
+            </tr>
+            <tr>
+              <td style="text-align: right; font-family: monospace;">₱0.00</td>
+              <td style="text-align: right; font-family: monospace;">₱0.00</td>
+              <td style="text-align: right; font-family: monospace;">₱0.00</td>
+              <td style="text-align: right; font-family: monospace;">₱0.00</td>
+              <td style="text-align: right; font-family: monospace;">₱0.00</td>
+              <td style="text-align: right; font-family: monospace;">₱0.00</td>
+            </tr>
+            <tr>
+              <td colspan="6" style="font-weight: bold; background: #f8fafc;">Net Income for the Month</td>
+            </tr>
+            <tr>${netIncCells}</tr>
+            <tr>
+              <td colspan="6" style="font-weight: bold; background: #f8fafc;">Expenses for the Month</td>
+            </tr>
+            <tr>${expMonthCells}</tr>
+            <tr>
+              <td colspan="6" style="font-weight: bold; background: #f8fafc;">Total Current Expenses</td>
+            </tr>
+            <tr>${totExpCells}</tr>
+            <tr style="font-weight: bold; background: #e2e8f0;">
+              <td colspan="6" style="font-weight: bold;">Current Balance</td>
+            </tr>
+            <tr>${currBalCells}</tr>
+            <tr>
+              <td colspan="6" style="font-weight: bold; background: #f8fafc;">Cash on Bank</td>
+            </tr>
+            <tr>${bankCells}</tr>
+          </tbody>
+        </table>
 
-        <div class="section">
-          <h2>Fund Allocation</h2>
-          <table>
-            <thead><tr><th>Fund</th><th>Rate</th><th>Allocation</th><th>Current Balance</th></tr></thead>
-            <tbody>${allocationRows}</tbody>
-          </table>
-        </div>
+        <table class="sig-table">
+          <tr>
+            <td style="width: 38%;">
+              <div>Prepared by:</div>
+              <div class="sig-line">MYRNA A. DE MESA</div>
+              <div class="sig-role">Canteen Manager</div>
+            </td>
+            <td style="width: 34%; text-align: center;">
+              <div>Checked by:</div>
+              <div class="sig-line">MARICAR A. AFUANG</div>
+              <div class="sig-role">School Head</div>
+            </td>
+            <td style="width: 28%; text-align: right;">
+              <div>Audited by:</div>
+              <div class="sig-line">KATHLEEN B. HERNANDEZ</div>
+              <div class="sig-role">School Canteen Auditor</div>
+            </td>
+          </tr>
+        </table>
       </body>
     </html>
   `;
@@ -684,32 +862,71 @@ function buildGeneratedReportHtml(payload) {
     .map(
       (row) => `
         <tr>
-          ${row.map((cell, index) => `<td${index > 0 ? ' style="text-align:right;"' : ''}>${cell}</td>`).join('')}
+          ${row.map((cell, index) => `<td${index > 0 ? ' style="text-align:right; font-family: monospace;"' : ''}>${cell}</td>`).join('')}
         </tr>
       `
     )
     .join('');
 
   return `
+    <!DOCTYPE html>
     <html>
       <head>
+        <meta charset="utf-8" />
         <title>${payload.title}</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 32px; color: #0f172a; }
-          h1 { margin: 0 0 8px; }
-          p { margin: 0 0 24px; color: #475569; }
-          .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; }
-          .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; }
-          .label { color: #64748b; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-          .value { margin-top: 6px; font-size: 22px; font-weight: 800; }
-          table { width: 100%; border-collapse: collapse; }
-          td, th { border: 1px solid #e2e8f0; padding: 10px; }
-          th { background: #f8fafc; text-align: left; }
+          @page {
+            size: portrait;
+            margin: 10mm 12mm;
+          }
+          body { font-family: Arial, sans-serif; margin: 0; padding: 16px; color: #0f172a; font-size: 11px; }
+          .header {
+            text-align: center;
+            position: relative;
+            margin-bottom: 16px;
+          }
+          .header-logo {
+            position: absolute;
+            left: 20px;
+            top: 0;
+            width: 75px;
+            height: 75px;
+            object-fit: contain;
+          }
+          .header-title-1 { font-size: 12px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; }
+          .header-title-2 { font-size: 13px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; }
+          .header-sub { font-size: 10px; font-weight: bold; color: #334155; margin-bottom: 1px; }
+          .report-main-title { font-size: 13px; font-weight: 900; text-transform: uppercase; margin-top: 10px; margin-bottom: 2px; text-decoration: underline; }
+          .report-month-title { font-size: 11px; font-weight: bold; margin-bottom: 14px; }
+          
+          .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+          .card { border: 1px solid #334155; border-radius: 6px; padding: 10px 12px; background: #f8fafc; }
+          .label { color: #475569; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+          .value { margin-top: 4px; font-size: 18px; font-weight: 800; font-family: monospace; }
+          
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+          td, th { border: 1px solid #334155; padding: 6px 8px; font-size: 11px; }
+          th { background: #f1f5f9; font-weight: bold; text-align: left; }
+
+          @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+          }
         </style>
       </head>
       <body>
-        <h1>${payload.title}</h1>
-        <p>${payload.subtitle}</p>
+        <div class="header">
+          <img src="/logo.png" alt="Logo" class="header-logo" onerror="this.style.display='none'" />
+          <div class="header-title-1">Republic of the Philippines</div>
+          <div class="header-title-2">Department of Education</div>
+          <div class="header-sub">REGION IV-A CALABARZON</div>
+          <div class="header-sub">SCHOOLS DIVISION OFFICE OF LAGUNA</div>
+          <div class="header-sub">BAY SUB-OFFICE</div>
+          <div class="header-sub" style="font-size: 11px; margin-bottom: 4px;">BAY CENTRAL ELEMENTARY SCHOOL</div>
+          <div class="report-main-title">${payload.title}</div>
+          <div class="report-month-title">${payload.subtitle}</div>
+        </div>
+
         <div class="grid">${metrics}</div>
         <table><tbody>${rows}</tbody></table>
       </body>
@@ -915,96 +1132,6 @@ export default function FinancialReports({ mode = 'financial' }) {
     endYear: '',
     openingBeginningCash: '',
   });
-
-  const [templateModalOpen, setTemplateModalOpen] = useState(false);
-  const [templatesData, setTemplatesData] = useState({ active_filename: '', templates: [] });
-  const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [uploadingTemplate, setUploadingTemplate] = useState(false);
-  const [templateFile, setTemplateFile] = useState(null);
-  const [templateSetActive, setTemplateSetActive] = useState(true);
-  const [templateStatusMessage, setTemplateStatusMessage] = useState('');
-  const [templateErrorMessage, setTemplateErrorMessage] = useState('');
-
-  const loadTemplates = useCallback(async () => {
-    setLoadingTemplates(true);
-    setTemplateErrorMessage('');
-    try {
-      const res = await API.getFinancialReportTemplates();
-      setTemplatesData(res || { active_filename: 'CANTEEN-REPORT-2025-2026-2 (1).xlsx', templates: [] });
-    } catch (err) {
-      console.warn('Failed to load report templates:', err);
-      if (err?.status === 404 || String(err?.message || '').toLowerCase().includes('not found')) {
-        setTemplateErrorMessage('Remote server is running an older backend version. Default template is active for Excel exports.');
-      } else {
-        setTemplateErrorMessage(err?.message || 'Failed to load report templates');
-      }
-    } finally {
-      setLoadingTemplates(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (templateModalOpen) {
-      loadTemplates();
-    }
-  }, [templateModalOpen, loadTemplates]);
-
-  const handleSelectTemplate = async (filename) => {
-    setTemplateErrorMessage('');
-    setTemplateStatusMessage('');
-    try {
-      const res = await API.selectFinancialReportTemplate(filename);
-      setTemplateStatusMessage(res?.message || 'Active template updated successfully');
-      loadTemplates();
-    } catch (err) {
-      setTemplateErrorMessage(err?.message || 'Failed to set active template');
-    }
-  };
-
-  const handleUploadTemplate = async (e) => {
-    e.preventDefault();
-    if (!templateFile) {
-      setTemplateErrorMessage('Please select a .xlsx Excel file to upload');
-      return;
-    }
-
-    setUploadingTemplate(true);
-    setTemplateErrorMessage('');
-    setTemplateStatusMessage('');
-
-    try {
-      const formData = new FormData();
-      formData.append('file', templateFile);
-      formData.append('set_active', templateSetActive ? 'true' : 'false');
-
-      const res = await API.uploadFinancialReportTemplate(formData);
-      setTemplateStatusMessage(res?.message || 'Template uploaded successfully');
-      setTemplateFile(null);
-      loadTemplates();
-    } catch (err) {
-      if (err?.status === 405 || err?.status === 404) {
-        setTemplateErrorMessage('Template upload requires updating backend code on server (http://54.253.139.103/). Run git pull & restart server daemon.');
-      } else {
-        setTemplateErrorMessage(err?.message || 'Failed to upload template');
-      }
-    } finally {
-      setUploadingTemplate(false);
-    }
-  };
-
-  const handleDeleteTemplate = async (filename) => {
-    if (!window.confirm(`Are you sure you want to delete template '${filename}'?`)) return;
-    setTemplateErrorMessage('');
-    setTemplateStatusMessage('');
-
-    try {
-      const res = await API.deleteFinancialReportTemplate(filename);
-      setTemplateStatusMessage(res?.message || 'Template deleted');
-      loadTemplates();
-    } catch (err) {
-      setTemplateErrorMessage(err?.message || 'Failed to delete template');
-    }
-  };
 
   const selectedReport =
     detail?.reports?.find((report) => Number(report.id) === Number(selectedReportId)) ||
@@ -1627,15 +1754,6 @@ export default function FinancialReports({ mode = 'financial' }) {
               </button>
               <button
                 type="button"
-                onClick={() => setTemplateModalOpen(true)}
-                className="action-button min-h-12 text-base text-emerald-700 dark:text-emerald-400"
-                title="Choose or import Excel templates"
-              >
-                <TableCellsIcon className="h-5 w-5 text-emerald-600" />
-                Report Templates
-              </button>
-              <button
-                type="button"
                 onClick={handleExportFinancialPdf}
                 className="action-button min-h-12 text-base"
               >
@@ -1653,140 +1771,6 @@ export default function FinancialReports({ mode = 'financial' }) {
             </>
           }
         />
-
-        {templateModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:p-7">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <TableCellsIcon className="h-5 w-5 text-emerald-600" />
-                    Excel Report Template Manager
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Upload custom Excel templates (.xlsx) and select which template is active for report exports.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTemplateModalOpen(false)}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar pr-1">
-                {templateErrorMessage && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-                    {templateErrorMessage}
-                  </div>
-                )}
-                {templateStatusMessage && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
-                    {templateStatusMessage}
-                  </div>
-                )}
-
-                {/* Upload Form */}
-                <form onSubmit={handleUploadTemplate} className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50/40 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/20">
-                  <div className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                    Import New Excel Template
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    Choose a custom DepEd report template (.xlsx file) to import.
-                  </p>
-                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
-                    <input
-                      type="file"
-                      accept=".xlsx"
-                      onChange={(e) => setTemplateFile(e.target.files?.[0] || null)}
-                      className="text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-emerald-700 cursor-pointer"
-                    />
-                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={templateSetActive}
-                        onChange={(e) => setTemplateSetActive(e.target.checked)}
-                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                      />
-                      Set as Active
-                    </label>
-                    <button
-                      type="submit"
-                      disabled={uploadingTemplate || !templateFile}
-                      className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      {uploadingTemplate ? 'Uploading...' : 'Import Template'}
-                    </button>
-                  </div>
-                </form>
-
-                {/* Template List */}
-                <div>
-                  <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Available Templates ({templatesData.templates?.length || 0})
-                  </div>
-                  <div className="space-y-2.5">
-                    {templatesData.templates?.map((t) => (
-                      <div
-                        key={t.filename}
-                        className={`flex flex-col gap-3 rounded-xl border p-4 transition sm:flex-row sm:items-center sm:justify-between ${
-                          t.is_active
-                            ? 'border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30'
-                            : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-bold text-slate-900 dark:text-white">
-                              {t.name || t.filename}
-                            </span>
-                            {t.is_active && (
-                              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                Active Template
-                              </span>
-                            )}
-                            {t.is_default && (
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                                System Default
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-                            <span>File: {t.filename}</span>
-                            {t.file_size_bytes && <span>• {(t.file_size_bytes / 1024).toFixed(0)} KB</span>}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {!t.is_active && (
-                            <button
-                              type="button"
-                              onClick={() => handleSelectTemplate(t.filename)}
-                              className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:bg-slate-800 dark:text-emerald-300"
-                            >
-                              Activate
-                            </button>
-                          )}
-                          {!t.is_default && !t.is_active && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteTemplate(t.filename)}
-                              className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-800 dark:text-rose-300"
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {renderSelectors()}
         <ValidationNotice message={selectedSchoolYearValidationMessage} />

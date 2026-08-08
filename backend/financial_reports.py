@@ -1651,27 +1651,28 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
     temp_zip_path = export_path + ".tmp"
     try:
         with ZipFile(template_path, "r") as tmpl_zip:
-            tmpl_names = tmpl_zip.namelist()
+            tmpl_names = set(tmpl_zip.namelist())
             media_files = {f: tmpl_zip.read(f) for f in tmpl_names if f.startswith("xl/media/")}
             drawing_files = {f: tmpl_zip.read(f) for f in tmpl_names if f.startswith("xl/drawings/")}
+            sheet_rels_files = {f: tmpl_zip.read(f) for f in tmpl_names if f.startswith("xl/worksheets/_rels/")}
 
-            template_drawing_xml = None
-            for name in tmpl_names:
+            blueprint_drawing = None
+            for name in sorted(tmpl_names):
                 if name.startswith("xl/drawings/drawing") and name.endswith(".xml") and not name.startswith("xl/drawings/_rels/"):
-                    template_drawing_xml = tmpl_zip.read(name)
+                    blueprint_drawing = tmpl_zip.read(name)
                     break
 
-            template_drawing_rel = None
-            for name in tmpl_names:
+            blueprint_drawing_rel = None
+            for name in sorted(tmpl_names):
                 if name.startswith("xl/drawings/_rels/drawing") and name.endswith(".xml.rels"):
-                    template_drawing_rel = tmpl_zip.read(name)
+                    blueprint_drawing_rel = tmpl_zip.read(name)
                     break
 
         with ZipFile(export_path, "r") as exp_zip:
             exp_names = exp_zip.namelist()
             sheet_files = [f for f in exp_names if f.startswith("xl/worksheets/sheet") and f.endswith(".xml")]
 
-        has_drawings = bool(media_files or drawing_files or template_drawing_xml)
+        has_drawings = bool(media_files or drawing_files or blueprint_drawing)
 
         with ZipFile(export_path, "r") as exp_zip, ZipFile(temp_zip_path, "w", compression=ZIP_DEFLATED) as new_zip:
             for item in exp_zip.infolist():
@@ -1685,17 +1686,20 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
                 content = exp_zip.read(item.filename)
 
                 if item.filename in sheet_files:
+                    content_str = content.decode("utf-8")
                     if has_drawings:
-                        content_str = content.decode("utf-8")
+                        if 'xmlns:r="' not in content_str:
+                            content_str = content_str.replace(
+                                "<worksheet",
+                                '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+                            )
                         if "<drawing" not in content_str:
                             if "</worksheet>" in content_str:
                                 content_str = content_str.replace("</worksheet>", '<drawing r:id="rId1"/></worksheet>')
-                                content = content_str.encode("utf-8")
                     else:
-                        content_str = content.decode("utf-8")
                         if "<drawing" in content_str:
                             content_str = re.sub(r'<drawing\s+r:id="[^"]+"\s*/>', "", content_str)
-                            content = content_str.encode("utf-8")
+                    content = content_str.encode("utf-8")
 
                 if item.filename == "[Content_Types].xml" and has_drawings:
                     content_str = content.decode("utf-8")
@@ -1727,7 +1731,7 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
             for filename, data in media_files.items():
                 new_zip.writestr(filename, data)
 
-            if has_drawings and template_drawing_xml:
+            if has_drawings:
                 default_sheet_rel = (
                     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
                     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -1738,16 +1742,24 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
                 for s_file in sheet_files:
                     idx = s_file.replace("xl/worksheets/sheet", "").replace(".xml", "")
 
-                    sheet_rel_path = f"xl/worksheets/_rels/sheet{idx}.xml.rels"
-                    sheet_rel_content = default_sheet_rel.format(idx=idx).encode("utf-8")
-                    new_zip.writestr(sheet_rel_path, sheet_rel_content)
+                    s_rel_path = f"xl/worksheets/_rels/sheet{idx}.xml.rels"
+                    if s_rel_path in sheet_rels_files:
+                        new_zip.writestr(s_rel_path, sheet_rels_files[s_rel_path])
+                    else:
+                        new_zip.writestr(s_rel_path, default_sheet_rel.format(idx=idx).encode("utf-8"))
 
-                    drawing_path = f"xl/drawings/drawing{idx}.xml"
-                    new_zip.writestr(drawing_path, template_drawing_xml)
+                    d_path = f"xl/drawings/drawing{idx}.xml"
+                    if d_path in drawing_files:
+                        new_zip.writestr(d_path, drawing_files[d_path])
+                    elif blueprint_drawing:
+                        clean_drawing = re.sub(r'<a16:creationId\s+[^/>]+/>', "", blueprint_drawing.decode("utf-8")).encode("utf-8")
+                        new_zip.writestr(d_path, clean_drawing)
 
-                    if template_drawing_rel:
-                        drawing_rel_path = f"xl/drawings/_rels/drawing{idx}.xml.rels"
-                        new_zip.writestr(drawing_rel_path, template_drawing_rel)
+                    d_rel_path = f"xl/drawings/_rels/drawing{idx}.xml.rels"
+                    if d_rel_path in drawing_files:
+                        new_zip.writestr(d_rel_path, drawing_files[d_rel_path])
+                    elif blueprint_drawing_rel:
+                        new_zip.writestr(d_rel_path, blueprint_drawing_rel)
 
         os.replace(temp_zip_path, export_path)
     except Exception as exc:
@@ -1755,6 +1767,8 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
         if os.path.exists(temp_zip_path):
             try:
                 os.remove(temp_zip_path)
+            except Exception:
+                pass
             except Exception:
                 pass
 
@@ -1798,8 +1812,21 @@ def _build_school_year_workbook_export(
     try:
         workbook = load_workbook(template_path, data_only=False)
         worksheet_names = workbook.sheetnames
-        if active_sheet_name and active_sheet_name in worksheet_names:
-            workbook.active = worksheet_names.index(active_sheet_name)
+
+        all_reports = sorted(school_year.monthly_reports, key=lambda item: item.month_index)
+        all_month_names = [report.month_name for report in all_reports]
+
+        has_month_sheets = any(name in worksheet_names for name in all_month_names)
+        if not has_month_sheets and len(workbook.worksheets) > 0:
+            master_sheet = workbook.active or workbook.worksheets[0]
+            if all_month_names:
+                master_sheet.title = all_month_names[0]
+                for m_name in all_month_names[1:]:
+                    copied_ws = workbook.copy_worksheet(master_sheet)
+                    copied_ws.title = m_name
+
+        if active_sheet_name and active_sheet_name in workbook.sheetnames:
+            workbook.active = workbook.sheetnames.index(active_sheet_name)
 
         previous_fund_balances: dict[str, float] = {
             str(allocation.category_key or "").strip(): _round_money(
@@ -2413,169 +2440,6 @@ def download_report_template(
         filename=os.path.basename(template_path),
         media_type=EXCEL_MEDIA_TYPE,
     )
-
-
-@router.get("/api/financial-reports/templates/list")
-def list_report_templates(
-    _: models.User = Depends(require_financial_report_user),
-):
-    try:
-        config = _get_templates_config()
-        active_filename = config.get("active_filename", DEFAULT_TEMPLATE_FILENAME)
-
-        registered = {}
-        for t in config.get("templates", []):
-            if isinstance(t, dict) and "filename" in t:
-                registered[t["filename"]] = t
-
-        items = []
-        if os.path.isdir(TEMPLATE_DIR):
-            for f in sorted(os.listdir(TEMPLATE_DIR)):
-                if f.endswith(".xlsx") and not f.startswith("~") and not f.startswith("."):
-                    file_path = os.path.join(TEMPLATE_DIR, f)
-                    reg_info = registered.get(f, {})
-
-                    try:
-                        mtime = os.path.getmtime(file_path)
-                        uploaded_at = datetime.fromtimestamp(mtime).isoformat()
-                        file_size = os.path.getsize(file_path)
-                    except Exception:
-                        uploaded_at = "2026-01-01T00:00:00Z"
-                        file_size = 0
-
-                    item = {
-                        "filename": f,
-                        "name": reg_info.get("name") or f.replace(".xlsx", ""),
-                        "is_default": f == DEFAULT_TEMPLATE_FILENAME or reg_info.get("is_default", False),
-                        "uploaded_at": reg_info.get("uploaded_at") or uploaded_at,
-                        "file_size_bytes": file_size,
-                        "is_active": f == active_filename,
-                    }
-                    items.append(item)
-
-        if not items:
-            items.append({
-                "filename": DEFAULT_TEMPLATE_FILENAME,
-                "name": "Default DepEd Canteen Report Template",
-                "is_default": True,
-                "uploaded_at": "2026-01-01T00:00:00Z",
-                "file_size_bytes": 167793,
-                "is_active": True,
-            })
-
-        return {
-            "active_filename": active_filename,
-            "templates": items,
-        }
-    except Exception as exc:
-        print(f"Error listing report templates: {exc}")
-        return {
-            "active_filename": DEFAULT_TEMPLATE_FILENAME,
-            "templates": [
-                {
-                    "filename": DEFAULT_TEMPLATE_FILENAME,
-                    "name": "Default DepEd Canteen Report Template",
-                    "is_default": True,
-                    "uploaded_at": "2026-01-01T00:00:00Z",
-                    "file_size_bytes": 167793,
-                    "is_active": True,
-                }
-            ],
-        }
-
-
-@router.post("/api/financial-reports/templates/upload")
-def upload_report_template(
-    file: UploadFile = File(...),
-    set_active: bool = Form(False),
-    db: Session = Depends(get_db),
-    current: models.User = Depends(auth.require_admin),
-):
-    if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Only Excel (.xlsx) files are allowed")
-
-    clean_filename = os.path.basename(file.filename)
-    dest_path = os.path.join(TEMPLATE_DIR, clean_filename)
-
-    try:
-        content = file.file.read()
-        with ZipFile(BytesIO(content)) as zip_test:
-            if "[Content_Types].xml" not in zip_test.namelist():
-                raise ValueError("Invalid Excel workbook format")
-
-        with open(dest_path, "wb") as f:
-            f.write(content)
-
-        config = _get_templates_config()
-        existing = [t for t in config.get("templates", []) if t["filename"] != clean_filename]
-        existing.append(
-            {
-                "filename": clean_filename,
-                "name": clean_filename.replace(".xlsx", ""),
-                "is_default": clean_filename == DEFAULT_TEMPLATE_FILENAME,
-                "uploaded_at": datetime.utcnow().isoformat(),
-            }
-        )
-
-        if set_active or len(existing) == 1:
-            config["active_filename"] = clean_filename
-        config["templates"] = existing
-        _save_templates_config(config)
-
-        return {
-            "message": f"Template '{clean_filename}' uploaded successfully",
-            "active_filename": config["active_filename"],
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to process uploaded Excel template: {str(exc)}")
-
-
-@router.post("/api/financial-reports/templates/select")
-def select_report_template(
-    payload: dict,
-    current: models.User = Depends(auth.require_admin),
-):
-    target_filename = payload.get("filename")
-    if not target_filename:
-        raise HTTPException(status_code=400, detail="Filename is required")
-
-    dest_path = os.path.join(TEMPLATE_DIR, target_filename)
-    if not os.path.isfile(dest_path):
-        raise HTTPException(status_code=404, detail=f"Template file '{target_filename}' not found")
-
-    config = _get_templates_config()
-    config["active_filename"] = target_filename
-    _save_templates_config(config)
-
-    return {
-        "message": f"Active report template updated to '{target_filename}'",
-        "active_filename": target_filename,
-    }
-
-
-@router.delete("/api/financial-reports/templates/{filename}")
-def delete_report_template(
-    filename: str,
-    current: models.User = Depends(auth.require_admin),
-):
-    if filename == DEFAULT_TEMPLATE_FILENAME:
-        raise HTTPException(status_code=400, detail="Cannot delete default report template")
-
-    config = _get_templates_config()
-    if filename == config.get("active_filename"):
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete currently active report template. Please select another active template first.",
-        )
-
-    target_path = os.path.join(TEMPLATE_DIR, filename)
-    if os.path.isfile(target_path):
-        os.remove(target_path)
-
-    config["templates"] = [t for t in config.get("templates", []) if t["filename"] != filename]
-    _save_templates_config(config)
-
-    return {"message": f"Template '{filename}' deleted successfully"}
 
 
 @router.post("/api/financial-reports/backup")

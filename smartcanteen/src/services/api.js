@@ -1368,10 +1368,6 @@ export const API = {
   updateFinancialAllocations: (schoolYearId, allocations) =>
     request('PUT', `/financial-reports/school-years/${schoolYearId}/allocations`, { allocations }),
   downloadFinancialReportTemplate: () => requestFile('/financial-reports/template'),
-  getFinancialReportTemplates: () => request('GET', '/financial-reports/templates/list'),
-  uploadFinancialReportTemplate: (formData) => request('POST', '/financial-reports/templates/upload', formData),
-  selectFinancialReportTemplate: (filename) => request('POST', '/financial-reports/templates/select', { filename }),
-  deleteFinancialReportTemplate: (filename) => request('DELETE', `/financial-reports/templates/${filename}`),
   downloadFinancialSchoolYearWorkbook: (schoolYearId, reportId = null) =>
     requestFile(
       `/financial-reports/school-years/${schoolYearId}/export${toQuery({ report_id: reportId })}`
