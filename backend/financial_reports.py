@@ -1651,18 +1651,27 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
     temp_zip_path = export_path + ".tmp"
     try:
         with ZipFile(template_path, "r") as tmpl_zip:
-            tmpl_media_files = {
-                f: tmpl_zip.read(f)
-                for f in tmpl_zip.namelist()
-                if f.startswith("xl/media/") or f.startswith("xl/drawings/") or f.startswith("xl/worksheets/_rels/")
-            }
-            tmpl_drawing_tags = {}
-            for name in tmpl_zip.namelist():
-                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
-                    content = tmpl_zip.read(name).decode("utf-8")
-                    match = re.search(r'<drawing\s+r:id="[^"]+"\s*/>', content)
-                    if match:
-                        tmpl_drawing_tags[name] = match.group(0)
+            tmpl_names = tmpl_zip.namelist()
+            media_files = {f: tmpl_zip.read(f) for f in tmpl_names if f.startswith("xl/media/")}
+            drawing_files = {f: tmpl_zip.read(f) for f in tmpl_names if f.startswith("xl/drawings/")}
+
+            template_drawing_xml = None
+            for name in tmpl_names:
+                if name.startswith("xl/drawings/drawing") and name.endswith(".xml") and not name.startswith("xl/drawings/_rels/"):
+                    template_drawing_xml = tmpl_zip.read(name)
+                    break
+
+            template_drawing_rel = None
+            for name in tmpl_names:
+                if name.startswith("xl/drawings/_rels/drawing") and name.endswith(".xml.rels"):
+                    template_drawing_rel = tmpl_zip.read(name)
+                    break
+
+        with ZipFile(export_path, "r") as exp_zip:
+            exp_names = exp_zip.namelist()
+            sheet_files = [f for f in exp_names if f.startswith("xl/worksheets/sheet") and f.endswith(".xml")]
+
+        has_drawings = bool(media_files or drawing_files or template_drawing_xml)
 
         with ZipFile(export_path, "r") as exp_zip, ZipFile(temp_zip_path, "w", compression=ZIP_DEFLATED) as new_zip:
             for item in exp_zip.infolist():
@@ -1672,17 +1681,23 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
                     or item.filename.startswith("xl/worksheets/_rels/")
                 ):
                     continue
+
                 content = exp_zip.read(item.filename)
 
-                if item.filename in tmpl_drawing_tags:
-                    content_str = content.decode("utf-8")
-                    drawing_tag = tmpl_drawing_tags[item.filename]
-                    if "<drawing" not in content_str:
-                        if "</worksheet>" in content_str:
-                            content_str = content_str.replace("</worksheet>", f"{drawing_tag}</worksheet>")
+                if item.filename in sheet_files:
+                    if has_drawings:
+                        content_str = content.decode("utf-8")
+                        if "<drawing" not in content_str:
+                            if "</worksheet>" in content_str:
+                                content_str = content_str.replace("</worksheet>", '<drawing r:id="rId1"/></worksheet>')
+                                content = content_str.encode("utf-8")
+                    else:
+                        content_str = content.decode("utf-8")
+                        if "<drawing" in content_str:
+                            content_str = re.sub(r'<drawing\s+r:id="[^"]+"\s*/>', "", content_str)
                             content = content_str.encode("utf-8")
 
-                if item.filename == "[Content_Types].xml":
+                if item.filename == "[Content_Types].xml" and has_drawings:
                     content_str = content.decode("utf-8")
                     if 'Extension="jpg"' not in content_str:
                         if '<Default Extension="jpeg"' in content_str:
@@ -1695,17 +1710,44 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
                                 "</Types>",
                                 '<Default Extension="jpg" ContentType="image/jpeg"/></Types>'
                             )
+
                     drawing_overrides = ""
-                    for drawing_name in tmpl_media_files.keys():
-                        if drawing_name.startswith("xl/drawings/drawing") and drawing_name.endswith(".xml"):
-                            drawing_overrides += f'<Override PartName="/{drawing_name}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
-                    if drawing_overrides and 'PartName="/xl/drawings/drawing1.xml"' not in content_str:
+                    for s_file in sheet_files:
+                        idx = s_file.replace("xl/worksheets/sheet", "").replace(".xml", "")
+                        drawing_path = f"xl/drawings/drawing{idx}.xml"
+                        if f'PartName="/{drawing_path}"' not in content_str:
+                            drawing_overrides += f'<Override PartName="/{drawing_path}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+
+                    if drawing_overrides:
                         content_str = content_str.replace("</Types>", f"{drawing_overrides}</Types>")
                     content = content_str.encode("utf-8")
+
                 new_zip.writestr(item, content)
 
-            for filename, data in tmpl_media_files.items():
+            for filename, data in media_files.items():
                 new_zip.writestr(filename, data)
+
+            if has_drawings and template_drawing_xml:
+                default_sheet_rel = (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing{idx}.xml"/>'
+                    '</Relationships>'
+                )
+
+                for s_file in sheet_files:
+                    idx = s_file.replace("xl/worksheets/sheet", "").replace(".xml", "")
+
+                    sheet_rel_path = f"xl/worksheets/_rels/sheet{idx}.xml.rels"
+                    sheet_rel_content = default_sheet_rel.format(idx=idx).encode("utf-8")
+                    new_zip.writestr(sheet_rel_path, sheet_rel_content)
+
+                    drawing_path = f"xl/drawings/drawing{idx}.xml"
+                    new_zip.writestr(drawing_path, template_drawing_xml)
+
+                    if template_drawing_rel:
+                        drawing_rel_path = f"xl/drawings/_rels/drawing{idx}.xml.rels"
+                        new_zip.writestr(drawing_rel_path, template_drawing_rel)
 
         os.replace(temp_zip_path, export_path)
     except Exception as exc:
