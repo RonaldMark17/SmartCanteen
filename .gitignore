@@ -1,3 +1,4 @@
+# Environment
 .env
 .env.*
 !.env.example
@@ -5,18 +6,27 @@
 **/.env.*
 !**/.env.example
 
+# Python
 venv/
 .venv/
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyc
 
+# Node
 node_modules/
 **/node_modules/
+
+# Build output
 dist/
 smartcanteen/dist/
+smartcanteen/dist-electron/
+smartcanteen/release/
 
+# Logs
 *.log
-*.pyc
-*.db
 
+# Database
+*.db
 canteen.db

@@ -868,25 +868,22 @@ app = FastAPI(
 
 cors_options = {
     "allow_origins": [
+        "*",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:4173",
         "http://127.0.0.1:4173",
         "capacitor://localhost",
         "ionic://localhost",
+        "app://localhost",
+        "file://",
         "http://13.55.37.38",
         "https://13.55.37.38",
         "http://smartcanteen.ct.ws",
         "https://smartcanteen.ct.ws",
         "https://smartcanteen.duckdns.org",
     ],
-    "allow_origin_regex": (
-        r"^https?://("
-        r"localhost|"
-        r"127\.0\.0\.1|"
-        r"13\.55\.37\.38"
-        r")(:\d+)?$"
-    ),
+    "allow_origin_regex": r".*",
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],

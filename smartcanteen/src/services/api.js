@@ -288,6 +288,10 @@ export function formatLocalDateInputValue(value = new Date()) {
 }
 
 function resolveApiBase() {
+  if (typeof window !== 'undefined' && window.MEALS_CONFIG?.apiBaseUrl) {
+    return normalizeApiBase(window.MEALS_CONFIG.apiBaseUrl);
+  }
+
   if (isNativeRuntime()) {
     if (envNativeApiBase) {
       return normalizeApiBase(envNativeApiBase);
@@ -298,6 +302,13 @@ function resolveApiBase() {
     }
 
     return normalizeApiBase(NATIVE_API_BASE);
+  }
+
+  if (typeof window !== 'undefined' && (window.electronAPI?.isElectron || window.location?.protocol === 'file:')) {
+    if (envApiBase && isAbsoluteUrl(envApiBase)) {
+      return normalizeApiBase(envApiBase);
+    }
+    return normalizeApiBase(DEFAULT_REMOTE_API_BASE);
   }
 
   if (isLocalWebHost()) {
@@ -643,13 +654,9 @@ function extractFilenameFromDisposition(value, fallback = 'download') {
 }
 
 function buildConnectionError(apiBase, error) {
-  if (error?.name === 'AbortError') {
-    return new Error(
-      `Server did not respond at ${apiBase} within ${Math.round(API_REQUEST_TIMEOUT_MS / 1000)}s. Check your backend and API config.`
-    );
-  }
-
-  return new Error(`Cannot connect to server at ${apiBase}. Check your backend and API config.`);
+  return new Error(
+    'Unable to connect to the server. Please check your internet connection and try again.'
+  );
 }
 
 async function readJsonResponse(res, path, requestUrl = path) {
@@ -723,8 +730,9 @@ async function performRequest(method, path, body = null, options = {}) {
     );
   }
 
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   const baseHeaders = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...getClientRequestHeaders(),
   };
 
@@ -755,7 +763,13 @@ async function performRequest(method, path, body = null, options = {}) {
         method,
         credentials: 'include',
         headers,
-        body: body ? JSON.stringify(body) : undefined,
+        body: body
+          ? isFormData
+            ? body
+            : typeof body === 'string'
+              ? body
+              : JSON.stringify(body)
+          : undefined,
       });
     } catch (error) {
       lastConnectionBase = apiBase;
@@ -1354,6 +1368,10 @@ export const API = {
   updateFinancialAllocations: (schoolYearId, allocations) =>
     request('PUT', `/financial-reports/school-years/${schoolYearId}/allocations`, { allocations }),
   downloadFinancialReportTemplate: () => requestFile('/financial-reports/template'),
+  getFinancialReportTemplates: () => request('GET', '/financial-reports/templates/list'),
+  uploadFinancialReportTemplate: (formData) => request('POST', '/financial-reports/templates/upload', formData),
+  selectFinancialReportTemplate: (filename) => request('POST', '/financial-reports/templates/select', { filename }),
+  deleteFinancialReportTemplate: (filename) => request('DELETE', `/financial-reports/templates/${filename}`),
   downloadFinancialSchoolYearWorkbook: (schoolYearId, reportId = null) =>
     requestFile(
       `/financial-reports/school-years/${schoolYearId}/export${toQuery({ report_id: reportId })}`

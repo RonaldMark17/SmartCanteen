@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from . import models
 
+import os
+
 # ── Config ─────────────────────────────────────────────────────────────────────
-# ⚠️  Change SECRET_KEY to a random 32-char string in production!
-SECRET_KEY  = "smartcanteen-secret-key-CHANGE-THIS-in-prod-2024!"
+# ⚠️  Change JWT_SECRET_KEY in production environment!
+SECRET_KEY  = os.getenv("JWT_SECRET_KEY", "smartcanteen-secret-key-CHANGE-THIS-in-prod-2024!")
 ALGORITHM   = "HS256"
 EXPIRE_MINS = 480   # 8-hour sessions (canteen shift length)
 MFA_EXPIRE_MINS = 5

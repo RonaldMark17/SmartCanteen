@@ -916,6 +916,86 @@ export default function FinancialReports({ mode = 'financial' }) {
     openingBeginningCash: '',
   });
 
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [templatesData, setTemplatesData] = useState({ active_filename: '', templates: [] });
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [uploadingTemplate, setUploadingTemplate] = useState(false);
+  const [templateFile, setTemplateFile] = useState(null);
+  const [templateSetActive, setTemplateSetActive] = useState(true);
+  const [templateStatusMessage, setTemplateStatusMessage] = useState('');
+  const [templateErrorMessage, setTemplateErrorMessage] = useState('');
+
+  const loadTemplates = useCallback(async () => {
+    setLoadingTemplates(true);
+    try {
+      const res = await API.getFinancialReportTemplates();
+      setTemplatesData(res || { active_filename: '', templates: [] });
+    } catch (err) {
+      console.warn('Failed to load report templates:', err);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (templateModalOpen) {
+      loadTemplates();
+    }
+  }, [templateModalOpen, loadTemplates]);
+
+  const handleSelectTemplate = async (filename) => {
+    setTemplateErrorMessage('');
+    setTemplateStatusMessage('');
+    try {
+      const res = await API.selectFinancialReportTemplate(filename);
+      setTemplateStatusMessage(res?.message || 'Active template updated successfully');
+      loadTemplates();
+    } catch (err) {
+      setTemplateErrorMessage(err?.message || 'Failed to set active template');
+    }
+  };
+
+  const handleUploadTemplate = async (e) => {
+    e.preventDefault();
+    if (!templateFile) {
+      setTemplateErrorMessage('Please select a .xlsx Excel file to upload');
+      return;
+    }
+
+    setUploadingTemplate(true);
+    setTemplateErrorMessage('');
+    setTemplateStatusMessage('');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', templateFile);
+      formData.append('set_active', templateSetActive ? 'true' : 'false');
+
+      const res = await API.uploadFinancialReportTemplate(formData);
+      setTemplateStatusMessage(res?.message || 'Template uploaded successfully');
+      setTemplateFile(null);
+      loadTemplates();
+    } catch (err) {
+      setTemplateErrorMessage(err?.message || 'Failed to upload template');
+    } finally {
+      setUploadingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (filename) => {
+    if (!window.confirm(`Are you sure you want to delete template '${filename}'?`)) return;
+    setTemplateErrorMessage('');
+    setTemplateStatusMessage('');
+
+    try {
+      const res = await API.deleteFinancialReportTemplate(filename);
+      setTemplateStatusMessage(res?.message || 'Template deleted');
+      loadTemplates();
+    } catch (err) {
+      setTemplateErrorMessage(err?.message || 'Failed to delete template');
+    }
+  };
+
   const selectedReport =
     detail?.reports?.find((report) => Number(report.id) === Number(selectedReportId)) ||
     detail?.reports?.[0] ||
@@ -1537,6 +1617,15 @@ export default function FinancialReports({ mode = 'financial' }) {
               </button>
               <button
                 type="button"
+                onClick={() => setTemplateModalOpen(true)}
+                className="action-button min-h-12 text-base text-emerald-700 dark:text-emerald-400"
+                title="Choose or import Excel templates"
+              >
+                <TableCellsIcon className="h-5 w-5 text-emerald-600" />
+                Report Templates
+              </button>
+              <button
+                type="button"
                 onClick={handleExportFinancialPdf}
                 className="action-button min-h-12 text-base"
               >
@@ -1554,6 +1643,140 @@ export default function FinancialReports({ mode = 'financial' }) {
             </>
           }
         />
+
+        {templateModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:p-7">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <TableCellsIcon className="h-5 w-5 text-emerald-600" />
+                    Excel Report Template Manager
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Upload custom Excel templates (.xlsx) and select which template is active for report exports.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTemplateModalOpen(false)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar pr-1">
+                {templateErrorMessage && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                    {templateErrorMessage}
+                  </div>
+                )}
+                {templateStatusMessage && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    {templateStatusMessage}
+                  </div>
+                )}
+
+                {/* Upload Form */}
+                <form onSubmit={handleUploadTemplate} className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50/40 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/20">
+                  <div className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                    Import New Excel Template
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Choose a custom DepEd report template (.xlsx file) to import.
+                  </p>
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <input
+                      type="file"
+                      accept=".xlsx"
+                      onChange={(e) => setTemplateFile(e.target.files?.[0] || null)}
+                      className="text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-emerald-700 cursor-pointer"
+                    />
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={templateSetActive}
+                        onChange={(e) => setTemplateSetActive(e.target.checked)}
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      Set as Active
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={uploadingTemplate || !templateFile}
+                      className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {uploadingTemplate ? 'Uploading...' : 'Import Template'}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Template List */}
+                <div>
+                  <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Available Templates ({templatesData.templates?.length || 0})
+                  </div>
+                  <div className="space-y-2.5">
+                    {templatesData.templates?.map((t) => (
+                      <div
+                        key={t.filename}
+                        className={`flex flex-col gap-3 rounded-xl border p-4 transition sm:flex-row sm:items-center sm:justify-between ${
+                          t.is_active
+                            ? 'border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30'
+                            : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                              {t.name || t.filename}
+                            </span>
+                            {t.is_active && (
+                              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                Active Template
+                              </span>
+                            )}
+                            {t.is_default && (
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                System Default
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+                            <span>File: {t.filename}</span>
+                            {t.file_size_bytes && <span>• {(t.file_size_bytes / 1024).toFixed(0)} KB</span>}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {!t.is_active && (
+                            <button
+                              type="button"
+                              onClick={() => handleSelectTemplate(t.filename)}
+                              className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:bg-slate-800 dark:text-emerald-300"
+                            >
+                              Activate
+                            </button>
+                          )}
+                          {!t.is_default && !t.is_active && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTemplate(t.filename)}
+                              className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-800 dark:text-rose-300"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {renderSelectors()}
         <ValidationNotice message={selectedSchoolYearValidationMessage} />

@@ -1,4 +1,10 @@
-import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
+
+const isDesktopApp =
+  typeof window !== 'undefined' &&
+  (window.electronAPI?.isElectron || window.location?.protocol === 'file:');
+
+const AppRouter = isDesktopApp ? HashRouter : BrowserRouter;
 import Layout from './components/Layout';
 import Toaster from './components/Toaster';
 import Login from './views/Login';
@@ -156,13 +162,13 @@ function AppContent() {
   }
 
   return (
-    <BrowserRouter>
+    <AppRouter>
       <Toaster />
 
       <ModuleSettingsProvider>
         <AuthenticatedWorkspace />
       </ModuleSettingsProvider>
-    </BrowserRouter>
+    </AppRouter>
   );
 }
 

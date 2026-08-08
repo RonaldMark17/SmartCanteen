@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
     `http://${apiHost}${apiPort ? `:${apiPort}` : ''}`;
 
   return {
+    base: './',
     plugins: [react()],
     server: {
       host: '0.0.0.0',

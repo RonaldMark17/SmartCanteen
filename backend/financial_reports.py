@@ -9,7 +9,7 @@ from typing import Optional
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 from sqlalchemy import func
@@ -26,7 +26,44 @@ from backend.time_utils import build_ph_date_range_bounds, get_ph_today
 router = APIRouter(tags=["Financial Reports"])
 
 FINANCIAL_REPORT_ROLES = {"admin", "administrator", "staff"}
-TEMPLATE_FILENAME = "CANTEEN-REPORT-2025-2026-2 (1).xlsx"
+DEFAULT_TEMPLATE_FILENAME = "CANTEEN-REPORT-2025-2026-2 (1).xlsx"
+TEMPLATE_FILENAME = DEFAULT_TEMPLATE_FILENAME
+TEMPLATE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "report_templates")
+TEMPLATES_CONFIG_PATH = os.path.join(TEMPLATE_DIR, "templates_config.json")
+
+
+def _get_templates_config() -> dict:
+    os.makedirs(TEMPLATE_DIR, exist_ok=True)
+    if os.path.exists(TEMPLATES_CONFIG_PATH):
+        try:
+            with open(TEMPLATES_CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                if isinstance(config, dict) and "templates" in config:
+                    return config
+        except Exception:
+            pass
+
+    initial = {
+        "active_filename": DEFAULT_TEMPLATE_FILENAME,
+        "templates": [
+            {
+                "filename": DEFAULT_TEMPLATE_FILENAME,
+                "name": "Default DepEd Canteen Report Template",
+                "is_default": True,
+                "uploaded_at": "2026-01-01T00:00:00Z",
+            }
+        ],
+    }
+    _save_templates_config(initial)
+    return initial
+
+
+def _save_templates_config(config: dict) -> None:
+    os.makedirs(TEMPLATE_DIR, exist_ok=True)
+    with open(TEMPLATES_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+
+
 MONTH_SEQUENCE = [
     (0, 6, "June"),
     (1, 7, "July"),
@@ -1609,14 +1646,34 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
             tmpl_media_files = {
                 f: tmpl_zip.read(f)
                 for f in tmpl_zip.namelist()
-                if f.startswith("xl/media/") or f.startswith("xl/drawings/")
+                if f.startswith("xl/media/") or f.startswith("xl/drawings/") or f.startswith("xl/worksheets/_rels/")
             }
+            tmpl_drawing_tags = {}
+            for name in tmpl_zip.namelist():
+                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
+                    content = tmpl_zip.read(name).decode("utf-8")
+                    match = re.search(r'<drawing\s+r:id="[^"]+"\s*/>', content)
+                    if match:
+                        tmpl_drawing_tags[name] = match.group(0)
 
         with ZipFile(export_path, "r") as exp_zip, ZipFile(temp_zip_path, "w", compression=ZIP_DEFLATED) as new_zip:
             for item in exp_zip.infolist():
-                if item.filename.startswith("xl/media/") or item.filename.startswith("xl/drawings/"):
+                if (
+                    item.filename.startswith("xl/media/")
+                    or item.filename.startswith("xl/drawings/")
+                    or item.filename.startswith("xl/worksheets/_rels/")
+                ):
                     continue
                 content = exp_zip.read(item.filename)
+
+                if item.filename in tmpl_drawing_tags:
+                    content_str = content.decode("utf-8")
+                    drawing_tag = tmpl_drawing_tags[item.filename]
+                    if "<drawing" not in content_str:
+                        if "</worksheet>" in content_str:
+                            content_str = content_str.replace("</worksheet>", f"{drawing_tag}</worksheet>")
+                            content = content_str.encode("utf-8")
+
                 if item.filename == "[Content_Types].xml":
                     content_str = content.decode("utf-8")
                     if 'Extension="jpg"' not in content_str:
@@ -1630,7 +1687,13 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
                                 "</Types>",
                                 '<Default Extension="jpg" ContentType="image/jpeg"/></Types>'
                             )
-                        content = content_str.encode("utf-8")
+                    drawing_overrides = ""
+                    for drawing_name in tmpl_media_files.keys():
+                        if drawing_name.startswith("xl/drawings/drawing") and drawing_name.endswith(".xml"):
+                            drawing_overrides += f'<Override PartName="/{drawing_name}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+                    if drawing_overrides and 'PartName="/xl/drawings/drawing1.xml"' not in content_str:
+                        content_str = content_str.replace("</Types>", f"{drawing_overrides}</Types>")
+                    content = content_str.encode("utf-8")
                 new_zip.writestr(item, content)
 
             for filename, data in tmpl_media_files.items():
@@ -2297,9 +2360,136 @@ def download_report_template(
 
     return FileResponse(
         template_path,
-        filename=TEMPLATE_FILENAME,
+        filename=os.path.basename(template_path),
         media_type=EXCEL_MEDIA_TYPE,
     )
+
+
+@router.get("/api/financial-reports/templates/list")
+def list_report_templates(
+    _: models.User = Depends(require_financial_report_user),
+):
+    config = _get_templates_config()
+    active_filename = config.get("active_filename", DEFAULT_TEMPLATE_FILENAME)
+
+    items = []
+    registered = {t["filename"]: t for t in config.get("templates", [])}
+
+    if os.path.isdir(TEMPLATE_DIR):
+        for f in sorted(os.listdir(TEMPLATE_DIR)):
+            if f.endswith(".xlsx") and not f.startswith("~") and not f.startswith("."):
+                file_path = os.path.join(TEMPLATE_DIR, f)
+                info = registered.get(
+                    f,
+                    {
+                        "filename": f,
+                        "name": f.replace(".xlsx", ""),
+                        "is_default": f == DEFAULT_TEMPLATE_FILENAME,
+                        "uploaded_at": datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    },
+                )
+                info["file_size_bytes"] = os.path.getsize(file_path)
+                info["is_active"] = f == active_filename
+                items.append(info)
+
+    return {
+        "active_filename": active_filename,
+        "templates": items,
+    }
+
+
+@router.post("/api/financial-reports/templates/upload")
+def upload_report_template(
+    file: UploadFile = File(...),
+    set_active: bool = Form(False),
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Only Excel (.xlsx) files are allowed")
+
+    clean_filename = os.path.basename(file.filename)
+    dest_path = os.path.join(TEMPLATE_DIR, clean_filename)
+
+    try:
+        content = file.file.read()
+        with ZipFile(io.BytesIO(content)) as zip_test:
+            if "[Content_Types].xml" not in zip_test.namelist():
+                raise ValueError("Invalid Excel workbook format")
+
+        with open(dest_path, "wb") as f:
+            f.write(content)
+
+        config = _get_templates_config()
+        existing = [t for t in config.get("templates", []) if t["filename"] != clean_filename]
+        existing.append(
+            {
+                "filename": clean_filename,
+                "name": clean_filename.replace(".xlsx", ""),
+                "is_default": clean_filename == DEFAULT_TEMPLATE_FILENAME,
+                "uploaded_at": datetime.utcnow().isoformat(),
+            }
+        )
+
+        if set_active or len(existing) == 1:
+            config["active_filename"] = clean_filename
+        config["templates"] = existing
+        _save_templates_config(config)
+
+        return {
+            "message": f"Template '{clean_filename}' uploaded successfully",
+            "active_filename": config["active_filename"],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to process uploaded Excel template: {str(exc)}")
+
+
+@router.post("/api/financial-reports/templates/select")
+def select_report_template(
+    payload: dict,
+    current: models.User = Depends(auth.require_admin),
+):
+    target_filename = payload.get("filename")
+    if not target_filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    dest_path = os.path.join(TEMPLATE_DIR, target_filename)
+    if not os.path.isfile(dest_path):
+        raise HTTPException(status_code=404, detail=f"Template file '{target_filename}' not found")
+
+    config = _get_templates_config()
+    config["active_filename"] = target_filename
+    _save_templates_config(config)
+
+    return {
+        "message": f"Active report template updated to '{target_filename}'",
+        "active_filename": target_filename,
+    }
+
+
+@router.delete("/api/financial-reports/templates/{filename}")
+def delete_report_template(
+    filename: str,
+    current: models.User = Depends(auth.require_admin),
+):
+    if filename == DEFAULT_TEMPLATE_FILENAME:
+        raise HTTPException(status_code=400, detail="Cannot delete default report template")
+
+    config = _get_templates_config()
+    if filename == config.get("active_filename"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete currently active report template. Please select another active template first.",
+        )
+
+    target_path = os.path.join(TEMPLATE_DIR, filename)
+    if os.path.isfile(target_path):
+        os.remove(target_path)
+
+    config["templates"] = [t for t in config.get("templates", []) if t["filename"] != filename]
+    _save_templates_config(config)
+
+    return {"message": f"Template '{filename}' deleted successfully"}
 
 
 @router.post("/api/financial-reports/backup")

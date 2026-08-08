@@ -1,0 +1,17 @@
+[Unit]
+Description=MEALS FastAPI Virtual Server Backend Service
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/meals/backend
+Environment="PATH=/var/www/meals/venv/bin"
+Environment="JWT_SECRET_KEY=smartcanteen-production-secret-key-replace-with-secure-32-char-random-string"
+Environment="DATABASE_URL=sqlite:////var/www/meals/canteen.db"
+ExecStart=/var/www/meals/venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 4 --proxy-headers
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
