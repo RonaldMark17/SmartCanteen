@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 from datetime import datetime
+from io import BytesIO
 from typing import Optional
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -2456,7 +2457,7 @@ def upload_report_template(
 
     try:
         content = file.file.read()
-        with ZipFile(io.BytesIO(content)) as zip_test:
+        with ZipFile(BytesIO(content)) as zip_test:
             if "[Content_Types].xml" not in zip_test.namelist():
                 raise ValueError("Invalid Excel workbook format")
 

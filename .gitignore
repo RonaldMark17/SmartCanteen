@@ -30,3 +30,5 @@ smartcanteen/release/
 # Database
 *.db
 canteen.db
+
+*.exe
