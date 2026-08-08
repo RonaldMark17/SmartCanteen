@@ -941,12 +941,9 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
     beginning_cash_carry_forward = _get_beginning_cash_carry_forward(db, school_year)
 
     previous_report = None
-    previous_fund_balances: dict[str, float] = {
-        str(allocation.category_key or "").strip(): _round_money(
-            getattr(allocation, "opening_balance", 0.0)
-        )
-        for allocation in allocations
-    }
+    previous_fund_balances: dict[str, float] = _get_initial_fund_balances_for_school_year(
+        db, school_year, allocations
+    )
     historical_reports = []
     serialized_reports = []
     for monthly_report in reports:
@@ -1072,6 +1069,65 @@ def _load_previous_school_year(
     )
 
 
+def _get_previous_school_year_ending_fund_balances(
+    db: Session,
+    school_year: models.SchoolYear,
+) -> dict[str, float]:
+    previous_school_year = _load_previous_school_year(db, school_year)
+    if not previous_school_year:
+        return {}
+
+    reports = sorted(previous_school_year.monthly_reports, key=lambda item: item.month_index)
+    allocations = sorted(previous_school_year.allocations, key=lambda item: (item.sort_order, item.id))
+    if not reports or not allocations:
+        return {}
+
+    older_balances = _get_previous_school_year_ending_fund_balances(db, previous_school_year)
+    previous_fund_balances: dict[str, float] = {}
+    for allocation in allocations:
+        category_key = str(allocation.category_key or "").strip()
+        saved_opening = getattr(allocation, "opening_balance", 0.0)
+        if saved_opening and float(saved_opening) > 0:
+            previous_fund_balances[category_key] = _round_money(saved_opening)
+        elif category_key in older_balances:
+            previous_fund_balances[category_key] = _round_money(older_balances[category_key])
+        else:
+            previous_fund_balances[category_key] = _round_money(saved_opening or 0.0)
+
+    for report in reports:
+        report_payload = _serialize_report(
+            report,
+            allocations,
+            current_sales_auto=_get_report_transaction_sales(db, report),
+        )
+        previous_fund_balances = _calculate_next_fund_balances(
+            report_payload,
+            allocations,
+            previous_fund_balances,
+        )
+
+    return previous_fund_balances
+
+
+def _get_initial_fund_balances_for_school_year(
+    db: Session,
+    school_year: models.SchoolYear,
+    allocations: list[models.Allocation],
+) -> dict[str, float]:
+    prev_sy_fund_balances = _get_previous_school_year_ending_fund_balances(db, school_year)
+    initial_balances: dict[str, float] = {}
+    for allocation in allocations:
+        category_key = str(allocation.category_key or "").strip()
+        saved_opening = getattr(allocation, "opening_balance", 0.0)
+        if saved_opening and float(saved_opening) > 0:
+            initial_balances[category_key] = _round_money(saved_opening)
+        elif category_key in prev_sy_fund_balances:
+            initial_balances[category_key] = _round_money(prev_sy_fund_balances[category_key])
+        else:
+            initial_balances[category_key] = _round_money(saved_opening or 0.0)
+    return initial_balances
+
+
 def _calculate_school_year_final_current_balance(
     db: Session,
     school_year: models.SchoolYear,
@@ -1098,12 +1154,7 @@ def _calculate_school_year_final_current_balance(
             "school_year_name": school_year.name,
         }
 
-    previous_fund_balances: dict[str, float] = {
-        str(allocation.category_key or "").strip(): _round_money(
-            getattr(allocation, "opening_balance", 0.0)
-        )
-        for allocation in allocations
-    }
+    previous_fund_balances = _get_initial_fund_balances_for_school_year(db, school_year, allocations)
     final_balance = 0.0
 
     for report in reports:
@@ -1828,12 +1879,9 @@ def _build_school_year_workbook_export(
         if active_sheet_name and active_sheet_name in workbook.sheetnames:
             workbook.active = workbook.sheetnames.index(active_sheet_name)
 
-        previous_fund_balances: dict[str, float] = {
-            str(allocation.category_key or "").strip(): _round_money(
-                getattr(allocation, "opening_balance", 0.0)
-            )
-            for allocation in allocations
-        }
+        previous_fund_balances: dict[str, float] = _get_initial_fund_balances_for_school_year(
+            db, school_year, allocations
+        )
 
         for report in sorted(school_year.monthly_reports, key=lambda item: item.month_index):
             if report.month_name not in workbook.sheetnames:

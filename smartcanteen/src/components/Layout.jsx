@@ -444,58 +444,54 @@ function getUserInitials(name) {
     .split(/\s+/)
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase())
-    .join('');
-
-  return initials || 'SC';
 }
 
 function getNavDescription(path) {
   if (path === '/dashboard') {
-    return 'Overview, KPIs, and recent activity';
+    return 'Overview, KPIs & recent activity';
   }
   if (path === '/pos') {
-    return 'Checkout flow and cashier tools';
+    return 'Checkout flow & cashier tools';
   }
   if (path === '/inventory') {
-    return 'Stock visibility and product review';
+    return 'Stock visibility & product review';
   }
   if (path === '/transactions') {
-    return 'Sales history and receipt tracking';
+    return 'Sales history & receipt tracking';
   }
   if (path === '/analytics') {
-    return 'Revenue trends and performance insights';
+    return 'Revenue trends & insights';
   }
   if (path === '/financial-reports') {
-    return 'Monthly canteen finance and exports';
+    return 'Monthly canteen finance & exports';
   }
   if (path === '/daily-sales') {
-    return 'Daily sales totals and cash tracking';
+    return 'Daily sales totals & cash tracking';
   }
   if (path === '/expenses') {
-    return 'Operating expenses and fund costs';
+    return 'Operating expenses & fund costs';
   }
   if (path === '/school-years') {
-    return 'School year periods and monthly reports';
+    return 'School year periods & reports';
   }
   if (path === '/reports') {
-    return 'Report review, printing, and exports';
+    return 'Report review & printing';
   }
   if (path === '/predictions') {
-    return 'Demand planning and sales forecast';
+    return 'Demand planning & sales forecast';
   }
   if (path === '/audit') {
-    return 'Sensitive admin actions and logs';
+    return 'Sensitive admin actions & logs';
   }
   if (path === '/accounts') {
-    return 'Create and manage user access';
+    return 'Create & manage user access';
   }
   if (path === '/settings') {
-    return 'System modules and workspace setup';
+    return 'System & workspace setup';
   }
 
   return 'Workspace module';
 }
-
 export default function Layout({ children, onLogout }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -1481,7 +1477,7 @@ export default function Layout({ children, onLogout }) {
                   {!sidebarCollapsed && (
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-black">{item.name}</span>
-                      <span className={`mt-0.5 block truncate text-[11px] font-semibold ${getSidebarDescriptionClass(active)}`}>
+                      <span className={`mt-0.5 block text-[11px] font-semibold leading-tight whitespace-normal break-words ${getSidebarDescriptionClass(active)}`}>
                         {getNavDescription(item.path)}
                       </span>
                     </span>
@@ -2320,7 +2316,7 @@ export default function Layout({ children, onLogout }) {
           </div>
         )}
 
-        <main className="ui-uniform custom-scrollbar min-w-0 flex-1 overflow-y-auto bg-slate-50/40 p-4 sm:p-6 lg:p-8">
+        <main className="ui-uniform custom-scrollbar min-w-0 flex-1 overflow-y-auto bg-slate-50/40 p-4 sm:p-5 lg:p-6">
           <div className="mx-auto h-full w-full max-w-[1600px]">
             {!isSynced && (
               <DismissibleAlert
@@ -2380,7 +2376,7 @@ export default function Layout({ children, onLogout }) {
                     <item.icon className={`mobile-sidebar-icon h-5 w-5 shrink-0 ${active ? (darkMode ? 'text-emerald-400' : 'text-emerald-600') : 'text-slate-400'}`} />
                     <span className="min-w-0 flex-1">
                       <span className="mobile-sidebar-title block truncate text-sm font-semibold">{item.name}</span>
-                      <span className={`mobile-sidebar-desc mt-0.5 block truncate text-xs leading-4 ${getMobileNavDescriptionClass(active)}`}>
+                      <span className={`mobile-sidebar-desc mt-0.5 block text-xs leading-tight whitespace-normal break-words ${getMobileNavDescriptionClass(active)}`}>
                         {getNavDescription(item.path)}
                       </span>
                     </span>

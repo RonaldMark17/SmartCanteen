@@ -8,6 +8,8 @@ import {
   ChartBarIcon,
   ChartPieIcon,
   CheckCircleIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   ClipboardDocumentListIcon,
   DocumentArrowDownIcon,
   DocumentChartBarIcon,
@@ -129,6 +131,18 @@ const REPORT_TYPES = [
 
 const FUTURE_FINANCIAL_REPORT_MESSAGE = 'You cannot add a financial report for a future school year.';
 const CURRENT_FINANCIAL_REPORT_MESSAGE = 'Financial reports can only be saved for the current active school year.';
+
+const EXPENSES_PER_PAGE = 5;
+const MAX_PAGE_BUTTONS = 5;
+
+function getPageNumbers(currentPage, totalPages) {
+  const visibleCount = Math.min(MAX_PAGE_BUTTONS, totalPages);
+  let start = Math.max(1, currentPage - Math.floor(visibleCount / 2));
+  const end = Math.min(totalPages, start + visibleCount - 1);
+  start = Math.max(1, end - visibleCount + 1);
+
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
 
 
 
@@ -538,16 +552,33 @@ function buildPrintableHtml(schoolYearName, report, statement, allocations = [])
     return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">${formatCurrency(val)}</td>`;
   }).join('');
 
-  const expMonthCells = stdAllocKeys.map(() => `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">₱0.00</td>`).join('');
-  const totExpCells = stdAllocKeys.map(() => `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">₱0.00</td>`).join('');
+  const expMonthCells = stdAllocKeys.map(k => {
+    const item = allocMap.get(k.key);
+    const val = item?.fund_expenses ?? item?.fundExpenses ?? 0;
+    return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">${formatCurrency(val)}</td>`;
+  }).join('');
+
+  const totExpCells = stdAllocKeys.map(k => {
+    const item = allocMap.get(k.key);
+    const val = (item?.fund_expenses || 0) + (item?.fund_others || 0);
+    return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">${formatCurrency(val)}</td>`;
+  }).join('');
 
   const currBalCells = stdAllocKeys.map(k => {
     const item = allocMap.get(k.key);
-    const curBal = item?.fund_current_balance ?? item?.currentBalance ?? ((item?.opening_balance || 0) + (netProfit * k.rate));
+    const prevBal = item?.opening_balance || 0;
+    const interest = item?.fund_interest || 0;
+    const netInc = item?.amount ?? (netProfit * k.rate);
+    const totalExp = (item?.fund_expenses || 0) + (item?.fund_others || 0);
+    const curBal = prevBal + interest + netInc - totalExp;
     return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace; font-weight: bold;">${formatCurrency(curBal)}</td>`;
   }).join('');
 
-  const bankCells = stdAllocKeys.map(() => `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">₱0.00</td>`).join('');
+  const bankCells = stdAllocKeys.map(k => {
+    const item = allocMap.get(k.key);
+    const val = item?.fund_cash_on_bank ?? item?.fundCashOnBank ?? 0;
+    return `<td style="text-align: right; border: 1px solid #334155; font-family: monospace;">${formatCurrency(val)}</td>`;
+  }).join('');
 
   return `
     <!DOCTYPE html>
@@ -1099,6 +1130,7 @@ export default function FinancialReports({ mode = 'financial' }) {
     current_sales: '',
     cost_of_sales: '',
   });
+  const [fundMonitoringDraft, setFundMonitoringDraft] = useState({});
   const [exportingWorkbook, setExportingWorkbook] = useState(false);
   const [savingStatement, setSavingStatement] = useState(false);
   const [creatingSchoolYear, setCreatingSchoolYear] = useState(false);
@@ -1116,6 +1148,7 @@ export default function FinancialReports({ mode = 'financial' }) {
   const [expenseSearch, setExpenseSearch] = useState('');
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('');
   const [expenseDateFilter, setExpenseDateFilter] = useState('');
+  const [expensePage, setExpensePage] = useState(1);
   const [expenseEntryDraft, setExpenseEntryDraft] = useState({
     type: 'daily',
     date: getTodayInputValue(),
@@ -1183,6 +1216,25 @@ export default function FinancialReports({ mode = 'financial' }) {
       return matchesQuery && matchesCategory && matchesDate;
     });
   }, [expenseCategoryFilter, expenseDateFilter, expenseHistoryRows, expenseSearch]);
+
+  useEffect(() => {
+    setExpensePage(1);
+  }, [expenseSearch, expenseCategoryFilter, expenseDateFilter, selectedSchoolYearId]);
+
+  const totalExpensePages = Math.max(1, Math.ceil(filteredExpenseRows.length / EXPENSES_PER_PAGE));
+  const safeExpensePage = Math.min(expensePage, totalExpensePages);
+  const expenseStartIndex = filteredExpenseRows.length === 0 ? 0 : (safeExpensePage - 1) * EXPENSES_PER_PAGE;
+  const paginatedExpenseRows = useMemo(
+    () => filteredExpenseRows.slice(expenseStartIndex, expenseStartIndex + EXPENSES_PER_PAGE),
+    [filteredExpenseRows, expenseStartIndex]
+  );
+  const expenseStartCount = filteredExpenseRows.length === 0 ? 0 : expenseStartIndex + 1;
+  const expenseEndCount = Math.min(expenseStartIndex + paginatedExpenseRows.length, filteredExpenseRows.length);
+  const expensePageNumbers = useMemo(
+    () => getPageNumbers(safeExpensePage, totalExpensePages),
+    [safeExpensePage, totalExpensePages]
+  );
+
   const expenseSummary = useMemo(() => getExpenseSummaryByCategory(selectedReport), [selectedReport]);
   const generatedReportPayload = useMemo(
     () => buildGeneratedReportPayload(reportType, detail, selectedReport),
@@ -1262,6 +1314,7 @@ export default function FinancialReports({ mode = 'financial' }) {
 
   useEffect(() => {
     if (!selectedReport) {
+      setFundMonitoringDraft({});
       return;
     }
 
@@ -1270,6 +1323,17 @@ export default function FinancialReports({ mode = 'financial' }) {
       current_sales: toInputValue(selectedReport.default_inputs?.current_sales ?? selectedReport.current_sales),
       cost_of_sales: toInputValue(selectedReport.default_inputs?.cost_of_sales ?? selectedReport.cost_of_sales),
     });
+
+    const draft = {};
+    (selectedReport.allocations || []).forEach((alloc) => {
+      draft[alloc.category_key] = {
+        interest: toInputValue(alloc.fund_interest),
+        expenses: toInputValue(alloc.fund_expenses),
+        others: toInputValue(alloc.fund_others),
+        cash_on_bank: toInputValue(alloc.fund_cash_on_bank),
+      };
+    });
+    setFundMonitoringDraft(draft);
   }, [selectedReport]);
 
   useEffect(() => {
@@ -1307,6 +1371,18 @@ export default function FinancialReports({ mode = 'financial' }) {
       setReportDraft((currentDraft) => ({
         ...currentDraft,
         [field]: value,
+      }));
+    }
+  }
+
+  function updateFundMonitoringDraft(categoryKey, field, value) {
+    if (value === '' || /^\d*(?:\.\d{0,2})?$/.test(value)) {
+      setFundMonitoringDraft((currentDraft) => ({
+        ...currentDraft,
+        [categoryKey]: {
+          ...(currentDraft[categoryKey] || {}),
+          [field]: value,
+        },
       }));
     }
   }
@@ -1516,6 +1592,23 @@ export default function FinancialReports({ mode = 'financial' }) {
         inventory_used: 0,
         product_cost: nextCostOfSales,
       });
+
+      const fundEntries = (selectedReport.allocations || []).map((alloc) => {
+        const key = alloc.category_key;
+        const itemDraft = fundMonitoringDraft[key] || {};
+        return {
+          category_key: key,
+          interest: parseNonNegativeMoney(itemDraft.interest) ?? 0,
+          expenses: parseNonNegativeMoney(itemDraft.expenses) ?? 0,
+          others: parseNonNegativeMoney(itemDraft.others) ?? 0,
+          cash_on_bank: parseNonNegativeMoney(itemDraft.cash_on_bank) ?? 0,
+        };
+      });
+
+      if (fundEntries.length > 0) {
+        await API.updateFinancialFundMonitoring(selectedReport.id, fundEntries);
+      }
+
       window.showToast?.(`${selectedReport.month_label} financial statement saved.`, 'success');
       await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
     } catch (error) {
@@ -1782,13 +1875,106 @@ export default function FinancialReports({ mode = 'financial' }) {
         ) : null}
 
         {!detailLoading && selectedReport ? (
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+              <section className="panel-card">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900">{selectedReport.month_label}</h2>
+                    <p className="mt-1 text-base leading-7 text-slate-500">
+                      Auto calculations update while you edit Beginning Cash, Current Sales, and Cost of Sales.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveStatement}
+                    disabled={savingStatement || !canSaveSelectedSchoolYear}
+                    className="primary-action-button min-h-12 text-base"
+                  >
+                    <CheckCircleIcon className="h-5 w-5" />
+                    {savingStatement ? 'Saving...' : 'Save Statement'}
+                  </button>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <FormField
+                    label="Beginning Cash"
+                    value={reportDraft.beginning_cash_on_hand}
+                    onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
+                    disabled={!canSaveSelectedSchoolYear}
+                    min="0"
+                    step="0.01"
+                  />
+                  <FormField
+                    label="Current Sales"
+                    value={reportDraft.current_sales}
+                    onChange={(event) => updateReportDraft('current_sales', event.target.value)}
+                    disabled={!canSaveSelectedSchoolYear}
+                    min="0"
+                    step="0.01"
+                  />
+                  <FormField
+                    label="Cost of Sales"
+                    value={reportDraft.cost_of_sales}
+                    onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
+                    disabled={!canSaveSelectedSchoolYear}
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+
+                <div className="mt-6 overflow-hidden rounded-lg border border-slate-200">
+                  {[
+                    ['Beginning Cash', statement.beginningCash, true],
+                    ['Current Sales', statement.currentSales, true],
+                    ['Cost of Sales', statement.costOfSales],
+                    ['Gross Income', statement.grossIncome],
+                    ['Operation Expenses', statement.operationExpenses],
+                    ['Current Balance', statement.currentBalance, true],
+                  ].map(([label, amount, strong]) => (
+                    <div
+                      key={label}
+                      className="grid grid-cols-1 gap-1 border-b border-slate-100 px-4 py-4 last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center"
+                    >
+                      <div className="text-base font-black text-slate-700">{label}</div>
+                      <div className={`text-xl ${strong ? 'font-black text-slate-950' : 'font-bold text-slate-800'}`}>
+                        {formatCurrency(amount)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <aside className="space-y-5">
+                <section className="panel-card">
+                  <h2 className="text-lg font-black text-slate-900">Fund Allocation Summary</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    Net income shares per fund category for {selectedReport.month_label}.
+                  </p>
+                  <div className="mt-4 space-y-3">
+                    {(selectedReport.allocations || []).map((allocation) => (
+                      <div key={allocation.category_key} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 text-sm font-black text-slate-900">{allocation.label}</div>
+                          <div className="text-sm font-black text-primary">{formatPercent(allocation.percentage)}</div>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+                          <span className="text-slate-500">Net Income Allocation</span>
+                          <span className="font-black text-slate-900">{formatCurrency(allocation.amount)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </aside>
+            </div>
+
             <section className="panel-card">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">{selectedReport.month_label}</h2>
+                  <h2 className="text-xl font-black text-slate-900">Fund Allocation Monitoring (DepEd Form)</h2>
                   <p className="mt-1 text-base leading-7 text-slate-500">
-                    Auto calculations update while you edit Beginning Cash, Current Sales, and Cost of Sales.
+                    Auto calculations update while you edit expenses and bank entries per fund allocation.
                   </p>
                 </div>
                 <button
@@ -1802,77 +1988,108 @@ export default function FinancialReports({ mode = 'financial' }) {
                 </button>
               </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-                <FormField
-                  label="Beginning Cash"
-                  value={reportDraft.beginning_cash_on_hand}
-                  onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
-                  disabled={!canSaveSelectedSchoolYear}
-                  min="0"
-                  step="0.01"
-                />
-                <FormField
-                  label="Current Sales"
-                  value={reportDraft.current_sales}
-                  onChange={(event) => updateReportDraft('current_sales', event.target.value)}
-                  disabled={!canSaveSelectedSchoolYear}
-                  min="0"
-                  step="0.01"
-                />
-                <FormField
-                  label="Cost of Sales"
-                  value={reportDraft.cost_of_sales}
-                  onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
-                  disabled={!canSaveSelectedSchoolYear}
-                  min="0"
-                  step="0.01"
-                />
-              </div>
+              <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {(selectedReport.allocations || []).map((allocation) => {
+                  const key = allocation.category_key;
+                  const draft = fundMonitoringDraft[key] || {};
+                  const prevBal = toMoney(allocation.opening_balance);
+                  const netInc = toMoney(allocation.amount);
+                  const interestVal = toMoney(draft.interest);
+                  const expensesVal = toMoney(draft.expenses);
+                  const othersVal = toMoney(draft.others);
+                  const totalExpVal = expensesVal + othersVal;
+                  const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
 
-              <div className="mt-6 overflow-hidden rounded-lg border border-slate-200">
-                {[
-                  ['Beginning Cash', statement.beginningCash, true],
-                  ['Current Sales', statement.currentSales, true],
-                  ['Cost of Sales', statement.costOfSales],
-                  ['Gross Income', statement.grossIncome],
-                  ['Operation Expenses', statement.operationExpenses],
-                  ['Current Balance', statement.currentBalance, true],
-                ].map(([label, amount, strong]) => (
-                  <div
-                    key={label}
-                    className="grid grid-cols-1 gap-1 border-b border-slate-100 px-4 py-4 last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center"
-                  >
-                    <div className="text-base font-black text-slate-700">{label}</div>
-                    <div className={`text-xl ${strong ? 'font-black text-slate-950' : 'font-bold text-slate-800'}`}>
-                      {formatCurrency(amount)}
+                  return (
+                    <div key={key} className="rounded-2xl border border-slate-200/90 bg-white p-5 space-y-5 shadow-2xs transition hover:shadow-md">
+                      <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
+                        <div className="text-lg font-black text-slate-900">{allocation.label}</div>
+                        <span className="inline-flex items-center rounded-lg bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700 border border-emerald-200/60">
+                          {formatPercent(allocation.percentage)}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
+                            Expenses for the Month
+                          </label>
+                          <input
+                            type="text"
+                            value={draft.expenses ?? ''}
+                            onChange={(e) => updateFundMonitoringDraft(key, 'expenses', e.target.value)}
+                            disabled={!canSaveSelectedSchoolYear}
+                            placeholder="0.00"
+                            className="field-control min-h-11 w-full text-base font-semibold bg-slate-50/60 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
+                            Interest on Bank
+                          </label>
+                          <input
+                            type="text"
+                            value={draft.interest ?? ''}
+                            onChange={(e) => updateFundMonitoringDraft(key, 'interest', e.target.value)}
+                            disabled={!canSaveSelectedSchoolYear}
+                            placeholder="0.00"
+                            className="field-control min-h-11 w-full text-base font-semibold bg-slate-50/60 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
+                            Others
+                          </label>
+                          <input
+                            type="text"
+                            value={draft.others ?? ''}
+                            onChange={(e) => updateFundMonitoringDraft(key, 'others', e.target.value)}
+                            disabled={!canSaveSelectedSchoolYear}
+                            placeholder="0.00"
+                            className="field-control min-h-11 w-full text-base font-semibold bg-slate-50/60 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
+                            Cash on Bank
+                          </label>
+                          <input
+                            type="text"
+                            value={draft.cash_on_bank ?? ''}
+                            onChange={(e) => updateFundMonitoringDraft(key, 'cash_on_bank', e.target.value)}
+                            disabled={!canSaveSelectedSchoolYear}
+                            placeholder="0.00"
+                            className="field-control min-h-11 w-full text-base font-semibold bg-slate-50/60 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="overflow-hidden rounded-xl border border-slate-200/90 divide-y divide-slate-100 bg-white">
+                        <div className="flex items-center justify-between px-4 py-3 text-sm">
+                          <span className="font-bold text-slate-600">Prev Month Balance</span>
+                          <span className="font-black text-slate-900">{formatCurrency(prevBal)}</span>
+                        </div>
+                        <div className="flex items-center justify-between px-4 py-3 text-sm">
+                          <span className="font-bold text-slate-600">Net Income Share</span>
+                          <span className="font-black text-slate-900">{formatCurrency(netInc)}</span>
+                        </div>
+                        <div className="flex items-center justify-between px-4 py-3 text-sm">
+                          <span className="font-bold text-slate-600">Total Current Expenses</span>
+                          <span className="font-bold text-rose-600">{formatCurrency(totalExpVal)}</span>
+                        </div>
+                        <div className="flex items-center justify-between px-4 py-3.5 text-base bg-emerald-50/30">
+                          <span className="font-black text-slate-950">Current Balance</span>
+                          <span className="font-black text-emerald-600 text-lg">{formatCurrency(currentBalVal)}</span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
-
-            <aside className="space-y-5">
-              <section className="panel-card">
-                <h2 className="text-lg font-black text-slate-900">Fund Allocation</h2>
-                <p className="mt-1 text-sm leading-6 text-slate-500">
-                  Read-only balance view. Expense updates belong on the Expenses page.
-                </p>
-                <div className="mt-4 space-y-3">
-                  {(selectedReport.allocations || []).map((allocation) => (
-                    <div key={allocation.category_key} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0 text-sm font-black text-slate-900">{allocation.label}</div>
-                        <div className="text-sm font-black text-primary">{formatPercent(allocation.percentage)}</div>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-                        <span className="text-slate-500">Allocation</span>
-                        <span className="font-black text-slate-900">{formatCurrency(allocation.amount)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </aside>
           </div>
         ) : null}
       </div>
@@ -1890,7 +2107,7 @@ export default function FinancialReports({ mode = 'financial' }) {
         {renderSelectors({ compact: true })}
         <ValidationNotice message={selectedSchoolYearValidationMessage} />
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[380px_minmax(0,1fr)]">
           <section className="panel-card">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -2029,7 +2246,7 @@ export default function FinancialReports({ mode = 'financial' }) {
         {renderSelectors({ compact: true })}
         <ValidationNotice message={selectedSchoolYearValidationMessage} />
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[440px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[380px_minmax(0,1fr)]">
           <section className="panel-card">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-rose-50 text-rose-700">
@@ -2252,8 +2469,8 @@ export default function FinancialReports({ mode = 'financial' }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
-                    {filteredExpenseRows.length ? (
-                      filteredExpenseRows.map((row) => (
+                    {paginatedExpenseRows.length ? (
+                      paginatedExpenseRows.map((row) => (
                         <tr key={row.id}>
                           <td className="px-4 py-4 text-base font-bold text-slate-700">{row.typeLabel || row.source}</td>
                           <td className="px-4 py-4 text-base font-bold text-slate-900">{row.date}</td>
@@ -2274,6 +2491,56 @@ export default function FinancialReports({ mode = 'financial' }) {
                   </tbody>
                 </table>
               </div>
+
+              {filteredExpenseRows.length > 0 && (
+                <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm font-semibold text-slate-600">
+                    Showing {expenseStartCount}-{expenseEndCount} of {filteredExpenseRows.length} expenses
+                  </div>
+
+                  {totalExpensePages > 1 && (
+                    <div className="flex w-full flex-wrap items-center justify-center gap-1.5 sm:w-auto sm:justify-end sm:gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setExpensePage((current) => Math.max(1, safeExpensePage - 1))}
+                        disabled={safeExpensePage === 1}
+                        aria-label="Previous expense page"
+                        className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10 sm:px-3"
+                      >
+                        <ChevronLeftIcon className="h-4 w-4" />
+                        <span className="hidden sm:inline">Previous</span>
+                      </button>
+
+                      {expensePageNumbers.map((pageNumber) => (
+                        <button
+                          key={pageNumber}
+                          type="button"
+                          onClick={() => setExpensePage(pageNumber)}
+                          aria-current={pageNumber === safeExpensePage ? 'page' : undefined}
+                          className={`inline-flex h-9 min-w-9 items-center justify-center rounded-xl px-2 text-sm font-black transition sm:h-10 sm:min-w-10 sm:px-3 ${
+                            pageNumber === safeExpensePage
+                              ? 'bg-slate-900 text-white'
+                              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {pageNumber}
+                        </button>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={() => setExpensePage((current) => Math.min(totalExpensePages, safeExpensePage + 1))}
+                        disabled={safeExpensePage === totalExpensePages}
+                        aria-label="Next expense page"
+                        className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10 sm:px-3"
+                      >
+                        <span className="hidden sm:inline">Next</span>
+                        <ChevronRightIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           </div>
         </div>
@@ -2318,7 +2585,7 @@ export default function FinancialReports({ mode = 'financial' }) {
         />
         {renderSelectors({ compact: true })}
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
           <section className="panel-card">
             <h2 className="text-xl font-black text-slate-900">Report Type</h2>
             <div className="mt-4 space-y-2">
@@ -2440,7 +2707,7 @@ export default function FinancialReports({ mode = 'financial' }) {
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_380px]">
           <section className="panel-card">
             <div className="flex items-center justify-between gap-3">
               <div>
