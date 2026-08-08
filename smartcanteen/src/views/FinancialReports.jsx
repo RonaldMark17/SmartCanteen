@@ -927,11 +927,17 @@ export default function FinancialReports({ mode = 'financial' }) {
 
   const loadTemplates = useCallback(async () => {
     setLoadingTemplates(true);
+    setTemplateErrorMessage('');
     try {
       const res = await API.getFinancialReportTemplates();
-      setTemplatesData(res || { active_filename: '', templates: [] });
+      setTemplatesData(res || { active_filename: 'CANTEEN-REPORT-2025-2026-2 (1).xlsx', templates: [] });
     } catch (err) {
       console.warn('Failed to load report templates:', err);
+      if (err?.status === 404 || String(err?.message || '').toLowerCase().includes('not found')) {
+        setTemplateErrorMessage('Remote server is running an older backend version. Default template is active for Excel exports.');
+      } else {
+        setTemplateErrorMessage(err?.message || 'Failed to load report templates');
+      }
     } finally {
       setLoadingTemplates(false);
     }
@@ -976,7 +982,11 @@ export default function FinancialReports({ mode = 'financial' }) {
       setTemplateFile(null);
       loadTemplates();
     } catch (err) {
-      setTemplateErrorMessage(err?.message || 'Failed to upload template');
+      if (err?.status === 405 || err?.status === 404) {
+        setTemplateErrorMessage('Template upload requires updating backend code on server (http://54.253.139.103/). Run git pull & restart server daemon.');
+      } else {
+        setTemplateErrorMessage(err?.message || 'Failed to upload template');
+      }
     } finally {
       setUploadingTemplate(false);
     }
