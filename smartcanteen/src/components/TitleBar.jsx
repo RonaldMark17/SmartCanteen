@@ -30,7 +30,7 @@ const isElectron =
 
 export default function TitleBar() {
   const [activeMenu, setActiveMenu] = useState(null);
-  const [isMaximized, setIsMaximized] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(true);
   const [serverPing, setServerPing] = useState(null);
   const [serverStatus, setServerStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -222,7 +222,7 @@ export default function TitleBar() {
     if (p.includes('/audit')) return 'Audit Logs';
     if (p.includes('/accounts')) return 'Account Management';
     if (p.includes('/settings')) return 'Settings';
-    return 'Smart Canteen';
+    return 'MEALS';
   };
 
   return (
@@ -567,7 +567,7 @@ export default function TitleBar() {
 
               <h2 className="mt-3 text-xl font-black tracking-tight text-white">MEALS</h2>
               <p className="text-xs font-semibold tracking-wide text-emerald-400">
-                Smart Canteen Management System
+                Management of Expenses, Assets, and Logistics System
               </p>
 
               <div className="mt-2.5 inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-950/50 px-3 py-1 text-[11px] font-bold text-emerald-300">
@@ -580,7 +580,7 @@ export default function TitleBar() {
             {/* Content Body */}
             <div className="max-h-[60vh] space-y-4 overflow-y-auto p-6 text-xs text-slate-300 custom-scrollbar">
               <p className="leading-relaxed text-slate-300">
-                MEALS is an all-in-one canteen operations system built for intelligent inventory tracking, real-time demand forecasting, and automated financial reporting across multiple terminals.
+                MEALS (Management of Expenses, Assets, and Logistics System) is an all-in-one operations system built for intelligent inventory tracking, real-time demand forecasting, and automated financial reporting across multiple terminals.
               </p>
 
               {/* Feature Highlights Grid (without POS) */}

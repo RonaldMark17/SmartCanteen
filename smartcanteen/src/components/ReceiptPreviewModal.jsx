@@ -303,7 +303,7 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
       <body>
         <div class="voucher-box">
           <div class="header">
-            <div class="school-title">MEALS - SmartCanteen System</div>
+            <div class="school-title">MEALS - Management of Expenses, Assets, and Logistics System</div>
             <div class="sub-title">DepEd Canteen Financial Management & Operations</div>
             <div class="badge">EXPENSE VOUCHER & RECEIPT RECORD</div>
           </div>
@@ -349,7 +349,7 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
           }
 
           <div class="footer-note">
-            This receipt record is an official transaction item of the SmartCanteen Financial Accounting System. Printed on ${new Date().toLocaleString(
+            This receipt record is an official transaction item of the MEALS Financial Accounting System. Printed on ${new Date().toLocaleString(
               'en-PH'
             )}.
           </div>

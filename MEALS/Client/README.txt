@@ -2,7 +2,7 @@
                       MEALS Desktop Client Setup
 ========================================================================
 
-Welcome to the MEALS Smart Canteen Management System.
+Welcome to the MEALS (Management of Expenses, Assets, and Logistics System).
 
 System Requirements:
 - Operating System: Windows 10 / Windows 11 (64-bit)

@@ -74,8 +74,8 @@ export default function AppSplashScreen({ onFinished }) {
         <h1 className="text-3xl font-black tracking-tight bg-gradient-to-r from-white via-slate-100 to-emerald-400 bg-clip-text text-transparent">
           MEALS
         </h1>
-        <p className="mt-1 text-xs font-semibold tracking-wider uppercase text-emerald-400">
-          Smart Canteen System
+        <p className="mt-1.5 text-xs font-semibold tracking-wide uppercase text-emerald-400 leading-relaxed max-w-xs">
+          Management of Expenses, Assets, and Logistics System
         </p>
 
         {/* Progress Bar */}

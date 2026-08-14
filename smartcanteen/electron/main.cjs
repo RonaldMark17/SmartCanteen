@@ -75,7 +75,7 @@ function createWindow() {
     height: 850,
     minWidth: 1024,
     minHeight: 700,
-    title: 'MEALS - Smart Canteen System',
+    title: 'MEALS - Management of Expenses, Assets, and Logistics System',
     icon: windowIcon,
     frame: false, // Frameless for custom native TitleBar
     autoHideMenuBar: true,
@@ -103,6 +103,9 @@ function createWindow() {
   mainWindow.on('unmaximize', notifyMaximizeState);
   mainWindow.on('enter-full-screen', () => notifyMaximizeState());
   mainWindow.on('leave-full-screen', () => notifyMaximizeState());
+
+  // Maximize window by default
+  mainWindow.maximize();
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -257,7 +260,7 @@ function getAppVersion() {
 
 ipcMain.handle('get-system-info', () => {
   return {
-    appName: 'MEALS - Smart Canteen Management System',
+    appName: 'MEALS - Management of Expenses, Assets, and Logistics System',
     appVersion: getAppVersion(),
     electronVersion: process.versions.electron,
     chromeVersion: process.versions.chrome,
