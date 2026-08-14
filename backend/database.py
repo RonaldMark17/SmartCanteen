@@ -11,7 +11,7 @@ def _resolve_database_url():
             return database_url.replace("postgres://", "postgresql://", 1)
         return database_url
 
-    sqlite_path = "/tmp/canteen.db" if os.getenv("VERCEL") else "./canteen.db"
+    sqlite_path = "./canteen.db"
     return f"sqlite:///{sqlite_path}"
 
 

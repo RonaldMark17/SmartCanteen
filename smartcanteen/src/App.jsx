@@ -6,6 +6,7 @@ const isDesktopApp =
 
 const AppRouter = isDesktopApp ? HashRouter : BrowserRouter;
 import Layout from './components/Layout';
+import TitleBar from './components/TitleBar';
 import Toaster from './components/Toaster';
 import Login from './views/Login';
 import Dashboard from './views/Dashboard';
@@ -37,10 +38,10 @@ function ModuleDisabled({ moduleLabel, fallbackPath }) {
           <div className="text-sm font-black uppercase tracking-widest text-primary">
             Module disabled
           </div>
-          <h1 className="mt-3 text-2xl font-black text-slate-950">
+          <h1 className="mt-3 text-2xl font-black text-slate-950 dark:text-white">
             This module is currently disabled by the Administrator.
           </h1>
-          <p className="mt-3 text-base leading-7 text-slate-600">
+          <p className="mt-3 text-base leading-7 text-slate-600 dark:text-slate-300">
             {moduleLabel} is still installed and its data is preserved. An administrator can enable it again from Module Management.
           </p>
           <Link to={fallbackPath} className="primary-action-button mt-6 w-fit">
@@ -55,7 +56,7 @@ function ModuleDisabled({ moduleLabel, fallbackPath }) {
 function ModuleSettingsLoading() {
   return (
     <div className="view-shell">
-      <div className="panel-card flex min-h-[220px] items-center justify-center text-sm font-semibold text-slate-500">
+      <div className="panel-card flex min-h-[220px] items-center justify-center text-sm font-semibold text-slate-500 dark:text-slate-400">
         Loading module settings...
       </div>
     </div>
@@ -64,7 +65,7 @@ function ModuleSettingsLoading() {
 
 function AuthLoading() {
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-slate-50 text-slate-600">
+    <div className="flex h-full w-full flex-1 items-center justify-center bg-slate-50 text-slate-600 dark:bg-slate-950 dark:text-slate-300">
       <div className="flex flex-col items-center gap-3">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
         <p className="text-sm font-semibold">Verifying secure authentication...</p>
@@ -162,20 +163,26 @@ function AppContent() {
   }
 
   return (
-    <AppRouter>
+    <>
       <Toaster />
-
       <ModuleSettingsProvider>
         <AuthenticatedWorkspace />
       </ModuleSettingsProvider>
-    </AppRouter>
+    </>
   );
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <AppRouter>
+      <AuthProvider>
+        <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
+          <TitleBar />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <AppContent />
+          </div>
+        </div>
+      </AuthProvider>
+    </AppRouter>
   );
 }

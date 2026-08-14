@@ -305,6 +305,9 @@ function resolveApiBase() {
   }
 
   if (typeof window !== 'undefined' && (window.electronAPI?.isElectron || window.location?.protocol === 'file:')) {
+    if (window.MEALS_CONFIG?.apiBaseUrl && isAbsoluteUrl(window.MEALS_CONFIG.apiBaseUrl)) {
+      return normalizeApiBase(window.MEALS_CONFIG.apiBaseUrl);
+    }
     if (envApiBase && isAbsoluteUrl(envApiBase)) {
       return normalizeApiBase(envApiBase);
     }

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -8,17 +8,32 @@ process.on('uncaughtException', (error) => {
 
 const isDev = !app.isPackaged && process.env.NODE_ENV === 'development';
 
-function loadAppConfig() {
+function getConfigFilePath() {
   const possiblePaths = [
-    // Next to executable in installed dir
     path.join(path.dirname(app.getPath('exe')), 'config.json'),
-    // Process working directory
     path.join(process.cwd(), 'config.json'),
-    // Extra resources directory in electron-builder
     path.join(process.resourcesPath, 'config.json'),
-    // App root directory
     path.join(__dirname, 'config.json'),
     path.join(app.getAppPath(), 'config.json'),
+  ];
+
+  for (const configPath of possiblePaths) {
+    if (fs.existsSync(configPath)) {
+      return configPath;
+    }
+  }
+
+  return path.join(app.getPath('userData'), 'config.json');
+}
+
+function loadAppConfig() {
+  const possiblePaths = [
+    path.join(path.dirname(app.getPath('exe')), 'config.json'),
+    path.join(process.cwd(), 'config.json'),
+    path.join(process.resourcesPath, 'config.json'),
+    path.join(__dirname, 'config.json'),
+    path.join(app.getAppPath(), 'config.json'),
+    path.join(app.getPath('userData'), 'config.json'),
   ];
 
   for (const configPath of possiblePaths) {
@@ -62,66 +77,36 @@ function createWindow() {
     minHeight: 700,
     title: 'MEALS - Smart Canteen System',
     icon: windowIcon,
-    autoHideMenuBar: false,
+    frame: false, // Frameless for custom native TitleBar
+    autoHideMenuBar: true,
+    backgroundColor: '#090d16',
     show: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false, // Prevent CORS/file:// issues in local desktop wrapper
+      webSecurity: false,
     },
   });
 
-  // Simple application menu
-  const menuTemplate = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Reload',
-          accelerator: 'CmdOrCtrl+R',
-          click: () => mainWindow.reload(),
-        },
-        { type: 'separator' },
-        { role: 'quit', label: 'Exit MEALS' },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-        { role: 'toggleDevTools' },
-      ],
-    },
-    {
-      label: 'Help',
-      submenu: [
-        {
-          label: 'About MEALS',
-          click: () => {
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: 'About MEALS',
-              message: 'MEALS - Smart Canteen Management System',
-              detail: `Connected to API: ${cachedConfig.apiBaseUrl}\nVersion: 1.0.0`,
-            });
-          },
-        },
-      ],
-    },
-  ];
+  // Remove native Win32 application menu completely in favor of custom in-app UI menu
+  Menu.setApplicationMenu(null);
 
-  const menu = Menu.buildFromTemplate(menuTemplate);
-  Menu.setApplicationMenu(menu);
+  // Sync window maximized state with renderer
+  const notifyMaximizeState = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window-maximized-change', mainWindow.isMaximized());
+    }
+  };
+
+  mainWindow.on('maximize', notifyMaximizeState);
+  mainWindow.on('unmaximize', notifyMaximizeState);
+  mainWindow.on('enter-full-screen', () => notifyMaximizeState());
+  mainWindow.on('leave-full-screen', () => notifyMaximizeState());
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    // Resolve dist index.html path flexibly
     const possibleIndexPaths = [
       path.join(app.getAppPath(), 'dist', 'index.html'),
       path.join(__dirname, '../dist/index.html'),
@@ -150,7 +135,72 @@ function createWindow() {
   });
 }
 
-// Register IPC handlers before app ready
+// Window control IPC handlers
+ipcMain.on('window-minimize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.minimize();
+  }
+});
+
+ipcMain.on('window-maximize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  }
+});
+
+ipcMain.on('window-close', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.close();
+  }
+});
+
+ipcMain.handle('window-is-maximized', () => {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow.isMaximized() : false;
+});
+
+ipcMain.on('window-reload', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.reload();
+  }
+});
+
+ipcMain.on('window-toggle-devtools', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.toggleDevTools();
+  }
+});
+
+ipcMain.on('window-toggle-fullscreen', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  }
+});
+
+ipcMain.on('window-zoom-in', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const current = mainWindow.webContents.getZoomLevel();
+    mainWindow.webContents.setZoomLevel(current + 0.5);
+  }
+});
+
+ipcMain.on('window-zoom-out', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const current = mainWindow.webContents.getZoomLevel();
+    mainWindow.webContents.setZoomLevel(Math.max(-3, current - 0.5));
+  }
+});
+
+ipcMain.on('window-zoom-reset', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.setZoomLevel(0);
+  }
+});
+
+// App configuration IPC handlers
 ipcMain.on('get-app-config-sync', (event) => {
   if (!cachedConfig) {
     cachedConfig = loadAppConfig();
@@ -163,6 +213,41 @@ ipcMain.handle('get-app-config', () => {
     cachedConfig = loadAppConfig();
   }
   return cachedConfig;
+});
+
+ipcMain.handle('save-app-config', (event, newConfig) => {
+  try {
+    if (!newConfig || typeof newConfig !== 'object' || !newConfig.apiBaseUrl) {
+      return { success: false, error: 'Invalid configuration' };
+    }
+
+    cachedConfig = {
+      ...cachedConfig,
+      ...newConfig,
+      apiBaseUrl: String(newConfig.apiBaseUrl).trim(),
+    };
+
+    const targetPath = getConfigFilePath();
+    fs.writeFileSync(targetPath, JSON.stringify(cachedConfig, null, 2), 'utf8');
+    console.log(`[Main] Saved updated config.json to: ${targetPath}`);
+    return { success: true, config: cachedConfig };
+  } catch (err) {
+    console.error('[Main] Failed to save config:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-system-info', () => {
+  return {
+    appName: 'MEALS Smart Canteen System',
+    appVersion: '1.0.0',
+    electronVersion: process.versions.electron,
+    chromeVersion: process.versions.chrome,
+    nodeVersion: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+    apiBaseUrl: cachedConfig?.apiBaseUrl || 'http://54.253.139.103/api',
+  };
 });
 
 app.whenReady().then(createWindow);
