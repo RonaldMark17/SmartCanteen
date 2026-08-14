@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ArrowUpTrayIcon,
   CheckBadgeIcon,
   DocumentMagnifyingGlassIcon,
   EyeIcon,
@@ -12,7 +13,9 @@ import {
   ReceiptPercentIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { getReceipt } from '../services/receiptStorage';
+import { getReceipt, saveReceipt } from '../services/receiptStorage';
+import { API } from '../services/api';
+import { readFileAsDataUrl, validateReceiptFile } from '../services/receiptSanitizer';
 
 function formatCurrency(amount) {
   const numeric = Number(amount) || 0;
@@ -22,17 +25,21 @@ function formatCurrency(amount) {
   })}`;
 }
 
-export default function ReceiptPreviewModal({ receiptData, onClose }) {
+export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpdated }) {
   const [storedReceipt, setStoredReceipt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [rotation, setRotation] = useState(0);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
     setZoomLevel(1);
     setRotation(0);
+    setUploadError('');
 
     async function loadData() {
       if (!receiptData) {
@@ -59,6 +66,20 @@ export default function ReceiptPreviewModal({ receiptData, onClose }) {
       }
       if (!found && expenseId) {
         found = await getReceipt(expenseId, receiptData);
+      }
+
+      // Fallback: direct backend URL if filename exists
+      if (!found && filename && filename !== 'No receipt' && filename !== '-') {
+        const directUrl = API.getFinancialReceiptUrl(filename);
+        if (directUrl) {
+          found = {
+            filename,
+            url: directUrl,
+            category: receiptData.category,
+            amount: receiptData.amount,
+            date: receiptData.date,
+          };
+        }
       }
 
       if (isMounted) {
@@ -118,6 +139,53 @@ export default function ReceiptPreviewModal({ receiptData, onClose }) {
 
   function handleRotate() {
     setRotation((prev) => (prev + 90) % 360);
+  }
+
+  async function handleFileSelected(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const validation = validateReceiptFile(file);
+    if (!validation.valid) {
+      setUploadError(validation.error || 'Invalid file format.');
+      return;
+    }
+
+    setUploadError('');
+    setUploadingReceipt(true);
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const updatedEntry = {
+        key: filename,
+        filename,
+        rawName: file.name,
+        dataUrl,
+        mimeType: validation.mimeType,
+        isPdf: validation.isPdf,
+        category,
+        amount,
+        date,
+        supplier,
+        description,
+        reportId: receiptData.reportId,
+      };
+
+      await saveReceipt(updatedEntry);
+      API.uploadFinancialReceipt(file).catch((err) => {
+        console.warn('Backend receipt upload:', err);
+      });
+
+      setStoredReceipt(updatedEntry);
+      onReceiptUpdated?.(updatedEntry);
+      window.showToast?.('Receipt attached and verified!', 'success');
+    } catch (err) {
+      console.error('Error attaching receipt:', err);
+      setUploadError('Failed to read and attach receipt.');
+    } finally {
+      setUploadingReceipt(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   }
 
   function handleDownload() {
@@ -449,6 +517,13 @@ export default function ReceiptPreviewModal({ receiptData, onClose }) {
                     <img
                       src={previewSource}
                       alt={filename}
+                      onError={(e) => {
+                        const directUrl = API.getFinancialReceiptUrl(filename);
+                        if (directUrl && e.currentTarget.src !== directUrl && !e.currentTarget.dataset.retried) {
+                          e.currentTarget.dataset.retried = 'true';
+                          e.currentTarget.src = directUrl;
+                        }
+                      }}
                       style={{
                         transform: `scale(${zoomLevel}) rotate(${rotation}deg)`,
                         transition: 'transform 0.2s ease',
@@ -488,6 +563,24 @@ export default function ReceiptPreviewModal({ receiptData, onClose }) {
                   </div>
                 </div>
 
+                {uploadError && (
+                  <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs font-semibold text-rose-700">
+                    {uploadError}
+                  </div>
+                )}
+
+                <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingReceipt}
+                    className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary-dark transition active:scale-95"
+                  >
+                    <ArrowUpTrayIcon className="h-4 w-4" />
+                    {uploadingReceipt ? 'Attaching...' : 'Attach / Re-upload Receipt Image'}
+                  </button>
+                </div>
+
                 <p className="mt-4 text-[11px] leading-relaxed text-slate-400">
                   This transaction is recorded and verified within the DepEd Canteen Financial System.
                   Click "Print Receipt" below to generate a formal voucher copy.
@@ -496,6 +589,15 @@ export default function ReceiptPreviewModal({ receiptData, onClose }) {
             )}
           </div>
         </div>
+
+        {/* Hidden file input for re-uploading receipts */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+          onChange={handleFileSelected}
+          className="hidden"
+        />
 
         {/* Modal Footer */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
@@ -510,6 +612,15 @@ export default function ReceiptPreviewModal({ receiptData, onClose }) {
                 Download File
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingReceipt}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100 transition"
+            >
+              <ArrowUpTrayIcon className="h-4 w-4" />
+              {previewSource ? 'Replace Receipt' : 'Attach Receipt'}
+            </button>
             <button
               type="button"
               onClick={handlePrint}

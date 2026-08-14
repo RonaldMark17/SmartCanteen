@@ -8,7 +8,7 @@ import { API } from './api';
 import { readFileAsDataUrl } from './receiptSanitizer';
 
 const DB_NAME = 'SmartCanteen_ReceiptDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'receipts';
 
 // In-memory fallback map if IndexedDB is unavailable
@@ -90,6 +90,7 @@ function populateMemoryCache(entry) {
     const reportKey = `${entry.reportId}_${entry.filename}`;
     memoryReceiptCache.set(reportKey, entry);
     memoryReceiptCache.set(reportKey.toLowerCase(), entry);
+    memoryReceiptCache.set(reportKey.replace(/\s+/g, '_'), entry);
   }
 }
 
@@ -162,17 +163,15 @@ export async function getReceipt(keyOrFilename, metadata = {}) {
   if (!searchKey || searchKey === 'No receipt' || searchKey === '-') return null;
   const lowerKey = searchKey.toLowerCase();
   const normKey = normalizeAlphaNumeric(searchKey);
+  const underscoreKey = searchKey.replace(/\s+/g, '_');
+  const spaceKey = searchKey.replace(/_/g, ' ');
 
   // 1. Check memory cache first
   if (memoryReceiptCache.has(searchKey)) return memoryReceiptCache.get(searchKey);
   if (memoryReceiptCache.has(lowerKey)) return memoryReceiptCache.get(lowerKey);
+  if (memoryReceiptCache.has(underscoreKey)) return memoryReceiptCache.get(underscoreKey);
+  if (memoryReceiptCache.has(spaceKey)) return memoryReceiptCache.get(spaceKey);
   if (normKey && memoryReceiptCache.has(normKey)) return memoryReceiptCache.get(normKey);
-  if (memoryReceiptCache.has(searchKey.replace(/\s+/g, '_'))) {
-    return memoryReceiptCache.get(searchKey.replace(/\s+/g, '_'));
-  }
-  if (memoryReceiptCache.has(searchKey.replace(/_/g, ' '))) {
-    return memoryReceiptCache.get(searchKey.replace(/_/g, ' '));
-  }
 
   // 2. Check localStorage fallback
   try {
@@ -201,16 +200,16 @@ export async function getReceipt(keyOrFilename, metadata = {}) {
         // Try exact key
         const getReq = store.get(searchKey);
         getReq.onsuccess = () => {
-          if (getReq.result) {
+          if (getReq.result && getReq.result.dataUrl) {
             resolve(getReq.result);
             return;
           }
 
-          // Try lowercase key
-          const lowerReq = store.get(lowerKey);
-          lowerReq.onsuccess = () => {
-            if (lowerReq.result) {
-              resolve(lowerReq.result);
+          // Try underscore key
+          const underReq = store.get(underscoreKey);
+          underReq.onsuccess = () => {
+            if (underReq.result && underReq.result.dataUrl) {
+              resolve(underReq.result);
               return;
             }
 
@@ -227,12 +226,13 @@ export async function getReceipt(keyOrFilename, metadata = {}) {
 
                 if (
                   val.filename === searchKey ||
+                  val.filename === underscoreKey ||
                   val.filename?.toLowerCase() === lowerKey ||
                   valNormKey === normKey ||
                   valNormFilename === normKey ||
                   valNormRaw === normKey ||
-                  (normKey.length >= 6 && valNormFilename?.includes(normKey)) ||
-                  (normKey.length >= 6 && normKey.includes(valNormFilename))
+                  (normKey.length >= 5 && valNormFilename && valNormFilename.includes(normKey)) ||
+                  (normKey.length >= 5 && valNormFilename && normKey.includes(valNormFilename))
                 ) {
                   matched = val;
                   resolve(matched);
@@ -244,7 +244,8 @@ export async function getReceipt(keyOrFilename, metadata = {}) {
                   metadata.reportId &&
                   Number(val.reportId) === Number(metadata.reportId) &&
                   val.category === metadata.category &&
-                  val.date === metadata.date
+                  val.date === metadata.date &&
+                  val.dataUrl
                 ) {
                   matched = val;
                   resolve(matched);
@@ -258,7 +259,7 @@ export async function getReceipt(keyOrFilename, metadata = {}) {
             };
             cursorReq.onerror = () => resolve(null);
           };
-          lowerReq.onerror = () => resolve(null);
+          underReq.onerror = () => resolve(null);
         };
         getReq.onerror = () => resolve(null);
       } catch (err) {
@@ -276,30 +277,37 @@ export async function getReceipt(keyOrFilename, metadata = {}) {
   // 4. Fallback: Fetch from backend API if filename has extension (e.g. .png, .jpg, .pdf)
   const isFilenameFormat = /\.(png|jpe?g|webp|gif|pdf)$/i.test(searchKey);
   if (isFilenameFormat) {
-    try {
-      const backendFile = await API.getFinancialReceiptBlob(searchKey);
-      if (backendFile && backendFile.blob) {
-        const dataUrl = await readFileAsDataUrl(backendFile.blob);
-        const mimeType = backendFile.blob.type || 'image/png';
-        const isPdf = mimeType === 'application/pdf' || searchKey.toLowerCase().endsWith('.pdf');
-        const restoredEntry = {
-          key: searchKey,
-          filename: searchKey,
-          dataUrl,
-          mimeType,
-          isPdf,
-          category: metadata.category || 'Operating Expense',
-          amount: metadata.amount || 0,
-          date: metadata.date || 'N/A',
-          supplier: metadata.supplier || '',
-          description: metadata.description || '',
-          reportId: metadata.reportId || null,
-        };
-        await saveReceipt(restoredEntry);
-        return restoredEntry;
+    const candidates = [searchKey, underscoreKey, spaceKey].filter(
+      (val, idx, arr) => arr.indexOf(val) === idx
+    );
+
+    for (const cand of candidates) {
+      try {
+        const backendFile = await API.getFinancialReceiptBlob(cand);
+        if (backendFile && backendFile.blob) {
+          const dataUrl = await readFileAsDataUrl(backendFile.blob);
+          const mimeType = backendFile.blob.type || 'image/png';
+          const isPdf = mimeType === 'application/pdf' || cand.toLowerCase().endsWith('.pdf');
+          const restoredEntry = {
+            key: cand,
+            filename: cand,
+            rawName: searchKey,
+            dataUrl,
+            mimeType,
+            isPdf,
+            category: metadata.category || 'Operating Expense',
+            amount: metadata.amount || 0,
+            date: metadata.date || 'N/A',
+            supplier: metadata.supplier || '',
+            description: metadata.description || '',
+            reportId: metadata.reportId || null,
+          };
+          await saveReceipt(restoredEntry);
+          return restoredEntry;
+        }
+      } catch (err) {
+        console.warn(`Backend receipt fetch error for ${cand}:`, err);
       }
-    } catch (err) {
-      console.warn('Backend receipt fetch fallback error:', err);
     }
   }
 

@@ -1862,10 +1862,21 @@ export default function FinancialReports({ mode = 'financial' }) {
         };
         await saveReceipt(receiptEntry);
 
-        if (fileToSave) {
-          API.uploadFinancialReceipt(fileToSave).catch((uploadErr) => {
-            console.warn('Backend receipt upload fallback:', uploadErr);
+        // Also save under raw name if different
+        if (fileToSave?.name && fileToSave.name !== sanitizedReceiptName) {
+          await saveReceipt({
+            ...receiptEntry,
+            key: fileToSave.name,
+            filename: fileToSave.name,
           });
+        }
+
+        if (fileToSave) {
+          try {
+            await API.uploadFinancialReceipt(fileToSave);
+          } catch (uploadErr) {
+            console.warn('Backend receipt upload fallback:', uploadErr);
+          }
         }
       }
 
@@ -3167,6 +3178,12 @@ export default function FinancialReports({ mode = 'financial' }) {
         <ReceiptPreviewModal
           receiptData={activePreviewReceipt}
           onClose={() => setActivePreviewReceipt(null)}
+          onReceiptUpdated={(updated) => {
+            setActivePreviewReceipt(updated);
+            if (selectedSchoolYearId) {
+              loadSchoolYearDetail(selectedSchoolYearId, selectedReportId);
+            }
+          }}
         />
       )}
     </>

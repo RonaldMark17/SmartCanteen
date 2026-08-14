@@ -1,3 +1,4 @@
+import base64
 import calendar
 import io
 import json
@@ -12,7 +13,7 @@ from typing import Optional, Any, cast
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 from sqlalchemy import func
@@ -2556,8 +2557,8 @@ def _sanitize_receipt_filename(raw_name: str) -> str:
 
 @router.post("/api/financial-reports/receipts/upload")
 async def upload_expense_receipt(
+    request: Request,
     file: UploadFile = File(...),
-    request: Optional[Request] = None,
     db: Session = Depends(get_db),
     current: models.User = Depends(require_financial_report_user),
 ):
@@ -2586,22 +2587,72 @@ async def upload_expense_receipt(
     with open(file_path, "wb") as f:
         f.write(contents)
 
-    # Also save under raw and direct clean name without timestamp for direct lookup
+    # Also save under raw name and direct clean name for direct lookup
     base_clean = re.sub(r"[|<>:\"/\\?*;%${}()[\]&'`!~#^=+,]", "", os.path.splitext(os.path.basename(raw_name))[0])
     base_clean = re.sub(r"\s+", "_", base_clean).strip("_")
-    if base_clean:
-        direct_name = f"{base_clean}{ext}"
-        direct_path = os.path.join(RECEIPTS_UPLOAD_DIR, direct_name)
+    direct_name = f"{base_clean}{ext}" if base_clean else sanitized_filename
+    
+    # Save copies with direct_name and raw filename if clean
+    for alias_name in [direct_name, os.path.basename(raw_name)]:
+        if alias_name and alias_name != sanitized_filename:
+            alias_path = os.path.join(RECEIPTS_UPLOAD_DIR, alias_name)
+            try:
+                with open(alias_path, "wb") as f:
+                    f.write(contents)
+            except Exception:
+                pass
+
+    # Save to database (ExpenseReceipt) for permanent persistence
+    mime_type = "image/png"
+    if ext in {".jpg", ".jpeg"}:
+        mime_type = "image/jpeg"
+    elif ext == ".webp":
+        mime_type = "image/webp"
+    elif ext == ".gif":
+        mime_type = "image/gif"
+    elif ext == ".pdf":
+        mime_type = "application/pdf"
+
+    norm_name = re.sub(r"[^a-zA-Z0-9]", "", raw_name).lower()
+    b64_data = base64.b64encode(contents).decode("utf-8")
+
+    try:
+        existing_receipt = db.query(models.ExpenseReceipt).filter(
+            or_(
+                models.ExpenseReceipt.filename == sanitized_filename,
+                models.ExpenseReceipt.original_name == raw_name,
+                models.ExpenseReceipt.filename == direct_name,
+            )
+        ).first()
+
+        if existing_receipt:
+            existing_receipt.file_data_base64 = b64_data
+            existing_receipt.file_size = len(contents)
+            existing_receipt.mime_type = mime_type
+            existing_receipt.normalized_name = norm_name
+            db.commit()
+        else:
+            db_receipt = models.ExpenseReceipt(
+                filename=sanitized_filename,
+                original_name=raw_name,
+                normalized_name=norm_name,
+                mime_type=mime_type,
+                file_data_base64=b64_data,
+                file_size=len(contents),
+            )
+            db.add(db_receipt)
+            db.commit()
+    except Exception as db_err:
+        print(f"Warning: Failed to save receipt to database table: {db_err}")
         try:
-            with open(direct_path, "wb") as f:
-                f.write(contents)
+            db.rollback()
         except Exception:
             pass
 
     return {
         "success": True,
         "filename": sanitized_filename,
-        "direct_filename": f"{base_clean}{ext}" if base_clean else sanitized_filename,
+        "direct_filename": direct_name,
         "original_name": raw_name,
         "size": len(contents),
         "url": f"/api/financial-reports/receipts/{sanitized_filename}",
@@ -2611,62 +2662,92 @@ async def upload_expense_receipt(
 @router.get("/api/financial-reports/receipts/{filename}")
 def get_expense_receipt_file(
     filename: str,
+    request: Request,
     token: Optional[str] = None,
     db: Session = Depends(get_db),
-    request: Optional[Request] = None,
 ):
-    # Authenticate via Header or Token query parameter
-    current_user = None
-    auth_header = request.headers.get("Authorization") if request else None
-    if auth_header and auth_header.startswith("Bearer "):
-        bearer_token = auth_header[7:].strip()
-        try:
-            current_user = auth.get_user_from_token(bearer_token, db)
-        except Exception:
-            current_user = None
-    elif token:
-        try:
-            current_user = auth.get_user_from_token(token, db)
-        except Exception:
-            current_user = None
-
     safe_name = os.path.basename(filename)
     file_path = os.path.join(RECEIPTS_UPLOAD_DIR, safe_name)
 
     if not os.path.isfile(file_path):
-        # Search by space/underscore or case-insensitive or prefix matching in RECEIPTS_UPLOAD_DIR
+        # 1. Search disk by space/underscore, case-insensitive, or prefix matching in RECEIPTS_UPLOAD_DIR
         if os.path.isdir(RECEIPTS_UPLOAD_DIR):
             target_norm = re.sub(r"[^a-zA-Z0-9]", "", safe_name).lower()
             base_part = os.path.splitext(safe_name)[0].lower()
+            base_part_clean = re.sub(r"[^a-zA-Z0-9]", "", base_part)
             candidate_path = None
 
             for f in os.listdir(RECEIPTS_UPLOAD_DIR):
                 f_norm = re.sub(r"[^a-zA-Z0-9]", "", f).lower()
+                f_base = re.sub(r"[^a-zA-Z0-9]", "", os.path.splitext(f)[0]).lower()
                 if f_norm == target_norm or f.lower() == safe_name.lower():
                     candidate_path = os.path.join(RECEIPTS_UPLOAD_DIR, f)
                     safe_name = f
                     break
-                elif base_part and len(base_part) >= 3 and f.lower().startswith(base_part):
+                elif (
+                    (base_part_clean and len(base_part_clean) >= 4 and base_part_clean in f_base)
+                    or (f_base and len(f_base) >= 4 and f_base in base_part_clean)
+                ):
                     candidate_path = os.path.join(RECEIPTS_UPLOAD_DIR, f)
                     safe_name = f
 
             if candidate_path and os.path.isfile(candidate_path):
                 file_path = candidate_path
 
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="Receipt file not found")
+    if os.path.isfile(file_path):
+        _, ext = os.path.splitext(safe_name)
+        ext = ext.lower()
+        media_type = "image/png"
+        if ext in {".jpg", ".jpeg"}:
+            media_type = "image/jpeg"
+        elif ext == ".webp":
+            media_type = "image/webp"
+        elif ext == ".gif":
+            media_type = "image/gif"
+        elif ext == ".pdf":
+            media_type = "application/pdf"
 
-    _, ext = os.path.splitext(safe_name)
-    ext = ext.lower()
-    media_type = "image/png"
-    if ext in {".jpg", ".jpeg"}:
-        media_type = "image/jpeg"
-    elif ext == ".webp":
-        media_type = "image/webp"
-    elif ext == ".gif":
-        media_type = "image/gif"
-    elif ext == ".pdf":
-        media_type = "application/pdf"
+        return FileResponse(file_path, media_type=media_type, filename=safe_name)
 
-    return FileResponse(file_path, media_type=media_type, filename=safe_name)
+    # 2. Database Fallback (ExpenseReceipt table)
+    target_norm = re.sub(r"[^a-zA-Z0-9]", "", safe_name).lower()
+    db_receipt = None
+    try:
+        db_receipt = (
+            db.query(models.ExpenseReceipt)
+            .filter(
+                or_(
+                    models.ExpenseReceipt.filename == safe_name,
+                    models.ExpenseReceipt.original_name == safe_name,
+                    models.ExpenseReceipt.normalized_name == target_norm,
+                    func.lower(models.ExpenseReceipt.filename) == safe_name.lower(),
+                    func.lower(models.ExpenseReceipt.original_name) == safe_name.lower(),
+                )
+            )
+            .first()
+        )
+    except Exception as query_err:
+        print(f"Error querying ExpenseReceipt: {query_err}")
+
+    if db_receipt and db_receipt.file_data_base64:
+        try:
+            file_bytes = base64.b64decode(db_receipt.file_data_base64)
+            # Restore to disk for future speed
+            os.makedirs(RECEIPTS_UPLOAD_DIR, exist_ok=True)
+            restore_path = os.path.join(RECEIPTS_UPLOAD_DIR, safe_name)
+            with open(restore_path, "wb") as rf:
+                rf.write(file_bytes)
+
+            return Response(
+                content=file_bytes,
+                media_type=db_receipt.mime_type or "image/png",
+                headers={
+                    "Content-Disposition": f'inline; filename="{safe_name}"',
+                    "Cache-Control": "public, max-age=86400",
+                },
+            )
+        except Exception as decode_err:
+            print(f"Error decoding base64 receipt from db: {decode_err}")
+
+    raise HTTPException(status_code=404, detail="Receipt file not found")
 

@@ -345,3 +345,17 @@ class FundMonitoringEntry(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     report: Mapped["MonthlyReport"] = relationship("MonthlyReport", back_populates="fund_entries")
+
+
+class ExpenseReceipt(Base):
+    __tablename__ = "expense_receipts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    filename: Mapped[str] = mapped_column(String, unique=True, index=True)
+    original_name: Mapped[str] = mapped_column(String, index=True)
+    normalized_name: Mapped[str] = mapped_column(String, index=True)
+    mime_type: Mapped[str] = mapped_column(String, default="image/png")
+    file_data_base64: Mapped[str] = mapped_column(Text, nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+
