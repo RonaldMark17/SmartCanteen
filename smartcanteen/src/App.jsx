@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { BrowserRouter, HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 
 const isDesktopApp =
@@ -8,6 +9,7 @@ const AppRouter = isDesktopApp ? HashRouter : BrowserRouter;
 import Layout from './components/Layout';
 import TitleBar from './components/TitleBar';
 import Toaster from './components/Toaster';
+import AppSplashScreen from './components/AppSplashScreen';
 import Login from './views/Login';
 import Dashboard from './views/Dashboard';
 import POS from './views/POS';
@@ -58,17 +60,6 @@ function ModuleSettingsLoading() {
     <div className="view-shell">
       <div className="panel-card flex min-h-[220px] items-center justify-center text-sm font-semibold text-slate-500 dark:text-slate-400">
         Loading module settings...
-      </div>
-    </div>
-  );
-}
-
-function AuthLoading() {
-  return (
-    <div className="flex h-full w-full flex-1 items-center justify-center bg-slate-50 text-slate-600 dark:bg-slate-950 dark:text-slate-300">
-      <div className="flex flex-col items-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-        <p className="text-sm font-semibold">Verifying secure authentication...</p>
       </div>
     </div>
   );
@@ -148,9 +139,10 @@ function AuthenticatedWorkspace() {
 
 function AppContent() {
   const { isAuthenticated, role, loading, refreshUser } = useAuth();
+  const [splashFinished, setSplashFinished] = useState(false);
 
-  if (loading) {
-    return <AuthLoading />;
+  if (loading || !splashFinished) {
+    return <AppSplashScreen onFinished={() => setSplashFinished(true)} />;
   }
 
   if (!isAuthenticated || !isValidRole(role)) {

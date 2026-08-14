@@ -3,8 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from './BrandLogo';
 import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { useModuleSettings } from '../contexts/useModuleSettings';
-import { MODULE_KEYS, isModuleEnabled } from '../config/modules';
 import {
   ArrowPathIcon,
   ArrowsPointingInIcon,
@@ -15,21 +13,13 @@ import {
   ClockIcon,
   Cog6ToothIcon,
   CubeIcon,
-  DocumentChartBarIcon,
   InformationCircleIcon,
   KeyIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
   MinusIcon,
-  MoonIcon,
-  QuestionMarkCircleIcon,
-  ReceiptPercentIcon,
-  ServerStackIcon,
   ShieldCheckIcon,
-  SparklesIcon,
   Squares2X2Icon,
-  SunIcon,
-  UserGroupIcon,
   WindowIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -41,29 +31,16 @@ const isElectron =
 export default function TitleBar() {
   const [activeMenu, setActiveMenu] = useState(null);
   const [isMaximized, setIsMaximized] = useState(false);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [serverPing, setServerPing] = useState(null);
   const [serverStatus, setServerStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [configOpen, setConfigOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [systemInfo, setSystemInfo] = useState(null);
-  const [customApiUrl, setCustomApiUrl] = useState('');
-  const [configSaving, setConfigSaving] = useState(false);
-  const [configSaveMsg, setConfigSaveMsg] = useState('');
-  const [darkMode, setDarkMode] = useState(() => {
-    try {
-      return localStorage.getItem('sc_dark_mode') === '1';
-    } catch {
-      return false;
-    }
-  });
 
   const menuContainerRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { modules } = useModuleSettings();
 
   const isAuth = Boolean(user && user.role);
 
@@ -80,25 +57,6 @@ export default function TitleBar() {
     }
   }, []);
 
-  // Sync dark mode
-  useEffect(() => {
-    const handleStorage = () => {
-      const isDark = localStorage.getItem('sc_dark_mode') === '1';
-      setDarkMode(isDark);
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
-  const toggleDarkMode = () => {
-    const next = !darkMode;
-    setDarkMode(next);
-    document.documentElement.classList.toggle('dark', next);
-    try {
-      localStorage.setItem('sc_dark_mode', next ? '1' : '0');
-    } catch {}
-  };
-
   // Check online status & ping backend
   const checkServerHealth = useCallback(async () => {
     const start = performance.now();
@@ -107,7 +65,7 @@ export default function TitleBar() {
       const base = API.getBaseUrl ? API.getBaseUrl() : '';
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      
+
       const res = await fetch(`${base}/health`, { signal: controller.signal }).catch(() => null);
       clearTimeout(timeoutId);
 
@@ -116,7 +74,6 @@ export default function TitleBar() {
         setServerPing(elapsed);
         setServerStatus('online');
       } else {
-        // Try fallback check
         setServerPing(null);
         setServerStatus(navigator.onLine ? 'online' : 'offline');
       }
@@ -128,11 +85,9 @@ export default function TitleBar() {
 
   useEffect(() => {
     const handleOnline = () => {
-      setIsOnline(true);
       checkServerHealth();
     };
     const handleOffline = () => {
-      setIsOnline(false);
       setServerStatus('offline');
     };
 
@@ -240,53 +195,6 @@ export default function TitleBar() {
     navigate(path);
   };
 
-  const openConfigModal = async () => {
-    setActiveMenu(null);
-    if (isElectron && window.electronAPI?.getConfig) {
-      const config = await window.electronAPI.getConfig();
-      setCustomApiUrl(config?.apiBaseUrl || API.getBaseUrl());
-    } else {
-      setCustomApiUrl(API.getBaseUrl());
-    }
-    setConfigSaveMsg('');
-    setConfigOpen(true);
-  };
-
-  const handleSaveConfig = async (e) => {
-    e.preventDefault();
-    if (!customApiUrl.trim()) return;
-
-    setConfigSaving(true);
-    setConfigSaveMsg('');
-
-    try {
-      if (isElectron && window.electronAPI?.saveConfig) {
-        const res = await window.electronAPI.saveConfig({ apiBaseUrl: customApiUrl.trim() });
-        if (res.success) {
-          setConfigSaveMsg('Configuration saved! Please reload application.');
-          if (window.MEALS_CONFIG) {
-            window.MEALS_CONFIG.apiBaseUrl = customApiUrl.trim();
-          }
-          setTimeout(() => {
-            handleReload();
-          }, 1200);
-        } else {
-          setConfigSaveMsg(`Error: ${res.error || 'Failed to save'}`);
-        }
-      } else {
-        localStorage.setItem('sc_custom_api_base', customApiUrl.trim());
-        setConfigSaveMsg('Saved API URL. Reloading workspace...');
-        setTimeout(() => {
-          window.location.reload();
-        }, 1000);
-      }
-    } catch (err) {
-      setConfigSaveMsg(`Failed to save: ${err.message}`);
-    } finally {
-      setConfigSaving(false);
-    }
-  };
-
   const handleClearCache = () => {
     setActiveMenu(null);
     if (window.confirm('Clear local cache and refresh? This will reset cached views and re-sync from server.')) {
@@ -358,21 +266,10 @@ export default function TitleBar() {
                     className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
                   >
                     <span className="inline-flex items-center gap-2">
-                      <ArrowPathIcon className="h-4 w-4 text-slate-400 group-hover:text-white" />
+                      <ArrowPathIcon className="h-4 w-4 text-slate-400" />
                       Reload Application
                     </span>
                     <span className="font-mono text-[10px] opacity-60">Ctrl+R</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={openConfigModal}
-                    className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <ServerStackIcon className="h-4 w-4 text-slate-400" />
-                      Server Connection...
-                    </span>
                   </button>
 
                   <button
@@ -468,17 +365,6 @@ export default function TitleBar() {
                       Toggle Fullscreen
                     </span>
                     <span className="font-mono text-[10px] opacity-60">F11</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={toggleDarkMode}
-                    className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      {darkMode ? <SunIcon className="h-4 w-4 text-amber-400" /> : <MoonIcon className="h-4 w-4 text-slate-400" />}
-                      {darkMode ? 'Light Theme' : 'Dark Theme'}
-                    </span>
                   </button>
 
                   <div className="my-1 border-t border-slate-800" />
@@ -609,51 +495,18 @@ export default function TitleBar() {
                     <KeyIcon className="h-4 w-4 text-slate-400" />
                     Keyboard Shortcuts
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveMenu(null);
-                      checkServerHealth();
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                  >
-                    <ServerStackIcon className="h-4 w-4 text-slate-400" />
-                    Test Server Connection
-                  </button>
                 </div>
               )}
             </div>
           </nav>
         </div>
 
-        {/* Center: Current Workspace Title & Status Chip */}
-        <div className="hidden items-center gap-2 text-slate-400 md:flex">
-          <span className="font-semibold text-slate-200">{getPageTitle()}</span>
-          <span className="text-slate-600">•</span>
-          <button
-            type="button"
-            onClick={openConfigModal}
-            className="app-no-drag inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2 py-0.5 text-[11px] font-medium transition hover:border-slate-700 hover:text-white"
-            style={{ WebkitAppRegion: 'no-drag' }}
-            title="Click to view or edit server connection"
-          >
-            <span
-              className={`h-2 w-2 rounded-full ${
-                serverStatus === 'online'
-                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
-                  : serverStatus === 'checking'
-                  ? 'bg-amber-400 animate-pulse'
-                  : 'bg-rose-500'
-              }`}
-            />
-            <span>{serverStatus === 'online' ? (serverPing ? `${serverPing}ms` : 'Connected') : serverStatus === 'checking' ? 'Connecting...' : 'Offline'}</span>
-          </button>
-        </div>
+        {/* Center: Draggable Spacer */}
+        <div className="min-w-0 flex-1" />
 
-        {/* Right: Window Controls (Electron) or Dark mode toggle */}
+        {/* Right: Window Controls (Electron) */}
         <div className="app-no-drag flex items-center" style={{ WebkitAppRegion: 'no-drag' }}>
-          {isElectron ? (
+          {isElectron && (
             <div className="flex items-center h-9">
               {/* Minimize */}
               <button
@@ -689,160 +542,105 @@ export default function TitleBar() {
                 <XMarkIcon className="h-4 w-4" />
               </button>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={toggleDarkMode}
-              className="rounded p-1 text-slate-400 transition hover:bg-slate-800 hover:text-white"
-              title="Toggle theme"
-            >
-              {darkMode ? <SunIcon className="h-4 w-4 text-amber-400" /> : <MoonIcon className="h-4 w-4" />}
-            </button>
           )}
         </div>
       </header>
 
       {/* About MEALS Modal */}
       {aboutOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl">
-            <div className="relative border-b border-slate-800 p-6 text-center">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-700/80 bg-slate-900 text-slate-100 shadow-2xl animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="relative border-b border-slate-800 bg-slate-950/60 p-6 text-center">
               <button
                 type="button"
                 onClick={() => setAboutOpen(false)}
-                className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="absolute right-4 top-4 rounded-xl p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white"
+                aria-label="Close"
               >
                 <XMarkIcon className="h-5 w-5" />
               </button>
 
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-950/60 p-2 border border-emerald-800/40 shadow-inner">
-                <BrandLogo className="h-12 w-12" />
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-b from-emerald-500/20 to-emerald-950/60 p-2.5 border border-emerald-500/30 shadow-lg shadow-emerald-950/50">
+                <BrandLogo className="h-11 w-11 drop-shadow" />
               </div>
 
-              <h2 className="mt-4 text-xl font-black text-white">MEALS Smart Canteen</h2>
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
-                Desktop Client System
+              <h2 className="mt-3 text-xl font-black tracking-tight text-white">MEALS</h2>
+              <p className="text-xs font-semibold tracking-wide text-emerald-400">
+                Smart Canteen Management System
               </p>
+
+              <div className="mt-2.5 inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-950/50 px-3 py-1 text-[11px] font-bold text-emerald-300">
+                <span>Version {systemInfo?.appVersion || (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.1.0')}</span>
+                <span className="text-emerald-600">•</span>
+                <span className="text-emerald-400/80">Desktop Edition</span>
+              </div>
             </div>
 
-            <div className="space-y-3 p-6 text-xs text-slate-300">
-              <div className="flex justify-between rounded-lg bg-slate-950/60 p-2.5 border border-slate-800">
-                <span className="font-semibold text-slate-400">Application Version</span>
-                <span className="font-mono font-bold text-white">1.0.0</span>
-              </div>
-              <div className="flex justify-between rounded-lg bg-slate-950/60 p-2.5 border border-slate-800">
-                <span className="font-semibold text-slate-400">Connected Server</span>
-                <span className="font-mono text-emerald-400 break-all">{systemInfo?.apiBaseUrl || API.getBaseUrl()}</span>
-              </div>
-              <div className="flex justify-between rounded-lg bg-slate-950/60 p-2.5 border border-slate-800">
-                <span className="font-semibold text-slate-400">Server Latency</span>
-                <span className="font-mono font-bold text-emerald-400">{serverPing ? `${serverPing} ms` : 'Online'}</span>
-              </div>
-              {systemInfo && (
-                <>
-                  <div className="flex justify-between rounded-lg bg-slate-950/60 p-2.5 border border-slate-800">
-                    <span className="font-semibold text-slate-400">Electron Engine</span>
-                    <span className="font-mono text-slate-200">v{systemInfo.electronVersion}</span>
+            {/* Content Body */}
+            <div className="max-h-[60vh] space-y-4 overflow-y-auto p-6 text-xs text-slate-300 custom-scrollbar">
+              <p className="leading-relaxed text-slate-300">
+                MEALS is an all-in-one canteen operations system built for intelligent inventory tracking, real-time demand forecasting, and automated financial reporting across multiple terminals.
+              </p>
+
+              {/* Feature Highlights Grid (without POS) */}
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 pt-1">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold">
+                    <CubeIcon className="h-4 w-4 shrink-0" />
+                    <span>Smart Inventory</span>
                   </div>
-                  <div className="flex justify-between rounded-lg bg-slate-950/60 p-2.5 border border-slate-800">
-                    <span className="font-semibold text-slate-400">Chromium & Node</span>
-                    <span className="font-mono text-slate-200">v{systemInfo.chromeVersion} / v{systemInfo.nodeVersion}</span>
+                  <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">Live stock level tracking & automated low-stock alerts.</p>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold">
+                    <BanknotesIcon className="h-4 w-4 shrink-0" />
+                    <span>Financial Reports</span>
                   </div>
-                </>
-              )}
+                  <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">Daily sales, fund monitoring, & school year statements.</p>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold">
+                    <ShieldCheckIcon className="h-4 w-4 shrink-0" />
+                    <span>Security & Roles</span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">Multi-factor auth, role segregation, & audit trails.</p>
+                </div>
+              </div>
+
+              {/* System Specs */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3.5 space-y-2 text-[11px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Target Platform</span>
+                  <span className="font-semibold text-slate-200">Windows 10 / 11 (64-bit)</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Release Build</span>
+                  <span className="font-mono text-slate-200">v{systemInfo?.appVersion || (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.1.0')} (August 2026)</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Server Synchronization</span>
+                  <span className="font-semibold text-emerald-400 inline-flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                    {serverStatus === 'online' ? `Online (${serverPing ? `${serverPing}ms` : 'synced'})` : 'Offline cache'}
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-slate-800 bg-slate-950/50 p-4">
+            {/* Footer */}
+            <div className="flex items-center justify-between border-t border-slate-800 bg-slate-950/60 px-6 py-3.5">
+              <span className="text-[11px] text-slate-500">© 2026 MEALS System</span>
               <button
                 type="button"
                 onClick={() => setAboutOpen(false)}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow transition hover:bg-emerald-500"
               >
                 Close
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Server Connection Modal */}
-      {configOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-950/60 border border-emerald-800/40 text-emerald-400">
-                  <ServerStackIcon className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">Server Connection Settings</h3>
-                  <p className="text-xs text-slate-400">Configure central database & API server endpoint</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setConfigOpen(false)}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveConfig} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                  Server API Base URL
-                </label>
-                <input
-                  type="text"
-                  value={customApiUrl}
-                  onChange={(e) => setCustomApiUrl(e.target.value)}
-                  placeholder="http://YOUR-SERVER-IP/api or https://your-domain.com/api"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 font-mono text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  required
-                />
-                <p className="mt-1.5 text-[11px] leading-4 text-slate-400">
-                  Connected devices must point to the same central server API URL for real-time sales and inventory sync.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Current Server Status:</span>
-                  <span className="font-semibold text-emerald-400 inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                    {serverStatus === 'online' ? `Online (${serverPing ? `${serverPing}ms` : 'ready'})` : 'Checking...'}
-                  </span>
-                </div>
-              </div>
-
-              {configSaveMsg && (
-                <div className={`rounded-xl border px-3.5 py-2.5 text-xs font-semibold ${
-                  configSaveMsg.startsWith('Error') || configSaveMsg.startsWith('Failed')
-                    ? 'border-rose-800/50 bg-rose-950/30 text-rose-300'
-                    : 'border-emerald-800/50 bg-emerald-950/30 text-emerald-300'
-                }`}>
-                  {configSaveMsg}
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setConfigOpen(false)}
-                  className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={configSaving}
-                  className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-md transition hover:bg-emerald-500 disabled:opacity-50"
-                >
-                  {configSaving ? 'Saving...' : 'Save & Reconnect'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

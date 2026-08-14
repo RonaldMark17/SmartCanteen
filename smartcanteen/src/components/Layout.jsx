@@ -360,6 +360,23 @@ function formatAccountNoticeStatus(status) {
     .join(' ');
 }
 
+function getUserInitials(name) {
+  const normalized = `${name || ''}`.trim();
+  if (!normalized) {
+    return 'SC';
+  }
+
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('');
+}
+
 function getAccountNoticeClass(status, isUnread) {
   const value = normalizeAccountNoticeStatus(status);
   if (value === 'approved' || value === 'appeal_approved') {
@@ -432,18 +449,6 @@ function formatWorkspaceTime(date = new Date()) {
     hour: 'numeric',
     minute: '2-digit',
   });
-}
-
-function getUserInitials(name) {
-  const normalized = `${name || ''}`.trim();
-  if (!normalized) {
-    return 'SC';
-  }
-
-  const initials = normalized
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
 }
 
 function getNavDescription(path) {

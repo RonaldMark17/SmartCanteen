@@ -237,10 +237,28 @@ ipcMain.handle('save-app-config', (event, newConfig) => {
   }
 });
 
+function getAppVersion() {
+  try {
+    const pkgPath = path.join(__dirname, '../package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      if (pkg.version) return pkg.version;
+    }
+  } catch {}
+  try {
+    const rootPkg = path.join(app.getAppPath(), 'package.json');
+    if (fs.existsSync(rootPkg)) {
+      const pkg = JSON.parse(fs.readFileSync(rootPkg, 'utf8'));
+      if (pkg.version) return pkg.version;
+    }
+  } catch {}
+  return app.getVersion() || '1.1.0';
+}
+
 ipcMain.handle('get-system-info', () => {
   return {
-    appName: 'MEALS Smart Canteen System',
-    appVersion: '1.0.0',
+    appName: 'MEALS - Smart Canteen Management System',
+    appVersion: getAppVersion(),
     electronVersion: process.versions.electron,
     chromeVersion: process.versions.chrome,
     nodeVersion: process.versions.node,
