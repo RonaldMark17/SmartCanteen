@@ -1,8 +1,10 @@
+from datetime import datetime, date
+from typing import Optional, List
 from sqlalchemy import (
-    Column, Integer, String, Float, Date, DateTime,
+    Integer, String, Float, Date, DateTime,
     Boolean, ForeignKey, Text, UniqueConstraint
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 from .time_utils import utc_now_naive
 
@@ -10,243 +12,243 @@ from .time_utils import utc_now_naive
 class User(Base):
     __tablename__ = "users"
 
-    id            = Column(Integer, primary_key=True, index=True)
-    username      = Column(String, unique=True, index=True, nullable=False)
-    full_name     = Column(String, nullable=True)
-    password_hash = Column(String, nullable=False)
-    role          = Column(String, default="cashier")   # admin | cashier | staff
-    is_active     = Column(Boolean, default=True)
-    authenticator_secret = Column(String, nullable=True)
-    authenticator_enabled = Column(Boolean, default=False)
-    authenticator_last_counter = Column(Integer, nullable=True)
-    authenticator_failed_attempts = Column(Integer, default=0)
-    authenticator_locked_until = Column(DateTime, nullable=True)
-    created_at    = Column(DateTime, default=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, default="cashier")   # admin | cashier | staff
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    authenticator_secret: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    authenticator_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    authenticator_last_counter: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    authenticator_failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    authenticator_locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
-    transactions = relationship("Transaction", back_populates="user")
-    audit_logs   = relationship("AuditLog",   back_populates="user")
-    trusted_devices = relationship("UserTrustedDevice", back_populates="user",
+    transactions: Mapped[List["Transaction"]] = relationship("Transaction", back_populates="user")
+    audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="user")
+    trusted_devices: Mapped[List["UserTrustedDevice"]] = relationship("UserTrustedDevice", back_populates="user",
                                    cascade="all, delete-orphan")
-    recovery_codes = relationship("UserRecoveryCode", back_populates="user",
+    recovery_codes: Mapped[List["UserRecoveryCode"]] = relationship("UserRecoveryCode", back_populates="user",
                                   cascade="all, delete-orphan")
-    alert_states = relationship("UserAlertState", back_populates="user",
+    alert_states: Mapped[List["UserAlertState"]] = relationship("UserAlertState", back_populates="user",
                                 cascade="all, delete-orphan")
 
 
 class UserTrustedDevice(Base):
     __tablename__ = "user_trusted_devices"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    user_id      = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    token_hash   = Column(String, unique=True, index=True, nullable=False)
-    label        = Column(String, nullable=True)
-    created_at   = Column(DateTime, default=utc_now_naive)
-    expires_at   = Column(DateTime, nullable=False, index=True)
-    last_used_at = Column(DateTime, nullable=True)
-    revoked_at   = Column(DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    user = relationship("User", back_populates="trusted_devices")
+    user: Mapped["User"] = relationship("User", back_populates="trusted_devices")
 
 
 class UserRecoveryCode(Base):
     __tablename__ = "user_recovery_codes"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    code_hash  = Column(String, unique=True, index=True, nullable=False)
-    created_at = Column(DateTime, default=utc_now_naive)
-    used_at    = Column(DateTime, nullable=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
-    user = relationship("User", back_populates="recovery_codes")
+    user: Mapped["User"] = relationship("User", back_populates="recovery_codes")
 
 
 class UserAlertState(Base):
     __tablename__ = "user_alert_states"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    alert_type = Column(String, nullable=False, index=True)
-    signature  = Column(String, nullable=False, index=True)
-    state      = Column(String, nullable=False, index=True)  # read | dismissed
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    alert_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    signature: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String, nullable=False, index=True)  # read | dismissed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    user = relationship("User", back_populates="alert_states")
+    user: Mapped["User"] = relationship("User", back_populates="alert_states")
 
 
 class SystemModuleSetting(Base):
     __tablename__ = "system_module_settings"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    module_key = Column(String, unique=True, index=True, nullable=False)
-    enabled    = Column(Boolean, default=True, nullable=False)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    module_key: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
 class PasswordResetRequest(Base):
     __tablename__ = "password_reset_requests"
 
-    id                    = Column(Integer, primary_key=True, index=True)
-    user_id               = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    identifier            = Column(String, nullable=False)
-    normalized_identifier = Column(String, nullable=False, index=True)
-    status                = Column(String, default="pending", index=True)  # pending | approved | declined | appealed | appeal_approved | appeal_declined | expired | used
-    requested_at          = Column(DateTime, default=utc_now_naive, index=True)
-    reviewed_at           = Column(DateTime, nullable=True)
-    completed_at          = Column(DateTime, nullable=True)
-    expires_at            = Column(DateTime, nullable=True, index=True)
-    reviewer_id           = Column(Integer, ForeignKey("users.id"), nullable=True)
-    review_note           = Column(Text, nullable=True)
-    appeal_reason         = Column(Text, nullable=True)
-    appealed_at           = Column(DateTime, nullable=True)
-    appeal_review_note    = Column(Text, nullable=True)
-    appeal_reviewed_at    = Column(DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    identifier: Mapped[str] = mapped_column(String, nullable=False)
+    normalized_identifier: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)  # pending | approved | declined | appealed | appeal_approved | appeal_declined | expired | used
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, index=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    reviewer_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appeal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appealed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    appeal_review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appeal_reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class AuthenticatorRecoveryRequest(Base):
     __tablename__ = "authenticator_recovery_requests"
 
-    id                    = Column(Integer, primary_key=True, index=True)
-    user_id               = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    identifier            = Column(String, nullable=False)
-    normalized_identifier = Column(String, nullable=False, index=True)
-    reason                = Column(Text, nullable=False)
-    status                = Column(String, default="pending", index=True)  # pending | approved | declined | appealed | appeal_approved | appeal_declined | expired | used
-    requested_at          = Column(DateTime, default=utc_now_naive, index=True)
-    reviewed_at           = Column(DateTime, nullable=True)
-    completed_at          = Column(DateTime, nullable=True)
-    expires_at            = Column(DateTime, nullable=True, index=True)
-    reviewer_id           = Column(Integer, ForeignKey("users.id"), nullable=True)
-    review_note           = Column(Text, nullable=True)
-    appeal_reason         = Column(Text, nullable=True)
-    appealed_at           = Column(DateTime, nullable=True)
-    appeal_review_note    = Column(Text, nullable=True)
-    appeal_reviewed_at    = Column(DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    identifier: Mapped[str] = mapped_column(String, nullable=False)
+    normalized_identifier: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)  # pending | approved | declined | appealed | appeal_approved | appeal_declined | expired | used
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, index=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    reviewer_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appeal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appealed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    appeal_review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appeal_reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class Product(Base):
     __tablename__ = "products"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    name         = Column(String, nullable=False)
-    category     = Column(String, default="General")
-    price        = Column(Float, nullable=False)
-    stock        = Column(Float, default=0.0)
-    min_stock    = Column(Float, default=5.0)      # low-stock threshold
-    unit_type    = Column(String, default="pcs")
-    base_unit    = Column(String, default="pcs")
-    barcode      = Column(String, nullable=True, index=True)
-    product_code = Column(String, nullable=True, index=True)
-    is_favorite  = Column(Boolean, default=False)
-    is_active    = Column(Boolean, default=True)
-    created_at   = Column(DateTime, default=utc_now_naive)
-    updated_at   = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str] = mapped_column(String, default="General")
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    stock: Mapped[float] = mapped_column(Float, default=0.0)
+    min_stock: Mapped[float] = mapped_column(Float, default=5.0)      # low-stock threshold
+    unit_type: Mapped[str] = mapped_column(String, default="pcs")
+    base_unit: Mapped[str] = mapped_column(String, default="pcs")
+    barcode: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    product_code: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    transaction_items = relationship("TransactionItem", back_populates="product")
+    transaction_items: Mapped[List["TransactionItem"]] = relationship("TransactionItem", back_populates="product")
 
 
 class Transaction(Base):
     __tablename__ = "transactions"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    user_id      = Column(Integer, ForeignKey("users.id"))
-    total        = Column(Float, nullable=False)
-    discount     = Column(Float, default=0.0)
-    payment_type = Column(String, default="cash")   # cash
-    notes        = Column(Text, nullable=True)
-    created_at   = Column(DateTime, default=utc_now_naive)
-    synced       = Column(Boolean, default=True)   # False = came from offline queue
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    total: Mapped[float] = mapped_column(Float, nullable=False)
+    discount: Mapped[float] = mapped_column(Float, default=0.0)
+    payment_type: Mapped[str] = mapped_column(String, default="cash")   # cash
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    synced: Mapped[bool] = mapped_column(Boolean, default=True)   # False = came from offline queue
 
-    user  = relationship("User",            back_populates="transactions")
-    items = relationship("TransactionItem", back_populates="transaction",
+    user: Mapped[Optional["User"]] = relationship("User", back_populates="transactions")
+    items: Mapped[List["TransactionItem"]] = relationship("TransactionItem", back_populates="transaction",
                          cascade="all, delete-orphan")
 
 
 class TransactionItem(Base):
     __tablename__ = "transaction_items"
 
-    id             = Column(Integer, primary_key=True, index=True)
-    transaction_id = Column(Integer, ForeignKey("transactions.id"))
-    product_id     = Column(Integer, ForeignKey("products.id"))
-    quantity       = Column(Float, nullable=False)  # quantity in the product's base unit
-    sale_quantity  = Column(Float, nullable=True)
-    sale_unit      = Column(String, nullable=True)
-    unit_price     = Column(Float, nullable=False)  # price for one sale unit
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id"), nullable=True)
+    product_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("products.id"), nullable=True)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)  # quantity in the product's base unit
+    sale_quantity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sale_unit: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    unit_price: Mapped[float] = mapped_column(Float, nullable=False)  # price for one sale unit
 
-    transaction = relationship("Transaction", back_populates="items")
-    product     = relationship("Product",     back_populates="transaction_items")
+    transaction: Mapped[Optional["Transaction"]] = relationship("Transaction", back_populates="items")
+    product: Mapped[Optional["Product"]] = relationship("Product", back_populates="transaction_items")
 
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    user_id    = Column(Integer, ForeignKey("users.id"), nullable=True)
-    user_type  = Column(String, nullable=True)   # admin | cashier | staff | system | anonymous
-    action     = Column(String, nullable=False)   # LOGIN | PRODUCT_CREATED | …
-    details    = Column(Text,   nullable=True)
-    ip_address = Column(String, nullable=True)
-    timestamp  = Column(DateTime, default=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    user_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)   # admin | cashier | staff | system | anonymous
+    action: Mapped[str] = mapped_column(String, nullable=False)   # LOGIN | PRODUCT_CREATED | …
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
-    user = relationship("User", back_populates="audit_logs")
+    user: Mapped[Optional["User"]] = relationship("User", back_populates="audit_logs")
 
 
 class WeatherHistory(Base):
     __tablename__ = "weather_history"
 
-    id            = Column(Integer, primary_key=True, index=True)
-    date          = Column(Date, unique=True, index=True, nullable=False)
-    weather       = Column(String, nullable=False, default="clear")
-    temperature_c = Column(Float, nullable=False, default=30.0)
-    humidity_pct  = Column(Float, nullable=False, default=70.0)
-    rainfall_mm   = Column(Float, nullable=False, default=0.0)
-    source        = Column(String, nullable=False, default="bootstrap")
-    created_at    = Column(DateTime, default=utc_now_naive)
-    updated_at    = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date: Mapped[date] = mapped_column(Date, unique=True, index=True, nullable=False)
+    weather: Mapped[str] = mapped_column(String, nullable=False, default="clear")
+    temperature_c: Mapped[float] = mapped_column(Float, nullable=False, default=30.0)
+    humidity_pct: Mapped[float] = mapped_column(Float, nullable=False, default=70.0)
+    rainfall_mm: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="bootstrap")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
 class SchoolEventHistory(Base):
     __tablename__ = "school_event_history"
 
-    id            = Column(Integer, primary_key=True, index=True)
-    date          = Column(Date, unique=True, index=True, nullable=False)
-    event_type    = Column(String, nullable=False, default="none")
-    label         = Column(String, nullable=True)
-    is_school_day = Column(Boolean, nullable=False, default=True)
-    source        = Column(String, nullable=False, default="bootstrap")
-    created_at    = Column(DateTime, default=utc_now_naive)
-    updated_at    = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date: Mapped[date] = mapped_column(Date, unique=True, index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False, default="none")
+    label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_school_day: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="bootstrap")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
 class PredictionCache(Base):
     __tablename__ = "prediction_cache"
 
-    id             = Column(Integer, primary_key=True, index=True)
-    request_key    = Column(String, unique=True, index=True, nullable=False)
-    data_signature = Column(Text, nullable=False)
-    payload        = Column(Text, nullable=False)
-    created_at     = Column(DateTime, default=utc_now_naive)
-    updated_at     = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    request_key: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    data_signature: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
 class SchoolYear(Base):
     __tablename__ = "school_years"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    name       = Column(String, unique=True, index=True, nullable=False)
-    start_year = Column(Integer, nullable=False)
-    end_year   = Column(Integer, nullable=False)
-    is_active  = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    start_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    monthly_reports = relationship(
+    monthly_reports: Mapped[List["MonthlyReport"]] = relationship(
         "MonthlyReport",
         back_populates="school_year",
         cascade="all, delete-orphan",
         order_by="MonthlyReport.month_index",
     )
-    allocations = relationship(
+    allocations: Mapped[List["Allocation"]] = relationship(
         "Allocation",
         back_populates="school_year",
         cascade="all, delete-orphan",
@@ -260,32 +262,32 @@ class MonthlyReport(Base):
         UniqueConstraint("school_year_id", "month_index", name="uq_monthly_reports_school_year_month"),
     )
 
-    id                     = Column(Integer, primary_key=True, index=True)
-    school_year_id         = Column(Integer, ForeignKey("school_years.id"), nullable=False, index=True)
-    month_index            = Column(Integer, nullable=False)
-    month_number           = Column(Integer, nullable=False)
-    month_name             = Column(String, nullable=False)
-    calendar_year          = Column(Integer, nullable=False)
-    beginning_cash_on_hand = Column(Float, default=0.0)
-    beginning_cash_manual_override = Column(Boolean, default=False, nullable=False)
-    current_sales          = Column(Float, default=0.0)
-    current_sales_manual_override = Column(Boolean, default=False, nullable=False)
-    other_income           = Column(Float, default=0.0)
-    purchases              = Column(Float, default=0.0)
-    inventory_used         = Column(Float, default=0.0)
-    product_cost           = Column(Float, default=0.0)
-    notes                  = Column(Text, nullable=True)
-    created_at             = Column(DateTime, default=utc_now_naive)
-    updated_at             = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    school_year_id: Mapped[int] = mapped_column(Integer, ForeignKey("school_years.id"), nullable=False, index=True)
+    month_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    month_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    month_name: Mapped[str] = mapped_column(String, nullable=False)
+    calendar_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    beginning_cash_on_hand: Mapped[float] = mapped_column(Float, default=0.0)
+    beginning_cash_manual_override: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    current_sales: Mapped[float] = mapped_column(Float, default=0.0)
+    current_sales_manual_override: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    other_income: Mapped[float] = mapped_column(Float, default=0.0)
+    purchases: Mapped[float] = mapped_column(Float, default=0.0)
+    inventory_used: Mapped[float] = mapped_column(Float, default=0.0)
+    product_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    school_year = relationship("SchoolYear", back_populates="monthly_reports")
-    expenses = relationship(
+    school_year: Mapped["SchoolYear"] = relationship("SchoolYear", back_populates="monthly_reports")
+    expenses: Mapped[List["Expense"]] = relationship(
         "Expense",
         back_populates="report",
         cascade="all, delete-orphan",
         order_by="Expense.sort_order",
     )
-    fund_entries = relationship(
+    fund_entries: Mapped[List["FundMonitoringEntry"]] = relationship(
         "FundMonitoringEntry",
         back_populates="report",
         cascade="all, delete-orphan",
@@ -296,15 +298,15 @@ class MonthlyReport(Base):
 class Expense(Base):
     __tablename__ = "expenses"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    report_id   = Column(Integer, ForeignKey("monthly_reports.id"), nullable=False, index=True)
-    category    = Column(String, nullable=False)
-    amount      = Column(Float, default=0.0)
-    sort_order  = Column(Integer, default=0)
-    created_at  = Column(DateTime, default=utc_now_naive)
-    updated_at  = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    report_id: Mapped[int] = mapped_column(Integer, ForeignKey("monthly_reports.id"), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    report = relationship("MonthlyReport", back_populates="expenses")
+    report: Mapped["MonthlyReport"] = relationship("MonthlyReport", back_populates="expenses")
 
 
 class Allocation(Base):
@@ -313,17 +315,17 @@ class Allocation(Base):
         UniqueConstraint("school_year_id", "category_key", name="uq_allocations_school_year_category"),
     )
 
-    id            = Column(Integer, primary_key=True, index=True)
-    school_year_id = Column(Integer, ForeignKey("school_years.id"), nullable=False, index=True)
-    category_key   = Column(String, nullable=False)
-    label          = Column(String, nullable=False)
-    percentage     = Column(Float, default=0.0)
-    opening_balance = Column(Float, default=0.0)
-    sort_order     = Column(Integer, default=0)
-    created_at     = Column(DateTime, default=utc_now_naive)
-    updated_at     = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    school_year_id: Mapped[int] = mapped_column(Integer, ForeignKey("school_years.id"), nullable=False, index=True)
+    category_key: Mapped[str] = mapped_column(String, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    percentage: Mapped[float] = mapped_column(Float, default=0.0)
+    opening_balance: Mapped[float] = mapped_column(Float, default=0.0)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    school_year = relationship("SchoolYear", back_populates="allocations")
+    school_year: Mapped["SchoolYear"] = relationship("SchoolYear", back_populates="allocations")
 
 
 class FundMonitoringEntry(Base):
@@ -332,14 +334,14 @@ class FundMonitoringEntry(Base):
         UniqueConstraint("report_id", "category_key", name="uq_fund_monitoring_report_category"),
     )
 
-    id           = Column(Integer, primary_key=True, index=True)
-    report_id    = Column(Integer, ForeignKey("monthly_reports.id"), nullable=False, index=True)
-    category_key = Column(String, nullable=False)
-    interest     = Column(Float, default=0.0)
-    expenses     = Column(Float, default=0.0)
-    others       = Column(Float, default=0.0)
-    cash_on_bank = Column(Float, default=0.0)
-    created_at   = Column(DateTime, default=utc_now_naive)
-    updated_at   = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    report_id: Mapped[int] = mapped_column(Integer, ForeignKey("monthly_reports.id"), nullable=False, index=True)
+    category_key: Mapped[str] = mapped_column(String, nullable=False)
+    interest: Mapped[float] = mapped_column(Float, default=0.0)
+    expenses: Mapped[float] = mapped_column(Float, default=0.0)
+    others: Mapped[float] = mapped_column(Float, default=0.0)
+    cash_on_bank: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    report = relationship("MonthlyReport", back_populates="fund_entries")
+    report: Mapped["MonthlyReport"] = relationship("MonthlyReport", back_populates="fund_entries")

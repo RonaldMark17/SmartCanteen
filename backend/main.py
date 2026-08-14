@@ -11,8 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy import and_, func, or_, text
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
-from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Any, NoReturn
 import base64
 import binascii
 import hashlib
@@ -44,6 +44,7 @@ from backend.time_utils import (
     get_ph_today,
     normalize_client_timestamp,
     to_ph_time,
+    utc_now_naive,
 )
 
 from sqlalchemy.orm import joinedload
@@ -67,7 +68,7 @@ BULK_BASE_UNITS = {"kg", "g", "l", "ml"}
 
 
 def _normalize_transaction_payment_type(payment_type: Optional[str]) -> str:
-    normalized = str(payment_type or CASH_PAYMENT_TYPE).strip().lower()
+    normalized = (payment_type or CASH_PAYMENT_TYPE).strip().lower()
     if normalized != CASH_PAYMENT_TYPE:
         raise TransactionValidationError(
             "Only cash payment is allowed for canteen transactions"
@@ -77,7 +78,7 @@ def _normalize_transaction_payment_type(payment_type: Optional[str]) -> str:
 
 
 def _normalize_product_name_for_match(name: str) -> str:
-    normalized = PRODUCT_NAME_CHARS_RE.sub("", str(name or "").strip().lower())
+    normalized = PRODUCT_NAME_CHARS_RE.sub("", (name or "").strip().lower())
     if len(normalized) > 3 and normalized.endswith("s") and not normalized.endswith("ss"):
         normalized = normalized[:-1]
     return normalized
@@ -103,7 +104,7 @@ def _find_duplicate_product_name(
     return None
 
 
-def _raise_duplicate_product_name(product: models.Product):
+def _raise_duplicate_product_name(product: models.Product) -> NoReturn:
     status = "inactive" if product.is_active is False else "active"
     raise HTTPException(
         status_code=409,
@@ -115,7 +116,7 @@ def _raise_duplicate_product_name(product: models.Product):
 
 
 def _normalize_unit_type(value: Optional[str]) -> str:
-    unit_type = str(value or PCS_UNIT_TYPE).strip().lower()
+    unit_type = (value or PCS_UNIT_TYPE).strip().lower()
     if unit_type not in {PCS_UNIT_TYPE, BULK_UNIT_TYPE}:
         raise HTTPException(status_code=400, detail="Unit type must be PCS or Bulk")
     return unit_type
@@ -125,7 +126,7 @@ def _normalize_base_unit(value: Optional[str], unit_type: str) -> str:
     if unit_type == PCS_UNIT_TYPE:
         return PCS_BASE_UNIT
 
-    base_unit = str(value or "kg").strip().lower()
+    base_unit = (value or "kg").strip().lower()
     if base_unit not in BULK_BASE_UNITS:
         raise HTTPException(status_code=400, detail="Bulk products must use kg, g, L, or mL as the base unit")
     return base_unit
@@ -141,7 +142,7 @@ def _normalize_inventory_amount(value, *, field_name: str, require_whole: bool) 
         raise HTTPException(status_code=400, detail=f"{field_name} must be a non-negative number")
     if require_whole and not amount.is_integer():
         raise HTTPException(status_code=400, detail=f"{field_name} must be a whole number for PCS products")
-    return float(round(amount, 6))
+    return round(amount, 6)
 
 
 def _normalize_product_unit_fields(data: dict, product: Optional[models.Product] = None) -> None:
@@ -168,7 +169,7 @@ def _normalize_product_unit_fields(data: dict, product: Optional[models.Product]
 def _get_sale_unit_multiplier(product: models.Product, sale_unit: Optional[str]) -> tuple[str, float]:
     unit_type = _normalize_unit_type(getattr(product, "unit_type", PCS_UNIT_TYPE))
     base_unit = _normalize_base_unit(getattr(product, "base_unit", PCS_BASE_UNIT), unit_type)
-    normalized_sale_unit = str(sale_unit or base_unit).strip().lower()
+    normalized_sale_unit = (sale_unit or base_unit).strip().lower()
 
     if unit_type == PCS_UNIT_TYPE:
         if normalized_sale_unit != PCS_BASE_UNIT:
@@ -209,8 +210,9 @@ def _get_client_ip(request: Optional[Request] = None):
         except ValueError:
             return None
 
-        if getattr(parsed_ip, "ipv4_mapped", None):
-            parsed_ip = parsed_ip.ipv4_mapped
+        mapped = getattr(parsed_ip, "ipv4_mapped", None)
+        if mapped is not None:
+            parsed_ip = mapped
 
         return str(parsed_ip)
 
@@ -251,7 +253,7 @@ def _get_client_ip(request: Optional[Request] = None):
         if not header_value:
             continue
 
-        for candidate in str(header_value).split(","):
+        for candidate in header_value.split(","):
             ip_address = clean_ip(candidate)
             if ip_address:
                 forwarded_ips.append(ip_address)
@@ -335,7 +337,7 @@ async def _broadcast_realtime_event(event_type: str, payload: Optional[dict] = N
     await realtime_connections.broadcast({
         "type": event_type,
         "payload": payload or {},
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     })
 
 
@@ -481,7 +483,7 @@ def _persist_transaction(
 
     subtotal = sum(item["sale_quantity"] * item["unit_price"] for item in resolved_items)
     total = max(0.0, subtotal - discount_value)
-    txn_kwargs = {
+    txn_kwargs: dict[str, Any] = {
         "user_id": user_id,
         "total": total,
         "discount": discount_value,
@@ -1176,16 +1178,16 @@ def _generate_authenticator_secret() -> str:
 
 
 def _format_authenticator_secret(secret: str) -> str:
-    compact = "".join(str(secret or "").upper().split())
+    compact = "".join((secret or "").upper().split())
     return " ".join(compact[index:index + 4] for index in range(0, len(compact), 4))
 
 
 def _normalize_authenticator_code(code: str) -> str:
-    return "".join(character for character in str(code or "") if character.isdigit())
+    return "".join(character for character in (code or "") if character.isdigit())
 
 
 def _decode_authenticator_secret(secret: str) -> bytes:
-    normalized = "".join(str(secret or "").upper().split())
+    normalized = "".join((secret or "").upper().split())
     padding = "=" * ((8 - len(normalized) % 8) % 8)
     try:
         return base64.b32decode(f"{normalized}{padding}", casefold=True)
@@ -1220,7 +1222,7 @@ def _verify_authenticator_code(secret: str, code: str, last_counter: Optional[in
 
 
 def _authenticator_retry_after_seconds(locked_until: datetime, now: Optional[datetime] = None) -> int:
-    now = now or datetime.utcnow()
+    now = now or utc_now_naive()
     return max(1, int((locked_until - now).total_seconds() + 0.999))
 
 
@@ -1238,7 +1240,7 @@ def _authenticator_locked_detail(locked_until: datetime) -> dict:
     }
 
 
-def _raise_authenticator_locked(locked_until: datetime):
+def _raise_authenticator_locked(locked_until: datetime) -> NoReturn:
     detail = _authenticator_locked_detail(locked_until)
     raise HTTPException(
         status_code=429,
@@ -1253,7 +1255,7 @@ def _clear_authenticator_verification_attempts(user: models.User):
 
 
 def _enforce_authenticator_verification_not_locked(user: models.User):
-    now = datetime.utcnow()
+    now = utc_now_naive()
     locked_until = getattr(user, "authenticator_locked_until", None)
     if locked_until and locked_until > now:
         _raise_authenticator_locked(locked_until)
@@ -1266,8 +1268,8 @@ def _record_failed_authenticator_verification(
     db: Session,
     user: models.User,
     req: Optional[Request],
-):
-    now = datetime.utcnow()
+) -> NoReturn:
+    now = utc_now_naive()
     current_attempts = int(getattr(user, "authenticator_failed_attempts", 0) or 0)
     attempts = min(AUTHENTICATOR_MAX_FAILED_ATTEMPTS, current_attempts + 1)
     remaining_attempts = max(0, AUTHENTICATOR_MAX_FAILED_ATTEMPTS - attempts)
@@ -1335,7 +1337,7 @@ def _authenticator_otpauth_url(user: models.User, secret: str) -> str:
 
 
 def _trusted_device_token_hash(token: str) -> str:
-    normalized = str(token or "").strip()
+    normalized = (token or "").strip()
     if not normalized:
         return ""
 
@@ -1357,26 +1359,26 @@ def _get_valid_trusted_device(db: Session, user: models.User, token: Optional[st
             models.UserTrustedDevice.user_id == user.id,
             models.UserTrustedDevice.token_hash == token_hash,
             models.UserTrustedDevice.revoked_at.is_(None),
-            models.UserTrustedDevice.expires_at > datetime.utcnow(),
+            models.UserTrustedDevice.expires_at > utc_now_naive(),
         )
         .first()
     )
 
     if trusted_device:
-        trusted_device.last_used_at = datetime.utcnow()
+        trusted_device.last_used_at = utc_now_naive()
 
     return trusted_device
 
 
 def _create_trusted_device(db: Session, user: models.User):
     raw_token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(days=TRUSTED_DEVICE_DAYS)
+    expires_at = utc_now_naive() + timedelta(days=TRUSTED_DEVICE_DAYS)
     trusted_device = models.UserTrustedDevice(
         user_id=user.id,
         token_hash=_trusted_device_token_hash(raw_token),
         label="Remembered device",
         expires_at=expires_at,
-        last_used_at=datetime.utcnow(),
+        last_used_at=utc_now_naive(),
     )
     db.add(trusted_device)
     return raw_token, expires_at
@@ -1392,7 +1394,7 @@ def _attach_trusted_device_response(response: dict, token: str, expires_at: date
 def _normalize_recovery_code(code: str) -> str:
     return "".join(
         character
-        for character in str(code or "").upper()
+        for character in (code or "").upper()
         if character.isalnum()
     )
 
@@ -1524,7 +1526,7 @@ def _user_payload(db: Session, user: models.User) -> dict:
     }
 
 
-def _build_login_success(db: Session, user: models.User):
+def _build_login_success(db: Session, user: models.User) -> dict[str, Any]:
     token = auth.create_access_token({"sub": user.username})
     return {
         "access_token": token,
@@ -1581,7 +1583,7 @@ AUTHENTICATOR_RECOVERY_OPEN_STATUSES = {"pending", "approved", "appealed", "appe
 
 
 def _normalize_username(value: str) -> str:
-    username = str(value or "").strip()
+    username = (value or "").strip()
     if not username:
         raise HTTPException(status_code=400, detail="Username is required")
     if len(username) > 64:
@@ -1595,19 +1597,19 @@ def _normalize_username(value: str) -> str:
 
 
 def _normalize_full_name(value: Optional[str]) -> Optional[str]:
-    full_name = str(value or "").strip()
+    full_name = (value or "").strip()
     return full_name or None
 
 
 def _validate_user_role(role: str) -> str:
-    normalized_role = str(role or "").strip().lower()
+    normalized_role = (role or "").strip().lower()
     if normalized_role not in USER_ROLES:
         raise HTTPException(status_code=400, detail="Role must be admin, staff, or cashier")
     return normalized_role
 
 
 def _validate_user_password(password: str) -> str:
-    raw_password = str(password or "")
+    raw_password = password or ""
     if len(raw_password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
     return raw_password
@@ -1620,8 +1622,8 @@ def _find_user_by_username(db: Session, username: str, exclude_user_id: Optional
     return query.first()
 
 
-def _normalize_password_reset_identifier(value: str) -> str:
-    identifier = str(value or "").strip()
+def _normalize_password_reset_identifier(value: Optional[str]) -> str:
+    identifier = (value or "").strip()
     if not identifier:
         raise HTTPException(status_code=400, detail="Username or email is required")
     if len(identifier) > 128:
@@ -1645,7 +1647,7 @@ def _find_user_by_reset_identifier(db: Session, identifier: str):
 
 
 def _normalize_password_reset_status(status: str) -> str:
-    normalized_status = str(status or "pending").strip().lower().replace("-", "_").replace(" ", "_")
+    normalized_status = (status or "pending").strip().lower().replace("-", "_").replace(" ", "_")
     if normalized_status == "denied":
         return "declined"
     if normalized_status == "completed":
@@ -1658,7 +1660,7 @@ def _normalize_password_reset_status(status: str) -> str:
 
 
 def _normalize_password_reset_note(value: Optional[str]) -> Optional[str]:
-    note = str(value or "").strip()
+    note = (value or "").strip()
     if len(note) > 500:
         raise HTTPException(status_code=400, detail="Admin note must be 500 characters or fewer")
     return note or None
@@ -1685,7 +1687,7 @@ def _expire_password_reset_request_if_needed(
     if current_status != reset_request.status:
         reset_request.status = current_status
 
-    now = now or datetime.utcnow()
+    now = now or utc_now_naive()
     if (
         _normalize_password_reset_status(reset_request.status) in PASSWORD_RESET_APPROVED_STATUSES
         and reset_request.expires_at is not None
@@ -1715,7 +1717,7 @@ def _ensure_admin_can_be_changed(
     next_is_active: Optional[bool] = None,
 ):
     role_after_update = next_role if next_role is not None else user.role
-    active_after_update = user.is_active if next_is_active is None else bool(next_is_active)
+    active_after_update = user.is_active if next_is_active is None else next_is_active
     removes_active_admin = user.role == "admin" and user.is_active and (
         role_after_update != "admin" or not active_after_update
     )
@@ -1918,7 +1920,7 @@ def _expire_authenticator_recovery_request_if_needed(
     if current_status != recovery_request.status:
         recovery_request.status = current_status
 
-    now = now or datetime.utcnow()
+    now = now or utc_now_naive()
     if (
         _normalize_authenticator_recovery_status(recovery_request.status)
         in AUTHENTICATOR_RECOVERY_APPROVED_STATUSES
@@ -2166,7 +2168,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
 
 
 def _extract_bearer_token(authorization: Optional[str]) -> str:
-    header_value = str(authorization or "").strip()
+    header_value = (authorization or "").strip()
     if not header_value.lower().startswith("bearer "):
         return ""
     return header_value.split(" ", 1)[1].strip()
@@ -2184,7 +2186,7 @@ def _raise_mfa_verification_session_issue(
     message: str = "Verification session expired. Please sign in again.",
     *,
     code: str = "mfa_session_invalid",
-):
+) -> NoReturn:
     raise HTTPException(
         status_code=401,
         detail=_mfa_verification_session_detail(message, code),
@@ -2206,7 +2208,7 @@ def authenticator_authentication_verify(
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
-    body_mfa_token = str(data.mfa_token or "").strip()
+    body_mfa_token = (data.mfa_token or "").strip()
     bearer_mfa_token = _extract_bearer_token(authorization)
     mfa_token = body_mfa_token or bearer_mfa_token
     token_source = "body" if body_mfa_token else "authorization" if bearer_mfa_token else "missing"
@@ -2216,7 +2218,7 @@ def authenticator_authentication_verify(
     if not mfa_token:
         auth_logger.warning(
             "MFA verify rejected: missing MFA token; username_present=%s cookie_present=%s forwarded_proto=%s",
-            bool(str(data.username or "").strip()),
+            bool((data.username or "").strip()),
             cookie_present,
             forwarded_proto,
         )
@@ -2231,7 +2233,7 @@ def authenticator_authentication_verify(
         auth_logger.warning(
             "MFA verify rejected: invalid or expired MFA token; token_source=%s username_present=%s cookie_present=%s forwarded_proto=%s",
             token_source,
-            bool(str(data.username or "").strip()),
+            bool((data.username or "").strip()),
             cookie_present,
             forwarded_proto,
         )
@@ -2256,7 +2258,7 @@ def authenticator_authentication_verify(
             code="mfa_username_missing",
         )
 
-    submitted_username = str(data.username or "").strip()
+    submitted_username = (data.username or "").strip()
     if submitted_username and submitted_username.lower() != str(token_username).lower():
         auth_logger.warning(
             "MFA verify rejected: submitted username does not match MFA token subject; token_source=%s cookie_present=%s forwarded_proto=%s",
@@ -2315,7 +2317,7 @@ def authenticator_authentication_verify(
             counter = _verify_authenticator_code(secret, data.code)
         except HTTPException:
             _record_failed_authenticator_verification(db, user, req)
-        now = datetime.utcnow()
+        now = utc_now_naive()
         user.authenticator_secret = secret
         user.authenticator_enabled = True
         user.authenticator_last_counter = counter
@@ -2430,7 +2432,7 @@ def request_authenticator_recovery(
             existing_request.normalized_identifier = normalized_identifier
             existing_request.reason = reason
             existing_request.status = "pending"
-            existing_request.requested_at = datetime.utcnow()
+            existing_request.requested_at = utc_now_naive()
             existing_request.reviewed_at = None
             existing_request.completed_at = None
             existing_request.expires_at = None
@@ -2513,7 +2515,7 @@ def appeal_authenticator_recovery(
     recovery_request.normalized_identifier = identifier.lower()
     recovery_request.status = "appealed"
     recovery_request.appeal_reason = _authenticator_recovery_appeal_reason_from_payload(data)
-    recovery_request.appealed_at = datetime.utcnow()
+    recovery_request.appealed_at = utc_now_naive()
     recovery_request.appeal_review_note = None
     recovery_request.appeal_reviewed_at = None
     recovery_request.expires_at = None
@@ -2621,7 +2623,7 @@ def request_password_reset(
             existing_request.identifier = identifier
             existing_request.normalized_identifier = normalized_identifier
             existing_request.status = "pending"
-            existing_request.requested_at = datetime.utcnow()
+            existing_request.requested_at = utc_now_naive()
             existing_request.reviewed_at = None
             existing_request.completed_at = None
             existing_request.expires_at = None
@@ -2704,7 +2706,7 @@ def appeal_password_reset(
     reset_request.normalized_identifier = identifier.lower()
     reset_request.status = "appealed"
     reset_request.appeal_reason = _password_reset_appeal_reason_from_payload(data)
-    reset_request.appealed_at = datetime.utcnow()
+    reset_request.appealed_at = utc_now_naive()
     reset_request.appeal_review_note = None
     reset_request.appeal_reviewed_at = None
     reset_request.expires_at = None
@@ -2757,7 +2759,7 @@ def complete_password_reset(
     user.password_hash = auth.get_password_hash(password)
     _reset_user_authenticator(db, user, revoke_remembered_devices=True)
     reset_request.status = "used"
-    reset_request.completed_at = datetime.utcnow()
+    reset_request.completed_at = utc_now_naive()
     reset_request.expires_at = None
 
     _add_audit_log(
@@ -2911,7 +2913,7 @@ def list_password_reset_requests(
                 models.PasswordResetRequest.status == "expired",
                 and_(
                     models.PasswordResetRequest.status.in_(tuple(PASSWORD_RESET_APPROVED_STATUSES)),
-                    models.PasswordResetRequest.expires_at <= datetime.utcnow(),
+                    models.PasswordResetRequest.expires_at <= utc_now_naive(),
                 ),
             ))
         else:
@@ -2954,7 +2956,7 @@ def approve_password_reset_request(
     if not user or not user.is_active:
         raise HTTPException(status_code=400, detail="This account is not active")
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     reset_request.status = "approved"
     reset_request.reviewed_at = now
     reset_request.completed_at = None
@@ -2992,7 +2994,7 @@ def deny_password_reset_request(
         raise HTTPException(status_code=400, detail="This reset request has already been closed")
 
     user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
-    now = datetime.utcnow()
+    now = utc_now_naive()
     reset_request.status = "declined"
     reset_request.reviewed_at = now
     reset_request.expires_at = None
@@ -3032,7 +3034,7 @@ def approve_password_reset_appeal(
     if not user or not user.is_active:
         raise HTTPException(status_code=400, detail="This account is not active")
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     reset_request.status = "appeal_approved"
     reset_request.appeal_reviewed_at = now
     reset_request.appeal_review_note = _normalize_password_reset_note(data.note if data else None)
@@ -3070,7 +3072,7 @@ def deny_password_reset_appeal(
         raise HTTPException(status_code=400, detail="Only appealed reset requests can be appeal-declined")
 
     user = db.query(models.User).filter(models.User.id == reset_request.user_id).first()
-    now = datetime.utcnow()
+    now = utc_now_naive()
     reset_request.status = "appeal_declined"
     reset_request.appeal_reviewed_at = now
     reset_request.appeal_review_note = _normalize_password_reset_note(data.note if data else None)
@@ -3107,7 +3109,7 @@ def list_authenticator_recovery_requests(
                 models.AuthenticatorRecoveryRequest.status == "expired",
                 and_(
                     models.AuthenticatorRecoveryRequest.status.in_(tuple(AUTHENTICATOR_RECOVERY_APPROVED_STATUSES)),
-                    models.AuthenticatorRecoveryRequest.expires_at <= datetime.utcnow(),
+                    models.AuthenticatorRecoveryRequest.expires_at <= utc_now_naive(),
                 ),
             ))
         else:
@@ -3153,7 +3155,7 @@ def approve_authenticator_recovery_request(
     if not user or not user.is_active:
         raise HTTPException(status_code=400, detail="This account is not active")
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     recovery_request.status = "approved"
     recovery_request.reviewed_at = now
     recovery_request.completed_at = None
@@ -3191,7 +3193,7 @@ def deny_authenticator_recovery_request(
         raise HTTPException(status_code=400, detail="This authenticator recovery request has already been closed")
 
     user = db.query(models.User).filter(models.User.id == recovery_request.user_id).first()
-    now = datetime.utcnow()
+    now = utc_now_naive()
     recovery_request.status = "declined"
     recovery_request.reviewed_at = now
     recovery_request.expires_at = None
@@ -3231,7 +3233,7 @@ def approve_authenticator_recovery_appeal(
     if not user or not user.is_active:
         raise HTTPException(status_code=400, detail="This account is not active")
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     recovery_request.status = "appeal_approved"
     recovery_request.appeal_reviewed_at = now
     recovery_request.appeal_review_note = _normalize_authenticator_recovery_note(data.note if data else None)
@@ -3269,7 +3271,7 @@ def deny_authenticator_recovery_appeal(
         raise HTTPException(status_code=400, detail="Only appealed authenticator recovery requests can be appeal-declined")
 
     user = db.query(models.User).filter(models.User.id == recovery_request.user_id).first()
-    now = datetime.utcnow()
+    now = utc_now_naive()
     recovery_request.status = "appeal_declined"
     recovery_request.appeal_reviewed_at = now
     recovery_request.appeal_review_note = _normalize_authenticator_recovery_note(data.note if data else None)
@@ -3334,9 +3336,9 @@ def admin_update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    changes = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else data.dict(exclude_unset=True)
+    changes = data.model_dump(exclude_unset=True)
     next_role = _validate_user_role(changes["role"]) if "role" in changes and changes["role"] is not None else None
-    next_is_active = bool(changes["is_active"]) if "is_active" in changes and changes["is_active"] is not None else None
+    next_is_active = changes["is_active"] if "is_active" in changes and changes["is_active"] is not None else None
 
     if user.id == current.id and (next_role and next_role != "admin" or next_is_active is False):
         raise HTTPException(status_code=400, detail="You cannot remove admin access from your own account")
@@ -3560,8 +3562,8 @@ def update_alert_state(
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.get_current_user),
 ):
-    alert_type = str(data.alert_type or "").strip()
-    state = str(data.state or "").strip()
+    alert_type = (data.alert_type or "").strip()
+    state = (data.state or "").strip()
 
     if alert_type not in ALERT_STATE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid alert_type")
@@ -3588,7 +3590,7 @@ def update_alert_state(
             .first()
         )
         if row:
-            row.updated_at = datetime.utcnow()
+            row.updated_at = utc_now_naive()
             continue
 
         db.add(models.UserAlertState(
@@ -3653,7 +3655,7 @@ def get_background_alert_summary(
     return {
         "low_stock": low_stock_items,
         "high_demand": high_demand_items,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
 
@@ -3678,7 +3680,7 @@ def list_quick_sale_products(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
-    cutoff = datetime.utcnow() - timedelta(days=30)
+    cutoff = utc_now_naive() - timedelta(days=30)
     sales_stats = (
         db.query(
             models.TransactionItem.product_id.label("product_id"),
@@ -3800,7 +3802,7 @@ def update_product(
 
     for field, value in update_data.items():
         setattr(product, field, value)
-    product.updated_at = datetime.utcnow()
+    product.updated_at = utc_now_naive()
     db.commit()
     db.refresh(product)
 
@@ -4008,7 +4010,7 @@ def _resolve_analytics_date_range(
     days: int = 7,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-):
+) -> dict[str, Any]:
     if bool(start_date) != bool(end_date):
         raise HTTPException(
             status_code=400,
@@ -4037,7 +4039,7 @@ def _resolve_analytics_date_range(
             ],
         }
 
-    safe_days = max(1, min(int(days or 7), 3660))
+    safe_days = max(1, min(days or 7, 3660))
     return {
         "days": safe_days,
         "start": get_ph_recent_cutoff_utc_naive(safe_days),
@@ -4212,7 +4214,7 @@ def predict_tomorrow(
             "cache_status": result.get("cache_status", "fresh"),
             "cache_updated_at": result.get("cache_updated_at"),
             "cache_refresh_needed": result.get("cache_refresh_needed", False),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": datetime.now(timezone.utc).isoformat()
         }
 
     except Exception as e:
@@ -4233,7 +4235,7 @@ def predict_tomorrow(
             "insights": [],
             "data_source": "error",
             "error": str(e),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": datetime.now(timezone.utc).isoformat()
         }
 
 
@@ -4248,7 +4250,7 @@ def restock_alerts(
     return {
         "alerts": alerts,
         "count": len(alerts),
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -4277,11 +4279,11 @@ def update_module_settings(
     unknown_keys = []
 
     for item in payload.modules:
-        module_key = str(item.module_key or "").strip()
+        module_key = (item.module_key or "").strip()
         if module_key not in SYSTEM_MODULE_KEYS:
             unknown_keys.append(module_key or "(blank)")
             continue
-        requested_settings[module_key] = bool(item.enabled)
+        requested_settings[module_key] = item.enabled
 
     if unknown_keys:
         raise HTTPException(
@@ -4361,7 +4363,7 @@ def audit_logs(
 
 @app.get("/api/health", tags=["System"])
 def health():
-    return {"status": "online", "timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"}
+    return {"status": "online", "timestamp": datetime.now(timezone.utc).isoformat(), "version": "1.0.0"}
 
 
 @app.get("/api/frontend-status", tags=["System"])
@@ -4407,3 +4409,12 @@ def frontend_catch_all(full_path: str):
         raise HTTPException(status_code=404, detail="File not found")
 
     return _frontend_index_response()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    host = os.getenv("SMARTCANTEEN_HOST", "0.0.0.0")
+    port = int(os.getenv("SMARTCANTEEN_PORT", os.getenv("PORT", "8000")))
+    uvicorn.run("backend.main:app", host=host, port=port, reload=True)
+

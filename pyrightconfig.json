@@ -1,0 +1,27 @@
+{
+  "venvPath": ".",
+  "venv": "venv",
+  "include": [
+    "backend",
+    "scripts",
+    "app.py",
+    "inspect_db.py",
+    "ml_predictor_result.py",
+    "seed_fund_monitoring.py"
+  ],
+  "exclude": [
+    "smartcanteen",
+    "frontend",
+    "venv",
+    "node_modules"
+  ],
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": [
+        ".",
+        "backend"
+      ]
+    }
+  ]
+}

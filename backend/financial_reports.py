@@ -6,9 +6,9 @@ import posixpath
 import re
 import shutil
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Any, cast
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -259,15 +259,15 @@ DEMO_MONTHLY_REPORT_ROWS = [
         },
     },
 ]
-DEMO_MONTHLY_REPORTS_BY_INDEX = {
-    int(item["month_index"]): item for item in DEMO_MONTHLY_REPORT_ROWS
+DEMO_MONTHLY_REPORTS_BY_INDEX: dict[int, dict[str, Any]] = {
+    cast(int, item["month_index"]): item for item in DEMO_MONTHLY_REPORT_ROWS
 }
 
 
 def require_financial_report_user(
     current_user: models.User = Depends(auth.get_current_user),
 ) -> models.User:
-    if str(current_user.role or "").strip().lower() not in FINANCIAL_REPORT_ROLES:
+    if (current_user.role or "").strip().lower() not in FINANCIAL_REPORT_ROLES:
         raise HTTPException(status_code=403, detail="Admin or staff access required")
     return current_user
 
@@ -277,7 +277,7 @@ def _template_path() -> str:
 
 
 def _format_school_year_name(start_year: int, end_year: int) -> str:
-    return f"{int(start_year)}-{int(end_year)}"
+    return f"{start_year}-{end_year}"
 
 
 def _resolve_current_active_school_year_bounds() -> tuple[int, int]:
@@ -288,7 +288,7 @@ def _resolve_current_active_school_year_bounds() -> tuple[int, int]:
 
 def _compare_school_year_to_current(start_year: int, end_year: int) -> int:
     current_start_year, current_end_year = _resolve_current_active_school_year_bounds()
-    selected_bounds = (int(start_year), int(end_year))
+    selected_bounds = (start_year, end_year)
     current_bounds = (current_start_year, current_end_year)
 
     if selected_bounds > current_bounds:
@@ -336,7 +336,7 @@ def _load_school_year(db: Session, school_year_id: int) -> Optional[models.Schoo
 
 
 def _create_default_expenses(db: Session, report: models.MonthlyReport) -> bool:
-    existing_names = {str(expense.category or "").strip().lower() for expense in report.expenses}
+    existing_names = {(expense.category or "").strip().lower() for expense in report.expenses}
     changed = False
 
     for sort_order, category in enumerate(DEFAULT_EXPENSE_CATEGORIES):
@@ -358,7 +358,7 @@ def _create_default_expenses(db: Session, report: models.MonthlyReport) -> bool:
 def _ensure_school_year_defaults(db: Session, school_year: models.SchoolYear) -> bool:
     changed = False
     existing_allocations = {
-        str(allocation.category_key or "").strip().lower(): allocation
+        (allocation.category_key or "").strip().lower(): allocation
         for allocation in school_year.allocations
     }
 
@@ -413,7 +413,7 @@ def _school_year_has_report_values(school_year: models.SchoolYear) -> bool:
                 report.purchases,
                 report.inventory_used,
                 report.product_cost,
-                any(float(expense.amount or 0.0) for expense in report.expenses),
+                any((expense.amount or 0.0) for expense in report.expenses),
             ]
         )
         for report in school_year.monthly_reports
@@ -435,7 +435,7 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
 
     start_year, end_year = _resolve_current_active_school_year_bounds()
     school_year_name = _format_school_year_name(start_year, end_year)
-    existing_school_years = int(db.query(models.SchoolYear).count())
+    existing_school_years = db.query(models.SchoolYear).count()
     school_year = (
         db.query(models.SchoolYear)
         .options(
@@ -458,7 +458,7 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
         .first()
     )
     active_school_year_is_current = (
-        bool(active_school_year)
+        active_school_year is not None
         and _compare_school_year_to_current(
             active_school_year.start_year,
             active_school_year.end_year,
@@ -466,12 +466,13 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
         == 0
     )
 
-    if not reset and active_school_year_is_current and not _school_year_has_report_values(active_school_year):
+    if not reset and active_school_year_is_current and active_school_year and not _school_year_has_report_values(active_school_year):
         school_year = active_school_year
         school_year_name = active_school_year.name
     elif school_year and not reset and _school_year_has_report_values(school_year):
         if (
             active_school_year_is_current
+            and active_school_year
             and active_school_year.id != school_year.id
             and not _school_year_has_report_values(active_school_year)
         ):
@@ -501,7 +502,7 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
     db.flush()
 
     school_year = _load_school_year(db, school_year.id) or school_year
-    reports_by_index = {int(report.month_index): report for report in school_year.monthly_reports}
+    reports_by_index = {report.month_index: report for report in school_year.monthly_reports}
     running_beginning_cash = _round_money(DEMO_BEGINNING_CASH_ON_HAND)
 
     for month_index, month_number, month_name in MONTH_SEQUENCE:
@@ -530,7 +531,7 @@ def seed_demo_financial_reporting(db: Session, *, reset: bool = False) -> dict:
 
         _create_default_expenses(db, report)
         expense_map = {
-            str(expense.category or "").strip().lower(): expense
+            (expense.category or "").strip().lower(): expense
             for expense in report.expenses
         }
 
@@ -574,7 +575,7 @@ def _serialize_expense(expense: models.Expense) -> dict:
         "id": expense.id,
         "category": expense.category,
         "amount": _round_money(expense.amount),
-        "sort_order": int(expense.sort_order or 0),
+        "sort_order": expense.sort_order or 0,
     }
 
 
@@ -587,14 +588,14 @@ def _serialize_allocation(
     fund_others: float = 0.0,
     fund_cash_on_bank: float = 0.0,
 ) -> dict:
-    percentage = float(allocation.percentage or 0.0)
+    percentage = round(allocation.percentage or 0.0, 2)
     return {
         "id": allocation.id,
         "category_key": allocation.category_key,
         "label": allocation.label,
         "percentage": round(percentage, 2),
         "opening_balance": _round_money(getattr(allocation, "opening_balance", 0.0)),
-        "sort_order": int(allocation.sort_order or 0),
+        "sort_order": allocation.sort_order or 0,
         "amount": _round_money(net_profit * percentage / 100.0),
         "fund_interest": _round_money(fund_interest),
         "fund_expenses": _round_money(fund_expenses),
@@ -611,10 +612,10 @@ def _fund_entry_map(report: models.MonthlyReport) -> dict[str, models.FundMonito
 
 
 def _build_report_month_bounds(report: models.MonthlyReport) -> tuple[datetime, datetime]:
-    last_day = calendar.monthrange(int(report.calendar_year), int(report.month_number))[1]
+    last_day = calendar.monthrange(report.calendar_year, report.month_number)[1]
     return build_ph_date_range_bounds(
-        f"{int(report.calendar_year):04d}-{int(report.month_number):02d}-01",
-        f"{int(report.calendar_year):04d}-{int(report.month_number):02d}-{last_day:02d}",
+        f"{report.calendar_year:04d}-{report.month_number:02d}-01",
+        f"{report.calendar_year:04d}-{report.month_number:02d}-{last_day:02d}",
     )
 
 
@@ -670,7 +671,7 @@ def _serialize_report(
     fund_entries_by_key = _fund_entry_map(report)
     allocations_breakdown = []
     for allocation in sorted(allocations, key=lambda item: (item.sort_order, item.id)):
-        category_key = str(allocation.category_key or "").strip()
+        category_key = (allocation.category_key or "").strip()
         fund_entry = fund_entries_by_key.get(category_key)
         allocations_breakdown.append(
             _serialize_allocation(
@@ -689,7 +690,7 @@ def _serialize_report(
         "month_index": report.month_index,
         "month_number": report.month_number,
         "month_name": report.month_name,
-        "month_short": calendar.month_abbr[int(report.month_number or 0)] or report.month_name[:3],
+        "month_short": calendar.month_abbr[report.month_number or 0] or report.month_name[:3],
         "calendar_year": report.calendar_year,
         "month_label": f"{report.month_name} {report.calendar_year}",
         "beginning_cash_on_hand": beginning_cash,
@@ -728,7 +729,7 @@ def _fund_balance_total(
 ) -> float:
     return _round_money(
         sum(
-            balances.get(str(allocation.category_key or "").strip(), 0.0)
+            balances.get((allocation.category_key or "").strip(), 0.0)
             for allocation in allocations
         )
     )
@@ -746,7 +747,7 @@ def _calculate_next_fund_balances(
     }
 
     for allocation in allocations:
-        category_key = str(allocation.category_key or "").strip()
+        category_key = (allocation.category_key or "").strip()
         previous_balance = _round_money(previous_balances.get(category_key, 0.0))
         report_allocation = report_allocations_by_key.get(category_key, {})
         net_income = _round_money(report_allocation.get("amount", 0.0))
@@ -865,7 +866,7 @@ def _build_dashboard(serialized_reports: list[dict], allocations: list[models.Al
     total_sales = _round_money(sum(report["current_sales"] for report in serialized_reports))
     total_expenses = _round_money(sum(report["total_expenses"] for report in serialized_reports))
     total_net_profit = _round_money(sum(report["net_profit"] for report in serialized_reports))
-    allocation_percent_total = round(sum(float(item.percentage or 0.0) for item in allocations), 2)
+    allocation_percent_total = round(sum(item.percentage or 0.0 for item in allocations), 2)
 
     populated_reports = [
         report
@@ -1019,7 +1020,7 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
             "name": school_year.name,
             "start_year": school_year.start_year,
             "end_year": school_year.end_year,
-            "is_active": bool(school_year.is_active),
+            "is_active": school_year.is_active,
             "created_at": school_year.created_at.isoformat() if school_year.created_at else None,
             "updated_at": school_year.updated_at.isoformat() if school_year.updated_at else None,
         },
@@ -1041,8 +1042,8 @@ def _load_previous_school_year(
             joinedload(models.SchoolYear.allocations),
         )
         .filter(
-            models.SchoolYear.start_year == int(school_year.start_year) - 1,
-            models.SchoolYear.end_year == int(school_year.start_year),
+            models.SchoolYear.start_year == school_year.start_year - 1,
+            models.SchoolYear.end_year == school_year.start_year,
         )
         .first()
     )
@@ -1058,7 +1059,7 @@ def _load_previous_school_year(
         )
         .filter(
             models.SchoolYear.id != school_year.id,
-            models.SchoolYear.end_year <= int(school_year.start_year),
+            models.SchoolYear.end_year <= school_year.start_year,
         )
         .order_by(
             models.SchoolYear.end_year.desc(),
@@ -1085,7 +1086,7 @@ def _get_previous_school_year_ending_fund_balances(
     older_balances = _get_previous_school_year_ending_fund_balances(db, previous_school_year)
     previous_fund_balances: dict[str, float] = {}
     for allocation in allocations:
-        category_key = str(allocation.category_key or "").strip()
+        category_key = (allocation.category_key or "").strip()
         saved_opening = getattr(allocation, "opening_balance", 0.0)
         if saved_opening and float(saved_opening) > 0:
             previous_fund_balances[category_key] = _round_money(saved_opening)
@@ -1117,7 +1118,7 @@ def _get_initial_fund_balances_for_school_year(
     prev_sy_fund_balances = _get_previous_school_year_ending_fund_balances(db, school_year)
     initial_balances: dict[str, float] = {}
     for allocation in allocations:
-        category_key = str(allocation.category_key or "").strip()
+        category_key = (allocation.category_key or "").strip()
         saved_opening = getattr(allocation, "opening_balance", 0.0)
         if saved_opening and float(saved_opening) > 0:
             initial_balances[category_key] = _round_money(saved_opening)
@@ -1209,7 +1210,7 @@ def _apply_beginning_cash_carry_forward(
         return False
 
     first_report = next(
-        (report for report in school_year.monthly_reports if int(report.month_index or 0) == 0),
+        (report for report in school_year.monthly_reports if (report.month_index or 0) == 0),
         None,
     )
     if not first_report:
@@ -1227,7 +1228,7 @@ def _get_report_beginning_cash_carry_forward(
     db: Session,
     report: models.MonthlyReport,
 ) -> Optional[dict]:
-    if int(report.month_index or 0) != 0 or not report.school_year:
+    if (report.month_index or 0) != 0 or not report.school_year:
         return None
 
     return _get_beginning_cash_carry_forward(db, report.school_year)
@@ -1275,15 +1276,17 @@ def _build_school_year_summary(db: Session, school_year: models.SchoolYear) -> d
         "name": school_year.name,
         "start_year": school_year.start_year,
         "end_year": school_year.end_year,
-        "is_active": bool(school_year.is_active),
+        "is_active": school_year.is_active,
         "status": "Active" if school_year.is_active else "Closed",
         "opening_beginning_cash": opening_beginning_cash,
         "ending_balance": ending_balance,
         "months_with_entries": months_with_entries,
         "report_count": len(serialized_reports),
         "total_sales": dashboard["total_monthly_sales"],
+        "total_expenses": dashboard["total_expenses"],
         "net_profit": dashboard["net_profit"],
-        "updated_at": school_year.updated_at.isoformat() if school_year.updated_at else None,
+        "best_month": dashboard["best_month"],
+        "lowest_month": dashboard["lowest_month"],
     }
 
 
@@ -1294,7 +1297,9 @@ def _ensure_and_reload_school_year(db: Session, school_year_id: int) -> models.S
 
     if not _school_year_is_future(school_year) and _ensure_school_year_defaults(db, school_year):
         db.commit()
-        school_year = _load_school_year(db, school_year_id)
+        reloaded = _load_school_year(db, school_year_id)
+        if reloaded is not None:
+            school_year = reloaded
 
     return school_year
 
@@ -1368,7 +1373,7 @@ def _column_letters_to_index(letters: str) -> int:
 
 
 def _split_cell_ref(cell_ref: str) -> tuple[str, int]:
-    match = CELL_REF_RE.match(str(cell_ref or "").upper())
+    match = CELL_REF_RE.match((cell_ref or "").upper())
     if not match:
         raise ValueError(f"Invalid Excel cell reference: {cell_ref}")
     return match.group(1), int(match.group(2))
@@ -1396,7 +1401,7 @@ def _find_or_create_row(sheet_data: ET.Element, row_number: int) -> ET.Element:
 
 
 def _find_or_create_cell(root: ET.Element, cell_ref: str) -> ET.Element:
-    normalized_ref = str(cell_ref or "").upper()
+    normalized_ref = (cell_ref or "").upper()
     column_letters, row_number = _split_cell_ref(normalized_ref)
     column_index = _column_letters_to_index(column_letters)
     sheet_data = root.find(_ooxml_name("sheetData"))
@@ -1465,7 +1470,7 @@ def _set_ooxml_text_cell(
     cell.set("t", "inlineStr")
     inline_string = ET.SubElement(cell, _ooxml_name("is"))
     text = ET.SubElement(inline_string, _ooxml_name("t"))
-    text_value = str(value or "")
+    text_value = value or ""
     if text_value != text_value.strip():
         text.set(f"{{{XML_NS}}}space", "preserve")
     text.text = text_value
@@ -1496,7 +1501,7 @@ def _set_ooxml_cell(
 
 
 def _normalize_workbook_target(target: str) -> str:
-    target = str(target or "").replace("\\", "/")
+    target = (target or "").replace("\\", "/")
     if target.startswith("/"):
         return target.lstrip("/")
     return posixpath.normpath(posixpath.join("xl", target))
@@ -1606,7 +1611,7 @@ def _build_report_cell_updates(
 
     total_operating_expenses = 0.0
     for expense in sorted(report.expenses, key=lambda item: (item.sort_order, item.id)):
-        category = str(expense.category or "").strip().lower()
+        category = (expense.category or "").strip().lower()
         cell_address = EXPENSE_CELL_BY_CATEGORY.get(category)
         if cell_address:
             amount = _round_money(expense.amount)
@@ -1630,8 +1635,8 @@ def _build_report_cell_updates(
 
 
 def _format_allocation_header(allocation: models.Allocation) -> str:
-    label = str(allocation.label or "Fund").strip().upper()
-    percentage = round(float(allocation.percentage or 0.0), 2)
+    label = (allocation.label or "Fund").strip().upper()
+    percentage = round(allocation.percentage or 0.0, 2)
     return f"{label} {percentage:.2f}%"
 
 
@@ -1646,8 +1651,8 @@ def _build_fund_monitoring_cell_updates(
     updates: list[tuple[str, object, str]] = []
 
     for column_letter, allocation in zip(FUND_MONITORING_COLUMNS, allocations):
-        category_key = str(allocation.category_key or "").strip()
-        percentage = round(float(allocation.percentage or 0.0), 2)
+        category_key = (allocation.category_key or "").strip()
+        percentage = round(allocation.percentage or 0.0, 2)
         previous_balance = _round_money(previous_balances.get(category_key, 0.0))
         fund_entry = fund_entries_by_key.get(category_key)
         interest = _round_money(getattr(fund_entry, "interest", 0.0) if fund_entry else 0.0)
@@ -1685,7 +1690,7 @@ def _build_fund_monitoring_cell_updates(
             "H45",
             _round_money(
                 sum(
-                    next_balances.get(str(allocation.category_key or "").strip(), 0.0)
+                    next_balances.get((allocation.category_key or "").strip(), 0.0)
                     for allocation in allocations
                 )
             ),
@@ -1820,8 +1825,6 @@ def _preserve_template_drawings_and_media(export_path: str, template_path: str) 
                 os.remove(temp_zip_path)
             except Exception:
                 pass
-            except Exception:
-                pass
 
 
 def _build_school_year_workbook_export(
@@ -1940,7 +1943,9 @@ def list_school_years(
     for school_year in school_years:
         if not _school_year_is_future(school_year) and _ensure_school_year_defaults(db, school_year):
             db.commit()
-            school_year = _load_school_year(db, school_year.id)
+            reloaded = _load_school_year(db, school_year.id)
+            if reloaded is not None:
+                school_year = reloaded
         summaries.append(_build_school_year_summary(db, school_year))
 
     return summaries
@@ -1953,8 +1958,8 @@ def create_school_year(
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
-    start_year = int(payload.start_year)
-    end_year = int(payload.end_year or (start_year + 1))
+    start_year = payload.start_year
+    end_year = payload.end_year or (start_year + 1)
 
     if end_year <= start_year:
         raise HTTPException(status_code=400, detail="End year must be after the start year")
@@ -1973,7 +1978,7 @@ def create_school_year(
         name=school_year_name,
         start_year=start_year,
         end_year=end_year,
-        is_active=bool(payload.set_active),
+        is_active=payload.set_active,
     )
     db.add(school_year)
     db.flush()
@@ -2037,7 +2042,7 @@ def update_school_year(
         school_year.is_active = bool(updates["is_active"])
 
     for report in school_year.monthly_reports:
-        report.calendar_year = _month_calendar_year(school_year, int(report.month_number or 1))
+        report.calendar_year = _month_calendar_year(school_year, report.month_number or 1)
 
     _ensure_school_year_defaults(db, school_year)
     _audit_log(
@@ -2237,6 +2242,8 @@ def update_report(
         .filter(models.MonthlyReport.id == report_id)
         .first()
     )
+    if not report:
+        raise HTTPException(status_code=404, detail="Monthly report not found")
 
     allocations = sorted(report.school_year.allocations, key=lambda item: (item.sort_order, item.id))
     return {
@@ -2275,7 +2282,7 @@ def replace_report_expenses(
     db.flush()
 
     for sort_order, item in enumerate(payload.expenses):
-        category = str(item.category or "").strip()
+        category = (item.category or "").strip()
         if not category:
             continue
 
@@ -2284,7 +2291,7 @@ def replace_report_expenses(
                 report_id=report.id,
                 category=category,
                 amount=_round_money(item.amount),
-                sort_order=int(item.sort_order if item.sort_order is not None else sort_order),
+                sort_order=item.sort_order if item.sort_order is not None else sort_order,
             )
         )
 
@@ -2299,6 +2306,8 @@ def replace_report_expenses(
         .filter(models.MonthlyReport.id == report_id)
         .first()
     )
+    if not report:
+        raise HTTPException(status_code=404, detail="Monthly report not found")
     _create_default_expenses(db, report)
     _audit_log(
         db,
@@ -2319,6 +2328,8 @@ def replace_report_expenses(
         .filter(models.MonthlyReport.id == report_id)
         .first()
     )
+    if not report:
+        raise HTTPException(status_code=404, detail="Monthly report not found")
     allocations = sorted(report.school_year.allocations, key=lambda item: (item.sort_order, item.id))
     return {
         "report": _serialize_report(
@@ -2356,12 +2367,12 @@ def replace_report_fund_monitoring(
     db.flush()
 
     valid_category_keys = {
-        str(allocation.category_key or "").strip()
+        (allocation.category_key or "").strip()
         for allocation in report.school_year.allocations
     }
 
     for item in payload.entries:
-        category_key = str(item.category_key or "").strip()
+        category_key = (item.category_key or "").strip()
         if not category_key or category_key not in valid_category_keys:
             continue
 
@@ -2395,6 +2406,8 @@ def replace_report_fund_monitoring(
         .filter(models.MonthlyReport.id == report_id)
         .first()
     )
+    if not report:
+        raise HTTPException(status_code=404, detail="Monthly report not found")
     allocations = sorted(report.school_year.allocations, key=lambda item: (item.sort_order, item.id))
     return {
         "report": _serialize_report(
@@ -2421,8 +2434,8 @@ def replace_allocations(
     db.flush()
 
     for sort_order, item in enumerate(payload.allocations):
-        label = str(item.label or "").strip()
-        category_key = str(item.category_key or "").strip()
+        label = (item.label or "").strip()
+        category_key = (item.category_key or "").strip()
         if not label or not category_key:
             continue
         db.add(
@@ -2430,9 +2443,9 @@ def replace_allocations(
                 school_year_id=school_year.id,
                 category_key=category_key,
                 label=label,
-                percentage=round(float(item.percentage or 0.0), 2),
+                percentage=round(item.percentage or 0.0, 2),
                 opening_balance=_round_money(item.opening_balance),
-                sort_order=int(item.sort_order if item.sort_order is not None else sort_order),
+                sort_order=item.sort_order if item.sort_order is not None else sort_order,
             )
         )
 
@@ -2500,7 +2513,7 @@ def backup_database(
     if not database_path or not os.path.isfile(database_path):
         raise HTTPException(status_code=400, detail="Database backup is available only for local SQLite deployments")
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     backup_path = f"{database_path}.backup-{timestamp}-financial-reports"
     shutil.copy2(database_path, backup_path)
     _audit_log(
@@ -2537,14 +2550,14 @@ def _sanitize_receipt_filename(raw_name: str) -> str:
     if not base:
         base = "receipt"
     base = base[:50]
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return f"{base}_{timestamp}{ext}"
 
 
 @router.post("/api/financial-reports/receipts/upload")
 async def upload_expense_receipt(
     file: UploadFile = File(...),
-    request: Request = None,
+    request: Optional[Request] = None,
     db: Session = Depends(get_db),
     current: models.User = Depends(require_financial_report_user),
 ):
@@ -2600,7 +2613,7 @@ def get_expense_receipt_file(
     filename: str,
     token: Optional[str] = None,
     db: Session = Depends(get_db),
-    request: Request = None,
+    request: Optional[Request] = None,
 ):
     # Authenticate via Header or Token query parameter
     current_user = None

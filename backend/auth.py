@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import uuid
 
@@ -38,13 +38,13 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     payload = data.copy()
-    expire  = datetime.utcnow() + (expires_delta or timedelta(minutes=EXPIRE_MINS))
+    expire  = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=EXPIRE_MINS))
     payload.update({"exp": expire})
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_background_alert_token(username: str) -> str:
-    expire = datetime.utcnow() + timedelta(days=BACKGROUND_ALERT_EXPIRE_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(days=BACKGROUND_ALERT_EXPIRE_DAYS)
     payload = {
         "sub": username,
         "purpose": "background_alert",
@@ -68,7 +68,7 @@ def decode_background_alert_token(token: str) -> dict:
 
 def create_mfa_token(username: str, purpose: str = "authenticator", extra: Optional[dict] = None) -> tuple[str, str]:
     token_id = uuid.uuid4().hex
-    expire = datetime.utcnow() + timedelta(minutes=MFA_EXPIRE_MINS)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=MFA_EXPIRE_MINS)
     payload = {
         "sub": username,
         "jti": token_id,
@@ -123,6 +123,23 @@ def get_current_user(
 
 def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
     """Raises 403 if the caller is not an admin."""
-    if str(current_user.role or "").strip().lower() not in {"admin", "administrator"}:
+    if (current_user.role or "").strip().lower() not in {"admin", "administrator"}:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
+
+
+def get_user_from_token(token: str, db: Session) -> Optional[models.User]:
+    """Validates a JWT token string and returns the active user if valid."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") == "background_alert":
+            return None
+        username = payload.get("sub")
+        if not username:
+            return None
+        user = db.query(models.User).filter(models.User.username == username).first()
+        if not user or not user.is_active:
+            return None
+        return user
+    except Exception:
+        return None
