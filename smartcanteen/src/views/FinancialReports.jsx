@@ -202,6 +202,18 @@ function parseNonNegativeMoney(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
 }
 
+function parseCurrencyInput(value) {
+  return parseNonNegativeMoney(value);
+}
+
+function isValidDateString(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+}
+
+function isValidMonthString(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}$/.test(value.trim());
+}
+
 function downloadBlob(blob, filename) {
   const url = window.URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -1768,18 +1780,19 @@ export default function FinancialReports({ mode = 'financial' }) {
     }
 
     const expenseType = expenseEntryDraft.type === 'monthly' ? 'monthly' : 'daily';
+    const effectiveMonth = expenseEntryDraft.month || getReportMonthValue(selectedReport);
     if (expenseType === 'daily' && !isValidDateString(expenseEntryDraft.date)) {
       window.showToast?.('Please provide a valid expense date.', 'error');
       return;
     }
-    if (expenseType === 'monthly' && !isValidMonthString(expenseEntryDraft.month)) {
+    if (expenseType === 'monthly' && !isValidMonthString(effectiveMonth)) {
       window.showToast?.('Please provide a valid expense month.', 'error');
       return;
     }
 
     const targetReport =
       expenseType === 'monthly'
-        ? findReportForMonth(detail, expenseEntryDraft.month)
+        ? findReportForMonth(detail, effectiveMonth)
         : findReportForDate(detail, expenseEntryDraft.date);
     if (!targetReport) {
       window.showToast?.(
