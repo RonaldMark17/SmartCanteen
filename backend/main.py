@@ -1120,10 +1120,7 @@ def _frontend_index_response():
     index_file = _resolve_frontend_file("index.html")
     if index_file:
         return _frontend_file_response(index_file)
-    message = "SmartCanteen API is running. Frontend build not found."
-    if FRONTEND_BUILD_ERROR:
-        message = f"{message} Auto-build failed: {FRONTEND_BUILD_ERROR}"
-    return {"message": message, "docs": "/docs"}
+    return {"message": "MEALS API is running", "docs": "/docs"}
 
 
 FRONTEND_DIR = _get_frontend_dir()
