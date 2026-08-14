@@ -1372,6 +1372,25 @@ export const API = {
     requestFile(
       `/financial-reports/school-years/${schoolYearId}/export${toQuery({ report_id: reportId })}`
     ),
+  uploadFinancialReceipt: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request('POST', '/financial-reports/receipts/upload', formData);
+  },
+  getFinancialReceiptUrl: (filename) => {
+    if (!filename) return '';
+    return `/api/financial-reports/receipts/${encodeURIComponent(filename)}`;
+  },
+  getFinancialReceiptBlob: async (filename) => {
+    if (!filename || filename === 'No receipt' || filename === '-') return null;
+    try {
+      const res = await requestFile(`/financial-reports/receipts/${encodeURIComponent(filename)}`);
+      return res;
+    } catch (err) {
+      console.warn('Could not fetch receipt file from backend:', err);
+      return null;
+    }
+  },
   backupFinancialDatabase: () => request('POST', '/financial-reports/backup'),
   seed: () => request('POST', '/seed'),
   health: () => request('GET', '/health'),

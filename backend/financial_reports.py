@@ -2517,3 +2517,143 @@ def backup_database(
         "filename": os.path.basename(backup_path),
         "path": backup_path,
     }
+
+
+RECEIPTS_UPLOAD_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "uploads", "receipts")
+ALLOWED_RECEIPT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"}
+MAX_RECEIPT_SIZE = 5 * 1024 * 1024  # 5MB
+
+
+def _sanitize_receipt_filename(raw_name: str) -> str:
+    clean = os.path.basename(raw_name)
+    clean = re.sub(r"[\x00-\x1f\x7f]", "", clean)
+    base, ext = os.path.splitext(clean)
+    ext = ext.lower()
+    if ext not in ALLOWED_RECEIPT_EXTS:
+        ext = ".png"
+    base = re.sub(r"[|<>:\"/\\?*;%${}()[\]&'`!~#^=+,]", "", base)
+    base = re.sub(r"\s+", "_", base)
+    base = re.sub(r"_{2,}", "_", base).strip("_")
+    if not base:
+        base = "receipt"
+    base = base[:50]
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return f"{base}_{timestamp}{ext}"
+
+
+@router.post("/api/financial-reports/receipts/upload")
+async def upload_expense_receipt(
+    file: UploadFile = File(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(require_financial_report_user),
+):
+    if not file:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    raw_name = file.filename or ""
+    _, ext = os.path.splitext(raw_name)
+    ext = ext.lower()
+    if ext not in ALLOWED_RECEIPT_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file extension '{ext}'. Allowed: PNG, JPG, JPEG, WEBP, GIF, PDF",
+        )
+
+    contents = await file.read()
+    if len(contents) > MAX_RECEIPT_SIZE:
+        raise HTTPException(status_code=400, detail="Receipt file exceeds maximum limit of 5 MB")
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Receipt file is empty")
+
+    os.makedirs(RECEIPTS_UPLOAD_DIR, exist_ok=True)
+    sanitized_filename = _sanitize_receipt_filename(raw_name)
+    file_path = os.path.join(RECEIPTS_UPLOAD_DIR, sanitized_filename)
+
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
+    # Also save under raw and direct clean name without timestamp for direct lookup
+    base_clean = re.sub(r"[|<>:\"/\\?*;%${}()[\]&'`!~#^=+,]", "", os.path.splitext(os.path.basename(raw_name))[0])
+    base_clean = re.sub(r"\s+", "_", base_clean).strip("_")
+    if base_clean:
+        direct_name = f"{base_clean}{ext}"
+        direct_path = os.path.join(RECEIPTS_UPLOAD_DIR, direct_name)
+        try:
+            with open(direct_path, "wb") as f:
+                f.write(contents)
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "filename": sanitized_filename,
+        "direct_filename": f"{base_clean}{ext}" if base_clean else sanitized_filename,
+        "original_name": raw_name,
+        "size": len(contents),
+        "url": f"/api/financial-reports/receipts/{sanitized_filename}",
+    }
+
+
+@router.get("/api/financial-reports/receipts/{filename}")
+def get_expense_receipt_file(
+    filename: str,
+    token: Optional[str] = None,
+    db: Session = Depends(get_db),
+    request: Request = None,
+):
+    # Authenticate via Header or Token query parameter
+    current_user = None
+    auth_header = request.headers.get("Authorization") if request else None
+    if auth_header and auth_header.startswith("Bearer "):
+        bearer_token = auth_header[7:].strip()
+        try:
+            current_user = auth.get_user_from_token(bearer_token, db)
+        except Exception:
+            current_user = None
+    elif token:
+        try:
+            current_user = auth.get_user_from_token(token, db)
+        except Exception:
+            current_user = None
+
+    safe_name = os.path.basename(filename)
+    file_path = os.path.join(RECEIPTS_UPLOAD_DIR, safe_name)
+
+    if not os.path.isfile(file_path):
+        # Search by space/underscore or case-insensitive or prefix matching in RECEIPTS_UPLOAD_DIR
+        if os.path.isdir(RECEIPTS_UPLOAD_DIR):
+            target_norm = re.sub(r"[^a-zA-Z0-9]", "", safe_name).lower()
+            base_part = os.path.splitext(safe_name)[0].lower()
+            candidate_path = None
+
+            for f in os.listdir(RECEIPTS_UPLOAD_DIR):
+                f_norm = re.sub(r"[^a-zA-Z0-9]", "", f).lower()
+                if f_norm == target_norm or f.lower() == safe_name.lower():
+                    candidate_path = os.path.join(RECEIPTS_UPLOAD_DIR, f)
+                    safe_name = f
+                    break
+                elif base_part and len(base_part) >= 3 and f.lower().startswith(base_part):
+                    candidate_path = os.path.join(RECEIPTS_UPLOAD_DIR, f)
+                    safe_name = f
+
+            if candidate_path and os.path.isfile(candidate_path):
+                file_path = candidate_path
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Receipt file not found")
+
+    _, ext = os.path.splitext(safe_name)
+    ext = ext.lower()
+    media_type = "image/png"
+    if ext in {".jpg", ".jpeg"}:
+        media_type = "image/jpeg"
+    elif ext == ".webp":
+        media_type = "image/webp"
+    elif ext == ".gif":
+        media_type = "image/gif"
+    elif ext == ".pdf":
+        media_type = "application/pdf"
+
+    return FileResponse(file_path, media_type=media_type, filename=safe_name)
+
