@@ -6,6 +6,7 @@
 [![XGBoost](https://img.shields.io/badge/XGBoost-1.7.6-EB5424.svg?style=flat&logo=XGBoost&logoColor=white)](https://xgboost.readthedocs.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Ready-336791.svg?style=flat&logo=PostgreSQL&logoColor=white)](https://www.postgresql.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-Supported-003B57.svg?style=flat&logo=SQLite&logoColor=white)](https://www.sqlite.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **MEALS Backend** is the high-performance, intelligent core powering the **MEALS Smart Canteen Ecosystem**. Designed specifically for school canteens and institutional food services, the system integrates Point of Sale (POS), multi-unit inventory tracking, AI/ML-driven daily demand forecasting, automated DepEd-compliant financial statements & Excel exports, real-time WebSocket alerts, and robust multi-factor authentication (TOTP).
 
@@ -28,6 +29,7 @@
 - [Financial Reporting & DepEd Excel Generation](#-financial-reporting--deped-excel-generation)
 - [Offline Transaction Sync & Real-Time Alerts](#-offline-transaction-sync--real-time-alerts)
 - [Troubleshooting](#-troubleshooting)
+- [License & Maintainer](#-license--maintainer)
 
 ---
 
@@ -136,7 +138,7 @@ graph TD
 ## 📂 Project Directory Structure
 
 ```text
-MEALS_backend/
+backend/
 ├── auth.py                          # JWT auth, TOTP verification, password hashing & dependencies
 ├── analytics_helpers.py             # Sales summaries, top products, category & hourly aggregations
 ├── database.py                      # SQLAlchemy database engine, session factory & connection resolver
@@ -170,13 +172,7 @@ Ensure you have the following installed on your system:
 
 ## 🚀 Installation & Environment Setup
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/RonaldMark17/MEALS_backend.git
-cd MEALS_backend
-```
-
-### 2. Create and Activate a Virtual Environment
+### 1. Create and Activate a Virtual Environment
 
 **Windows (PowerShell):**
 ```powershell
@@ -190,10 +186,10 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 2. Install Dependencies
 ```bash
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 ---
@@ -221,22 +217,28 @@ The backend automatically creates and utilizes a local SQLite database (`canteen
 
 ## 🏃 Running the Server
 
-### Option A: Direct Python Execution
+### Option A: From Repository Root
 ```bash
+python app.py
+```
+
+### Option B: Direct Python Execution from `backend/`
+```bash
+cd backend
 python main.py
 ```
 
-### Option B: Uvicorn ASGI Server (Recommended for Development)
-From the repository directory:
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-Or from the parent directory:
+### Option C: Uvicorn ASGI Server (Recommended for Development)
+From the repository root:
 ```bash
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
+Or from the `backend/` directory:
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-Once running, the interactive documentation is available at:
+Once running, interactive documentation is available at:
 - **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 - **Health Check**: [http://localhost:8000/api/health](http://localhost:8000/api/health)
@@ -254,7 +256,7 @@ Populates demo users, product catalog, sample categories, and baseline inventory
 ### Method 2: Comprehensive Multi-Year Historical Simulation (CLI)
 Generates 3+ years of realistic school transactions, recess/lunch traffic patterns, holiday calendars, and weather records:
 ```bash
-python seed_historical_canteen_data.py --database canteen.db --start-date 2023-01-01 --end-date 2026-04-18
+python backend/seed_historical_canteen_data.py --database canteen.db --start-date 2023-01-01 --end-date 2026-04-18
 ```
 
 ---

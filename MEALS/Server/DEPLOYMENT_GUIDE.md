@@ -187,3 +187,14 @@ When updating client features:
 1. Re-build the `.exe` on dev PC: `npm run electron:build`
 2. Distribute the new `MEALS Setup.exe` to Admin and Staff PCs.
 3. Install the updated executable. `config.json` settings (`apiBaseUrl`) will be preserved.
+
+---
+
+## 🔗 Related Documentation
+
+- [Release Package Overview](../README.md)
+- [Client Installation Guide](../Client/README.md)
+- [Root Repository README](../../README.md)
+- [Backend Documentation](../../backend/README.md)
+- [Frontend Client Documentation](../../smartcanteen/README.md)
+
