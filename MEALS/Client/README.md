@@ -47,7 +47,7 @@ This folder contains pre-compiled Windows executable binaries for the **MEALS De
 ### Step 3: Launching & Logging In
 1. Double-click the **MEALS** shortcut on your Desktop.
 2. Log in using your assigned credentials:
-   - **Admin PC**: Access Admin Dashboard, Sales Analytics, DepEd Financial Reports, and Settings.
+   - **Admin PC**: Access Admin Dashboard, DepEd Financial Reports, Inventory Management, and Settings.
    - **Staff PC**: Access Inventory Management, Stock Levels, and Daily Operations.
 
 ---

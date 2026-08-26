@@ -29,7 +29,7 @@ from backend.time_utils import build_ph_date_range_bounds, get_ph_today
 
 router = APIRouter(tags=["Financial Reports"])
 
-FINANCIAL_REPORT_ROLES = {"admin", "administrator", "staff"}
+FINANCIAL_REPORT_ROLES = {"admin", "administrator"}
 DEFAULT_TEMPLATE_FILENAME = "CANTEEN-REPORT-2025-2026-2 (1).xlsx"
 TEMPLATE_FILENAME = DEFAULT_TEMPLATE_FILENAME
 TEMPLATE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "report_templates")
@@ -269,7 +269,7 @@ def require_financial_report_user(
     current_user: models.User = Depends(auth.get_current_user),
 ) -> models.User:
     if (current_user.role or "").strip().lower() not in FINANCIAL_REPORT_ROLES:
-        raise HTTPException(status_code=403, detail="Admin or staff access required")
+        raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 
@@ -2193,7 +2193,7 @@ def update_report(
     payload: schemas.FinancialReportUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    current: models.User = Depends(require_financial_report_user),
+    current: models.User = Depends(auth.require_admin),
 ):
     report = (
         db.query(models.MonthlyReport)
@@ -2262,7 +2262,7 @@ def replace_report_expenses(
     payload: schemas.FinancialExpensesUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    current: models.User = Depends(require_financial_report_user),
+    current: models.User = Depends(auth.require_admin),
 ):
     report = (
         db.query(models.MonthlyReport)
@@ -2347,7 +2347,7 @@ def replace_report_fund_monitoring(
     payload: schemas.FinancialFundMonitoringUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    current: models.User = Depends(require_financial_report_user),
+    current: models.User = Depends(auth.require_admin),
 ):
     report = (
         db.query(models.MonthlyReport)
@@ -2560,7 +2560,7 @@ async def upload_expense_receipt(
     request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current: models.User = Depends(require_financial_report_user),
+    current: models.User = Depends(auth.require_admin),
 ):
     if not file:
         raise HTTPException(status_code=400, detail="No file provided")

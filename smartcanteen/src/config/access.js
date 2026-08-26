@@ -6,7 +6,7 @@ import {
 
 export const ROLE_DEFAULT_ROUTES = {
   admin: '/dashboard',
-  staff: '/financial-reports',
+  staff: '/inventory',
   cashier: '/pos',
 };
 
@@ -32,53 +32,53 @@ export const APP_ROUTE_ACCESS = [
   {
     key: 'analytics',
     path: '/analytics',
-    allowedRoles: ['admin', 'staff'],
+    allowedRoles: ['admin'],
     moduleKey: MODULE_KEYS.ANALYTICS,
   },
   {
     key: 'financialReports',
     path: '/financial-reports',
-    allowedRoles: ['admin', 'staff'],
+    allowedRoles: ['admin'],
     moduleKey: MODULE_KEYS.FINANCIAL_REPORTS,
   },
   {
     key: 'dailySales',
     path: '/daily-sales',
-    allowedRoles: ['admin', 'staff'],
+    allowedRoles: ['admin'],
     moduleKey: MODULE_KEYS.DAILY_SALES,
     requiredModuleKeys: [MODULE_KEYS.FINANCIAL_REPORTS, MODULE_KEYS.DAILY_SALES],
   },
   {
     key: 'expenseManagement',
     path: '/expenses',
-    allowedRoles: ['admin', 'staff'],
+    allowedRoles: ['admin'],
     moduleKey: MODULE_KEYS.EXPENSE_MANAGEMENT,
     requiredModuleKeys: [MODULE_KEYS.FINANCIAL_REPORTS, MODULE_KEYS.EXPENSE_MANAGEMENT],
   },
   {
     key: 'schoolYearManagement',
     path: '/school-years',
-    allowedRoles: ['admin', 'staff'],
+    allowedRoles: ['admin'],
     moduleKey: MODULE_KEYS.SCHOOL_YEAR_MANAGEMENT,
     requiredModuleKeys: [MODULE_KEYS.FINANCIAL_REPORTS, MODULE_KEYS.SCHOOL_YEAR_MANAGEMENT],
   },
   {
     key: 'reports',
     path: '/reports',
-    allowedRoles: ['admin', 'staff'],
+    allowedRoles: ['admin'],
     moduleKey: MODULE_KEYS.REPORTS,
     requiredModuleKeys: [MODULE_KEYS.FINANCIAL_REPORTS, MODULE_KEYS.REPORTS],
   },
   {
     key: 'transactions',
     path: '/transactions',
-    allowedRoles: ['admin', 'staff', 'cashier'],
+    allowedRoles: ['admin', 'cashier'],
     moduleKey: MODULE_KEYS.TRANSACTIONS,
   },
   {
     key: 'predictions',
     path: '/predictions',
-    allowedRoles: ['admin', 'staff'],
+    allowedRoles: ['admin'],
     moduleKey: MODULE_KEYS.DEMAND_FORECAST,
   },
   {
@@ -96,7 +96,7 @@ export const APP_ROUTE_ACCESS = [
   {
     key: 'settings',
     path: '/settings',
-    allowedRoles: ['admin'],
+    allowedRoles: ['admin', 'staff'],
     moduleKey: MODULE_KEYS.SETTINGS,
   },
 ];

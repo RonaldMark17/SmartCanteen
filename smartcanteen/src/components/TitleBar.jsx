@@ -3,23 +3,31 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from './BrandLogo';
 import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useModuleSettings } from '../contexts/useModuleSettings';
+import { APP_ROUTE_ACCESS, isRouteEnabled } from '../config/access';
 import {
   ArrowPathIcon,
   ArrowsPointingInIcon,
   ArrowsPointingOutIcon,
+  ArrowTrendingUpIcon,
   BanknotesIcon,
   BuildingStorefrontIcon,
+  CalendarDaysIcon,
   ChartBarIcon,
+  ClipboardDocumentListIcon,
   ClockIcon,
   Cog6ToothIcon,
   CubeIcon,
+  DocumentChartBarIcon,
   InformationCircleIcon,
   KeyIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
   MinusIcon,
+  ReceiptPercentIcon,
   ShieldCheckIcon,
   Squares2X2Icon,
+  UserGroupIcon,
   WindowIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -41,8 +49,35 @@ export default function TitleBar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { modules } = useModuleSettings();
+  const userRole = String(user?.role || '').toLowerCase();
 
   const isAuth = Boolean(user && user.role);
+
+  const allNavOptions = [
+    { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
+    { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
+    { name: 'Inventory', path: '/inventory', icon: CubeIcon },
+    { name: 'Transactions', path: '/transactions', icon: ClockIcon },
+    { name: 'Financial Reports', path: '/financial-reports', icon: BanknotesIcon },
+    { name: 'Daily Sales', path: '/daily-sales', icon: DocumentChartBarIcon },
+    { name: 'Expenses', path: '/expenses', icon: ReceiptPercentIcon },
+    { name: 'School Years', path: '/school-years', icon: CalendarDaysIcon },
+    { name: 'Reports', path: '/reports', icon: ClipboardDocumentListIcon },
+    { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
+    { name: 'Audit Logs', path: '/audit', icon: ShieldCheckIcon },
+    { name: 'User Management', path: '/accounts', icon: UserGroupIcon },
+    { name: 'Settings', path: '/settings', icon: Cog6ToothIcon },
+  ];
+
+  const allowedNavItems = allNavOptions.filter((item) => {
+    const route = APP_ROUTE_ACCESS.find((r) => r.path === item.path);
+    return Boolean(
+      route &&
+        route.allowedRoles.includes(userRole) &&
+        isRouteEnabled(route, modules)
+    );
+  });
 
   // Check window maximized state from Electron
   useEffect(() => {
@@ -242,7 +277,7 @@ export default function TitleBar() {
           </div>
 
           {/* Desktop App Menu Buttons */}
-          <nav className="app-no-drag flex items-center gap-0.5" style={{ WebkitAppRegion: 'no-drag' }}>
+          <nav className="app-no-drag hidden sm:flex items-center gap-0.5" style={{ WebkitAppRegion: 'no-drag' }}>
             {/* File Menu */}
             <div className="relative">
               <button
@@ -401,55 +436,30 @@ export default function TitleBar() {
                 </button>
 
                 {activeMenu === 'navigate' && (
-                  <div className="absolute left-0 top-full mt-1 w-52 rounded-lg border border-slate-700 bg-slate-900/95 py-1.5 text-slate-200 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100">
-                    <button
-                      type="button"
-                      onClick={() => handleNav('/dashboard')}
-                      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                    >
-                      <ChartBarIcon className="h-4 w-4 text-emerald-400" />
-                      Dashboard
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNav('/pos')}
-                      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                    >
-                      <BuildingStorefrontIcon className="h-4 w-4 text-emerald-400" />
-                      Point of Sale (POS)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNav('/inventory')}
-                      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                    >
-                      <CubeIcon className="h-4 w-4 text-emerald-400" />
-                      Inventory
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNav('/transactions')}
-                      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                    >
-                      <ClockIcon className="h-4 w-4 text-emerald-400" />
-                      Transactions
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNav('/financial-reports')}
-                      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                    >
-                      <BanknotesIcon className="h-4 w-4 text-emerald-400" />
-                      Financial Reports
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleNav('/settings')}
-                      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition hover:bg-emerald-600 hover:text-white"
-                    >
-                      <Cog6ToothIcon className="h-4 w-4 text-emerald-400" />
-                      Settings
-                    </button>
+                  <div className="absolute left-0 top-full mt-1 w-56 rounded-lg border border-slate-700 bg-slate-900/95 py-1.5 text-slate-200 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 max-h-[75vh] overflow-y-auto custom-scrollbar">
+                    {allowedNavItems.length > 0 ? (
+                      allowedNavItems.map((item) => {
+                        const ItemIcon = item.icon;
+                        const isCurrent = location.pathname === item.path;
+                        return (
+                          <button
+                            key={item.path}
+                            type="button"
+                            onClick={() => handleNav(item.path)}
+                            className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition ${
+                              isCurrent
+                                ? 'bg-emerald-600 font-bold text-white'
+                                : 'hover:bg-slate-800 hover:text-white'
+                            }`}
+                          >
+                            <ItemIcon className={`h-4 w-4 shrink-0 ${isCurrent ? 'text-white' : 'text-emerald-400'}`} />
+                            <span className="truncate">{item.name}</span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="px-3 py-2 text-xs text-slate-400">No available routes</div>
+                    )}
                   </div>
                 )}
               </div>
@@ -580,7 +590,7 @@ export default function TitleBar() {
             {/* Content Body */}
             <div className="max-h-[60vh] space-y-4 overflow-y-auto p-6 text-xs text-slate-300 custom-scrollbar">
               <p className="leading-relaxed text-slate-300">
-                MEALS (Management of Expenses, Assets, and Logistics System) is an all-in-one operations system built for intelligent inventory tracking, real-time demand forecasting, and automated financial reporting across multiple terminals.
+                MEALS (Management of Expenses, Assets, and Logistics System) is an all-in-one operations system built for intelligent inventory tracking, canteen operations, and automated financial reporting across multiple terminals.
               </p>
 
               {/* Feature Highlights Grid (without POS) */}

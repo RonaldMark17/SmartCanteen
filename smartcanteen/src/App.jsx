@@ -24,6 +24,7 @@ import Settings from './views/Settings';
 import { ModuleSettingsProvider } from './contexts/ModuleSettingsContext';
 import { useModuleSettings } from './contexts/useModuleSettings';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AccessibilityProvider } from './contexts/AccessibilityContext';
 import {
   APP_ROUTE_ACCESS,
   getDefaultRoute,
@@ -168,12 +169,14 @@ export default function App() {
   return (
     <AppRouter>
       <AuthProvider>
-        <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
-          <TitleBar />
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <AppContent />
+        <AccessibilityProvider>
+          <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
+            <TitleBar />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <AppContent />
+            </div>
           </div>
-        </div>
+        </AccessibilityProvider>
       </AuthProvider>
     </AppRouter>
   );

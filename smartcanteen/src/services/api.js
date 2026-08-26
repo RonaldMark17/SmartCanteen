@@ -479,6 +479,15 @@ function assertMfaWasCompleted(response) {
     throw new Error('MFA verification did not complete. Try signing in again.');
   }
 
+  // MFA is optional for staff and other non-admin users if not enabled
+  const userRole = response?.user?.role;
+  const isMfaEnabled = Boolean(response?.user?.authenticator_mfa_enabled);
+  const isMfaMandatory = userRole === 'admin';
+
+  if (!isMfaMandatory && !isMfaEnabled) {
+    return;
+  }
+
   const authenticatorVerified = Boolean(response?.authenticator_mfa_verified);
 
   if (
@@ -656,7 +665,7 @@ function extractFilenameFromDisposition(value, fallback = 'download') {
   return fallback;
 }
 
-function buildConnectionError(apiBase, error) {
+function buildConnectionError() {
   return new Error(
     'Unable to connect to the server. Please check your internet connection and try again.'
   );
@@ -1266,6 +1275,8 @@ export const API = {
     request('POST', '/auth/authenticator-recovery/setup', { usernameOrEmail }),
   getCurrentUser: () => request('GET', '/auth/me'),
   getAccountNotices: () => request('GET', '/account/notices'),
+  startAuthenticatorSetup: () => request('POST', '/auth/authenticator/setup'),
+  disableAuthenticator: () => request('POST', '/auth/authenticator/disable'),
   regenerateRecoveryCodes: () => request('POST', '/auth/recovery-codes/regenerate'),
   getAdminUsers: () => request('GET', '/admin/users'),
   getPasswordResetRequests: (status = 'all') =>
@@ -1302,6 +1313,9 @@ export const API = {
   createProduct: (data) => request('POST', '/products', data),
   updateProduct: (id, data) => request('PUT', `/products/${id}`, data),
   deleteProduct: (id) => request('DELETE', `/products/${id}`),
+  replenishInventory: (data) => request('POST', '/inventory/replenish', data),
+  adjustInventory: (data) => request('POST', '/inventory/adjust', data),
+  getInventoryHistory: (params = {}) => request('GET', `/inventory/history${toQuery(params)}`),
 
   createTransaction: (data) => request('POST', '/transactions', data),
   getTransactions: (startDate = '', endDate = '', { skip = 0, limit = 100 } = {}) =>

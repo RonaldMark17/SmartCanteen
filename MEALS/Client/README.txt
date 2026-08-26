@@ -38,7 +38,7 @@ Launching the Application:
 ------------------------------------------------------------------------
 Role & Realtime Multi-PC Usage:
 ------------------------------------------------------------------------
-- Admin PC: Access Admin Dashboard, Sales, Financial Reports, and Settings.
+- Admin PC: Access Admin Dashboard, DepEd Financial Reports, Inventory, and Settings.
 - Staff PC: Access Inventory Management, Stock Levels, and Daily Operations.
 - Both Admin and Staff connect to the same central database on your virtual server via HTTPS.
 ========================================================================

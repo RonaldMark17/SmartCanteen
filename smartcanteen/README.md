@@ -4,7 +4,6 @@
 [![Vite](https://img.shields.io/badge/Vite-8.0.4-646CFF.svg?style=flat&logo=Vite&logoColor=white)](https://vitejs.dev/)
 [![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-4.2.2-38B2AC.svg?style=flat&logo=TailwindCSS&logoColor=white)](https://tailwindcss.com/)
 [![Electron](https://img.shields.io/badge/Electron-33.2.1-47848F.svg?style=flat&logo=Electron&logoColor=white)](https://www.electronjs.org/)
-[![Chart.js](https://img.shields.io/badge/Chart.js-4.5.1-FF6384.svg?style=flat&logo=Chart.js&logoColor=white)](https://www.chartjs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **MEALS Client** is the cross-platform management client for the **MEALS Smart Canteen Ecosystem**. Built with **React 19**, **Vite 8**, and **Tailwind CSS 4**, it provides an intuitive administrative, inventory tracking, and DepEd-compliant financial accounting interface accessible via:
@@ -42,16 +41,12 @@
 - **Product Catalog Management**: Add, update, and archive products, define base units, barcodes, categories, and cost/retail prices.
 - **Stock Restock & Adjustments**: Direct stock level increments and deduction logging.
 
-### 3. 📈 Sales Analytics & Reports (`src/views/Analytics.jsx`)
-- **Interactive Visualizations**: Powered by Chart.js — daily revenue trends, top-selling items, and category revenue share.
-- **Date Range Filters**: Custom date ranges, monthly views, and school term comparisons.
-
-### 4. 🔐 Security, TOTP MFA & Account Management (`src/views/Login.jsx`, `ManageAccounts.jsx`)
+### 3. 🔐 Security, TOTP MFA & Account Management (`src/views/Login.jsx`, `ManageAccounts.jsx`)
 - **Role-Based Guards**: Navigation and feature protection tailored for `admin` and `staff` roles.
 - **Time-based MFA (TOTP)**: Google Authenticator setup with QR code generation, backup recovery codes, and 30-day device trust.
 - **Account & Reset Queue**: Administrative password reset approval and MFA recovery review.
 
-### 5. ⚙️ Settings & Dynamic Modules (`src/views/Settings.jsx`, `AuditLog.jsx`)
+### 4. ⚙️ Settings & Dynamic Modules (`src/views/Settings.jsx`, `AuditLog.jsx`)
 - **Dynamic Feature Switches**: Toggle system modules on/off dynamically.
 - **Audit Logs**: Query timestamped activity logs with IP addresses and user actions.
 
@@ -66,8 +61,8 @@
 │       Context Providers        │          View Modules          │
 │  - AuthContext (JWT & TOTP)    │  - Inventory Manager           │
 │  - ThemeContext (Dark/Light)   │  - DepEd Financial Reports     │
-│  - AlertContext (WebSockets)   │  - Sales Analytics & Charts    │
-│                                │  - Account & Reset Management  │
+│  - AlertContext (WebSockets)   │  - Account & Reset Management  │
+│                                │  - Audit Logs & Settings       │
 ├────────────────────────────────┴────────────────────────────────┤
 │            Styling: Tailwind CSS 4 & Custom Design Tokens       │
 ├─────────────────────────────────────────────────────────────────┤
@@ -86,7 +81,6 @@
 | **React Router** | `7.14.1` | Client-side declarative routing and route guards |
 | **Electron** | `33.2.1` | Cross-platform desktop runtime for Windows |
 | **electron-builder** | `25.1.8` | Packaging tool for NSIS installer and portable `.exe` |
-| **Chart.js / react-chartjs-2** | `4.5.1` / `5.3.1` | Interactive analytics charts |
 | **Heroicons** | `2.2.0` | Accessible SVG icon suite |
 | **QRCode** | `1.5.4` | TOTP authenticator setup QR code rendering |
 
@@ -119,7 +113,6 @@ smartcanteen/
 │   │   └── websocket.js           # Real-time WebSocket connection client
 │   ├── utils/                     # Formatters, currency & date utilities
 │   ├── views/                     # Main view pages
-│   │   ├── Analytics.jsx          # Sales metrics & revenue charts
 │   │   ├── AuditLog.jsx           # Activity & security audit trails
 │   │   ├── Dashboard.jsx          # Role-tailored home dashboard
 │   │   ├── FinancialReports.jsx   # DepEd financial statements & Excel export

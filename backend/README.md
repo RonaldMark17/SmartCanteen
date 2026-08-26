@@ -70,7 +70,6 @@ graph TD
         subgraph "Core Services"
             InventoryService["Inventory & Unit Converter"]
             ReportEngine["DepEd Financial & Excel Generator"]
-            AnalyticsService["Sales Analytics & Summary Engine"]
             AuditService["Audit Logger & Reset Queue"]
         end
 
@@ -87,13 +86,11 @@ graph TD
     Router --> AuthMiddleware
     AuthMiddleware --> InventoryService
     AuthMiddleware --> ReportEngine
-    AuthMiddleware --> AnalyticsService
     AuthMiddleware --> AuditService
 
     InventoryService --> DatabaseLayer
     ReportEngine --> DatabaseLayer
     ReportEngine --> ExcelTemplate
-    AnalyticsService --> DatabaseLayer
     AuditService --> DatabaseLayer
 
     DatabaseLayer <--> Database
@@ -122,7 +119,6 @@ graph TD
 ```text
 backend/
 ├── auth.py                          # JWT auth, TOTP verification, password hashing & dependencies
-├── analytics_helpers.py             # Sales summaries, top products, and category aggregations
 ├── database.py                      # SQLAlchemy database engine, session factory & connection resolver
 ├── demo_data.py                     # Canteen baseline demo datasets & seeder
 ├── financial_reports.py             # DepEd financial statements, monthly calculations & Excel generator
@@ -280,12 +276,6 @@ When seeded, the following default accounts are initialized:
 - `DELETE /api/products/{pid}` — Archive or delete product.
 - `GET /api/products/low-stock` — Fetch products currently below threshold.
 
-### 📈 Analytics (`/api/analytics`)
-- `GET /api/analytics/summary` — Overview of revenue, transaction counts, and sales metrics.
-- `GET /api/analytics/daily-sales` — Trend breakdown over specified date ranges.
-- `GET /api/analytics/top-products` — Most popular items by quantity and revenue.
-- `GET /api/analytics/category-sales` — Revenue share across categories.
-
 ### 📑 DepEd Financial Reports (`/api/financial-reports`)
 - `GET /api/financial-reports/school-years` — List recorded school years.
 - `POST /api/financial-reports/school-years` — Register new academic year.
@@ -331,9 +321,9 @@ The export feature merges this data into the official template (`report_template
 - *Cause*: Concurrent threads writing simultaneously.
 - *Solution*: `database.py` enables `check_same_thread: False` and WAL mode. For higher concurrency, switch to PostgreSQL by setting `DATABASE_URL=postgresql://user:password@localhost:5432/meals_db`.
 
-### 2. Timezone Discrepancies in Analytics
+### 2. Timezone Discrepancies in Reports
 - *Cause*: Server running in UTC while school operates in Philippine Standard Time.
-- *Solution*: All date aggregations strictly utilize `backend.time_utils` to compute Manila boundaries (`Asia/Manila` / UTC+8).
+- *Solution*: All date calculations strictly utilize `backend.time_utils` to compute Manila boundaries (`Asia/Manila` / UTC+8).
 
 ### 3. Missing Template Error on Export
 - Ensure `report_templates/CANTEEN-REPORT-2025-2026-2 (1).xlsx` exists in the backend directory.

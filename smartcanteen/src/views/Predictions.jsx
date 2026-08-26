@@ -3060,9 +3060,9 @@ export default function Predictions() {
   );
 
   return (
-    <div className="demand-forecast-view flex h-full flex-col gap-4 overflow-y-auto bg-slate-50/40 pb-6 pr-2 custom-scrollbar">
+    <div className="demand-forecast-view flex h-full min-h-0 w-full max-w-full flex-col gap-4 overflow-y-auto overflow-x-hidden bg-slate-50/40 pb-6 pr-0 sm:pr-2 custom-scrollbar">
       <div className="rounded-[20px] bg-white/95 p-4 shadow-md ring-1 ring-slate-100 sm:p-5">
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr),minmax(340px,0.72fr)] xl:items-start">
+        <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr),minmax(340px,0.72fr)] 2xl:items-start">
           <div className="max-w-2xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-teal-700 shadow-sm">
               <SparklesIcon className="h-4 w-4" />
@@ -3566,7 +3566,7 @@ export default function Predictions() {
           ) : (
             <div className="space-y-4">
               {prepViewMode === 'table' ? (
-                <div className="overflow-x-auto custom-scrollbar rounded-[20px] bg-white shadow-sm ring-1 ring-slate-100">
+                <div className="w-full min-w-0 overflow-x-auto custom-scrollbar rounded-[20px] bg-white shadow-sm ring-1 ring-slate-100">
                   <table className="min-w-[900px] w-full border-collapse text-left">
                     <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-widest text-slate-500">
                       <tr>

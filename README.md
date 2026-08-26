@@ -53,7 +53,6 @@ graph TB
         subgraph "Core Business Logic"
             InventoryEngine["Inventory & Multi-Unit Converter"]
             ReportEngine["DepEd Financial Statement & Excel Generator"]
-            AnalyticsEngine["Sales Analytics & Trend Aggregator"]
             AuditEngine["Audit Logger & Account Recovery Queue"]
         end
         
@@ -74,12 +73,10 @@ graph TB
     Router --> AuthGuard
     AuthGuard --> InventoryEngine
     AuthGuard --> ReportEngine
-    AuthGuard --> AnalyticsEngine
     AuthGuard --> AuditEngine
 
     InventoryEngine --> ORMLayer
     ReportEngine --> ORMLayer
-    AnalyticsEngine --> ORMLayer
     AuditEngine --> ORMLayer
 
     ReportEngine --> ExcelTpl
@@ -107,17 +104,13 @@ graph TB
 - **Stock Threshold Alerts**: Real-time deduction tracking with configurable `min_stock` threshold warnings.
 - **Category & Catalog Management**: Organize products by category, manage cost/selling prices, barcodes, and favorite items.
 
-### 📈 3. Sales Analytics & Reporting
-- **Interactive Visualizations**: Daily revenue trends, top-performing products, and category breakdowns powered by Chart.js.
-- **Audit Trails**: Detailed logs tracking stock movements, price changes, and administrative actions.
-
-### 🔐 4. Enterprise Security & Multi-Factor Authentication
+### 🔐 3. Enterprise Security & Multi-Factor Authentication
 - **Role-Based Access Control**: Strict privilege separation between `admin` and `staff` users.
 - **Time-based MFA (TOTP)**: Google Authenticator-compatible two-factor authentication with QR provisioning, backup recovery codes, and 30-day trusted device memory.
 - **Admin Recovery Queue**: Formal review workflow for user password resets and MFA recovery requests.
 - **Audit Logging**: Comprehensive activity tracking with timestamp and IP recording.
 
-### ⚡ 5. Real-Time WebSockets & Dynamic Modules
+### ⚡ 4. Real-Time WebSockets & Dynamic Modules
 - **WebSocket Broadcast Hub**: Live `/api/realtime/alerts` channel notifying staff of low stock levels and administrative events.
 - **Feature Module Toggles**: Enable or disable functional modules on the fly from Admin Settings.
 
@@ -129,7 +122,6 @@ graph TB
 SmartCanteen/
 ├── backend/                       # FastAPI Backend Application
 │   ├── auth.py                    # JWT authentication & TOTP MFA logic
-│   ├── analytics_helpers.py       # Sales summaries & category aggregations
 │   ├── database.py                # Database engine & SQLAlchemy session factory
 │   ├── demo_data.py               # Demo datasets & database seeder
 │   ├── financial_reports.py       # DepEd financial calculations & Excel generator
@@ -152,7 +144,7 @@ SmartCanteen/
 │   │   ├── components/            # Reusable UI components & modals
 │   │   ├── contexts/              # Auth, Theme, and Alert Contexts
 │   │   ├── services/              # API HTTP & WebSocket clients
-│   │   ├── views/                 # View pages (Financials, Inventory, Analytics, etc.)
+│   │   ├── views/                 # View pages (Financials, Inventory, Settings, etc.)
 │   │   ├── App.jsx                # Application root router & layout
 │   │   ├── index.css              # Global styles & TailwindCSS tokens
 │   │   └── main.jsx               # React DOM mount entry point
@@ -196,7 +188,7 @@ SmartCanteen/
 | **Spreadsheet Automation** | [OpenPyXL](https://openpyxl.readthedocs.io/) `3.1.5`, [Pillow](https://python-pillow.org/) `>=10.0.0` |
 | **Security & Auth** | [python-jose](https://github.com/mpdavis/python-jose) `3.3.0` (JWT), [bcrypt](https://github.com/pyca/bcrypt) `4.1.3`, Google Authenticator TOTP |
 | **Frontend Framework** | [React](https://react.dev/) `19.2.4`, [Vite](https://vitejs.dev/) `8.0.4`, [React Router](https://reactrouter.com/) `7.14.1` |
-| **Styling & UI** | [TailwindCSS](https://tailwindcss.com/) `4.2.2`, [Heroicons](https://heroicons.com/) `2.2.0`, [Chart.js](https://www.chartjs.org/) `4.5.1` |
+| **Styling & UI** | [TailwindCSS](https://tailwindcss.com/) `4.2.2`, [Heroicons](https://heroicons.com/) `2.2.0` |
 | **Desktop Runtime** | [Electron](https://www.electronjs.org/) `33.2.1`, [electron-builder](https://www.electron.build/) `25.1.8` |
 
 ---

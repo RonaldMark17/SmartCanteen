@@ -259,11 +259,11 @@ export default function TransactionHistory() {
           </button>
           <div className="col-span-2 grid min-w-0 grid-cols-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm md:flex md:flex-none md:items-center md:gap-4">
             <div className="min-w-0 border-r border-slate-100 px-3 text-center md:px-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Sales</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Sales</p>
               <p className="truncate text-base font-black text-primary sm:text-lg">{formatCurrency(totalRevenue)}</p>
             </div>
             <div className="min-w-0 px-3 text-center md:px-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Count</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Count</p>
               <p className="truncate text-base font-black text-slate-900 sm:text-lg">{filteredTxns.length}</p>
             </div>
           </div>
@@ -303,7 +303,7 @@ export default function TransactionHistory() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold uppercase text-slate-400">To</span>
+          <span className="text-xs font-bold uppercase text-slate-500">To</span>
           <input
             type="date"
             value={dateRange.end}
@@ -364,7 +364,7 @@ export default function TransactionHistory() {
                     <td className="px-6 py-4">{(transaction.items || []).length} items</td>
                     <td className="px-6 py-4">
                       <span
-                        className={`rounded px-2 py-1 text-[10px] font-black uppercase ${
+                        className={`rounded px-2 py-1 text-xs font-black uppercase ${
                           isCashPayment(transaction.payment_type)
                             ? 'bg-emerald-50 text-emerald-600'
                             : 'bg-slate-100 text-slate-600'
@@ -439,18 +439,18 @@ export default function TransactionHistory() {
 
                   <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Items</div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Items</div>
                       <div className="mt-1 font-black text-slate-900">{(transaction.items || []).length}</div>
                     </div>
                     <div className="rounded-xl bg-slate-50 px-3 py-2">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Total</div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Total</div>
                       <div className="mt-1 font-black text-slate-900">{formatCurrency(transaction.total)}</div>
                     </div>
                   </div>
 
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <span
-                      className={`rounded px-2 py-1 text-[10px] font-black uppercase ${
+                      className={`rounded px-2 py-1 text-xs font-black uppercase ${
                         isCashPayment(transaction.payment_type)
                           ? 'bg-emerald-50 text-emerald-600'
                           : 'bg-slate-100 text-slate-600'
@@ -558,7 +558,7 @@ export default function TransactionHistory() {
                 </div>
               </div>
 
-              <div className="mt-6 space-y-1 rounded-lg border border-slate-100 bg-slate-50 p-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <div className="mt-6 space-y-1 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs font-bold uppercase tracking-wider text-slate-500">
                 <p>
                   Date: {formatTransactionDateTime(selectedTxn.created_at)}
                 </p>

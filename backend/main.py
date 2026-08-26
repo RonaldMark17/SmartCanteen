@@ -500,9 +500,10 @@ def _persist_transaction(
 
     for item in resolved_items:
         product = item["product"]
-        product.stock = round(float(product.stock or 0) - item["inventory_quantity"], 6)
-        if product.stock <= 0:
-            product.stock = 0.0
+        prev_stock = float(product.stock or 0)
+        deduction = float(item["inventory_quantity"])
+        new_stock = round(max(0.0, prev_stock - deduction), 6)
+        product.stock = new_stock
 
         db.add(models.TransactionItem(
             transaction_id=txn.id,
@@ -511,6 +512,17 @@ def _persist_transaction(
             sale_quantity=item["sale_quantity"],
             sale_unit=item["sale_unit"],
             unit_price=item["unit_price"],
+        ))
+        db.add(models.InventoryLog(
+            product_id=product.id,
+            user_id=user_id,
+            movement_type="sale",
+            quantity=-deduction,
+            previous_stock=prev_stock,
+            new_stock=new_stock,
+            reason="POS Sale",
+            remarks=f"Sale #{txn.id}" if txn.id else "POS Sale",
+            created_at=txn.created_at if txn.created_at else utc_now_naive(),
         ))
 
     db.flush()
@@ -2152,6 +2164,20 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         audit_action = "LOGIN_AUTHENTICATOR_REQUIRED"
         audit_details = "Password accepted; authenticator app MFA required"
     else:
+        # MFA is optional for staff and cashier roles (mandatory for administrators)
+        if user.role != "admin":
+            response = _build_login_success(db, user)
+            response["authenticator_mfa_enabled"] = False
+            _add_audit_log(
+                db,
+                user_id=user.id,
+                action="LOGIN",
+                details=f"Successful login for {user.role} (MFA optional, not enabled)",
+                request=req,
+            )
+            db.commit()
+            return response
+
         response = _begin_authenticator_setup(user)
         audit_action = "LOGIN_AUTHENTICATOR_SETUP_REQUIRED"
         audit_details = "Password accepted; authenticator app setup required before login"
@@ -2883,6 +2909,45 @@ def regenerate_my_recovery_codes(
         "message": "Recovery codes regenerated",
         "recovery_codes": recovery_codes,
         "recovery_codes_remaining": len(recovery_codes),
+    }
+
+
+@app.post("/auth/authenticator/setup", include_in_schema=False)
+@app.post("/api/auth/authenticator/setup", tags=["Auth"])
+def start_my_authenticator_setup(
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    return _begin_authenticator_setup(current)
+
+
+@app.post("/auth/authenticator/disable", include_in_schema=False)
+@app.post("/api/auth/authenticator/disable", tags=["Auth"])
+def disable_my_authenticator(
+    req: Request,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    if current.role == "admin":
+        raise HTTPException(
+            status_code=400,
+            detail="MFA is mandatory for administrators and cannot be disabled.",
+        )
+    if not current.authenticator_enabled:
+        return {"message": "MFA is already disabled for this account."}
+
+    _reset_user_authenticator(db, current, revoke_remembered_devices=True)
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="AUTHENTICATOR_DISABLED",
+        details=f"{current.role.capitalize()} user disabled optional authenticator MFA",
+        request=req,
+    )
+    db.commit()
+    return {
+        "message": "Authenticator MFA disabled successfully.",
+        "authenticator_mfa_enabled": False,
     }
 
 
@@ -3743,7 +3808,7 @@ def create_product(
     req: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current: models.User = Depends(auth.require_admin),
+    current: models.User = Depends(auth.require_staff_or_admin),
 ):
     product_data = data.model_dump()
     product_data["name"] = str(product_data.get("name") or "").strip()
@@ -3756,6 +3821,18 @@ def create_product(
     db.add(product)
     db.commit()
     db.refresh(product)
+    if product.stock > 0:
+        db.add(models.InventoryLog(
+            product_id=product.id,
+            user_id=current.id,
+            movement_type="correction",
+            quantity=product.stock,
+            previous_stock=0.0,
+            new_stock=product.stock,
+            reason="Initial Stock Setup",
+            remarks=f"Initial stock for {product.name}",
+            created_at=utc_now_naive(),
+        ))
     _add_audit_log(
         db,
         user_id=current.id,
@@ -3781,12 +3858,13 @@ def update_product(
     req: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current: models.User = Depends(auth.require_admin),
+    current: models.User = Depends(auth.require_staff_or_admin),
 ):
     product = db.query(models.Product).filter(models.Product.id == pid).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
+    old_stock = float(product.stock or 0)
     update_data = data.model_dump(exclude_unset=True)
     if "name" in update_data and update_data["name"] is not None:
         update_data["name"] = str(update_data["name"]).strip()
@@ -3803,6 +3881,21 @@ def update_product(
     for field, value in update_data.items():
         setattr(product, field, value)
     product.updated_at = utc_now_naive()
+
+    new_stock = float(product.stock or 0)
+    if "stock" in update_data and round(old_stock, 4) != round(new_stock, 4):
+        db.add(models.InventoryLog(
+            product_id=product.id,
+            user_id=current.id,
+            movement_type="adjustment",
+            quantity=round(new_stock - old_stock, 4),
+            previous_stock=old_stock,
+            new_stock=new_stock,
+            reason="Product Details Update",
+            remarks="Stock updated via product edit form",
+            created_at=utc_now_naive(),
+        ))
+
     db.commit()
     db.refresh(product)
 
@@ -3865,6 +3958,206 @@ def low_stock(
                 models.Product.stock < models.Product.min_stock)
         .all()
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INVENTORY OPERATIONS (Replenishment, Adjustments & Stock Movement Logs)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/inventory/replenish", tags=["Inventory"])
+def replenish_stock(
+    data: schemas.InventoryReplenishRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_staff_or_admin),
+):
+    product = db.query(models.Product).filter(models.Product.id == data.product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if data.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Replenishment quantity must be greater than 0")
+
+    is_bulk = str(product.unit_type or "").lower() == "bulk"
+    qty = round(float(data.quantity), 4) if is_bulk else round(float(int(data.quantity)), 0)
+
+    prev_stock = float(product.stock or 0)
+    new_stock = round(prev_stock + qty, 4 if is_bulk else 0)
+    product.stock = new_stock
+    product.updated_at = utc_now_naive()
+
+    log_entry = models.InventoryLog(
+        product_id=product.id,
+        user_id=current.id,
+        movement_type="replenishment",
+        quantity=qty,
+        previous_stock=prev_stock,
+        new_stock=new_stock,
+        reason="Stock Replenishment",
+        remarks=data.remarks or (f"Received on {data.date}" if data.date else "Stock Replenishment"),
+        created_at=utc_now_naive(),
+    )
+    db.add(log_entry)
+    db.commit()
+    db.refresh(product)
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="INVENTORY_REPLENISHED",
+        details=f"Product '{product.name}' +{qty} (New Stock: {new_stock})",
+        request=req,
+    )
+    db.commit()
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "inventory-replenished",
+        product_id=product.id,
+        stock=product.stock,
+        is_active=product.is_active,
+    )
+    return {
+        "success": True,
+        "message": f"Successfully replenished {qty} {product.base_unit or 'pcs'} to {product.name}",
+        "product": schemas.ProductResponse.model_validate(product),
+        "log": {
+            "id": log_entry.id,
+            "product_id": product.id,
+            "product_name": product.name,
+            "movement_type": "replenishment",
+            "quantity": qty,
+            "previous_stock": prev_stock,
+            "new_stock": new_stock,
+            "reason": log_entry.reason,
+            "remarks": log_entry.remarks,
+            "created_at": log_entry.created_at.isoformat(),
+        }
+    }
+
+
+@app.post("/api/inventory/adjust", tags=["Inventory"])
+def adjust_stock(
+    data: schemas.InventoryAdjustRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_staff_or_admin),
+):
+    product = db.query(models.Product).filter(models.Product.id == data.product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    is_bulk = str(product.unit_type or "").lower() == "bulk"
+    prev_stock = float(product.stock or 0)
+
+    adj_type = str(data.adjustment_type or "adjust").lower()
+    if adj_type == "deduct":
+        delta = -abs(float(data.quantity))
+        new_stock = max(0.0, prev_stock + delta)
+    elif adj_type == "add":
+        delta = abs(float(data.quantity))
+        new_stock = prev_stock + delta
+    else:  # "set" or absolute target
+        new_stock = max(0.0, float(data.quantity))
+        delta = new_stock - prev_stock
+
+    if not is_bulk:
+        new_stock = round(float(int(new_stock)), 0)
+        delta = round(float(int(delta)), 0)
+    else:
+        new_stock = round(new_stock, 4)
+        delta = round(delta, 4)
+
+    product.stock = new_stock
+    product.updated_at = utc_now_naive()
+
+    log_entry = models.InventoryLog(
+        product_id=product.id,
+        user_id=current.id,
+        movement_type="adjustment",
+        quantity=delta,
+        previous_stock=prev_stock,
+        new_stock=new_stock,
+        reason=data.reason or "Inventory Correction",
+        remarks=data.remarks or f"Adjustment: {data.reason}",
+        created_at=utc_now_naive(),
+    )
+    db.add(log_entry)
+    db.commit()
+    db.refresh(product)
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="INVENTORY_ADJUSTED",
+        details=f"Product '{product.name}' adjusted by {delta:+g} ({data.reason}) (New Stock: {new_stock})",
+        request=req,
+    )
+    db.commit()
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "inventory-adjusted",
+        product_id=product.id,
+        stock=product.stock,
+        is_active=product.is_active,
+    )
+    return {
+        "success": True,
+        "message": f"Successfully adjusted {product.name} to {new_stock} {product.base_unit or 'pcs'}",
+        "product": schemas.ProductResponse.model_validate(product),
+        "log": {
+            "id": log_entry.id,
+            "product_id": product.id,
+            "product_name": product.name,
+            "movement_type": "adjustment",
+            "quantity": delta,
+            "previous_stock": prev_stock,
+            "new_stock": new_stock,
+            "reason": log_entry.reason,
+            "remarks": log_entry.remarks,
+            "created_at": log_entry.created_at.isoformat(),
+        }
+    }
+
+
+@app.get("/api/inventory/history", tags=["Inventory"])
+def get_inventory_history(
+    product_id: Optional[int] = None,
+    movement_type: Optional[str] = None,
+    limit: int = 200,
+    skip: int = 0,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_staff_or_admin),
+):
+    query = (
+        db.query(models.InventoryLog)
+        .join(models.Product, models.InventoryLog.product_id == models.Product.id, isouter=True)
+        .order_by(models.InventoryLog.created_at.desc())
+    )
+    if product_id is not None:
+        query = query.filter(models.InventoryLog.product_id == product_id)
+    if movement_type and movement_type != "all":
+        query = query.filter(models.InventoryLog.movement_type == movement_type)
+
+    logs = query.offset(skip).limit(limit).all()
+    results = []
+    for log in logs:
+        results.append({
+            "id": log.id,
+            "product_id": log.product_id,
+            "product_name": log.product.name if log.product else f"Product #{log.product_id}",
+            "product_category": log.product.category if log.product else "General",
+            "unit_type": log.product.unit_type if log.product else "pcs",
+            "base_unit": log.product.base_unit if log.product else "pcs",
+            "user_id": log.user_id,
+            "user_name": (log.user.full_name or log.user.username) if log.user else "System Staff",
+            "movement_type": log.movement_type,
+            "quantity": log.quantity,
+            "previous_stock": log.previous_stock,
+            "new_stock": log.new_stock,
+            "reason": log.reason or log.movement_type.capitalize(),
+            "remarks": log.remarks or "",
+            "created_at": log.created_at.isoformat() if log.created_at else utc_now_naive().isoformat(),
+        })
+    return results
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -1432,7 +1432,7 @@ export default function Layout({ children, onLogout }) {
   };
 
   return (
-    <div className="app-shell flex h-screen overflow-hidden bg-slate-50">
+    <div className="app-shell flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
       <nav
         className={`z-30 hidden shrink-0 flex-col border-r shadow-2xl transition-[width] duration-300 lg:flex ${sidebarShellClass} ${
           sidebarCollapsed ? 'w-20' : 'w-64'
@@ -1450,7 +1450,7 @@ export default function Layout({ children, onLogout }) {
                 <h2 className={`truncate text-lg font-black tracking-tight ${sidebarBrandTitleClass}`}>
                   MEALS
                 </h2>
-                <p className={`mt-0.5 text-[10px] font-bold uppercase tracking-wider ${sidebarBrandMetaClass}`}>
+                <p className={`mt-0.5 text-xs font-bold uppercase tracking-wider ${sidebarBrandMetaClass}`}>
                   OPERATIONS WORKSPACE
                 </p>
               </div>
@@ -1482,7 +1482,7 @@ export default function Layout({ children, onLogout }) {
                   {!sidebarCollapsed && (
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-black">{item.name}</span>
-                      <span className={`mt-0.5 block text-[11px] font-semibold leading-tight whitespace-normal break-words ${getSidebarDescriptionClass(active)}`}>
+                      <span className={`mt-0.5 block text-xs font-semibold leading-tight whitespace-normal break-words ${getSidebarDescriptionClass(active)}`}>
                         {getNavDescription(item.path)}
                       </span>
                     </span>
@@ -1519,7 +1519,7 @@ export default function Layout({ children, onLogout }) {
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               onClick={openMobileMenu}
-              className="-ml-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 lg:hidden"
+              className="-ml-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white lg:hidden"
               aria-label="Open navigation menu"
             >
               <Bars3Icon className="h-5 w-5" />
@@ -1530,7 +1530,7 @@ export default function Layout({ children, onLogout }) {
               onClick={() => setSidebarCollapsed((value) => !value)}
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 lg:inline-flex"
+              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white lg:inline-flex"
             >
               <ChevronRightIcon
                 className={`h-4 w-4 transition-transform duration-300 ${
@@ -1547,19 +1547,19 @@ export default function Layout({ children, onLogout }) {
               type="button"
               onClick={handleWorkspaceRefresh}
               disabled={workspaceRefreshing}
-              className="hidden items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-xs transition hover:bg-emerald-200/80 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800/60 dark:bg-emerald-900/40 dark:text-emerald-400 md:flex"
+              className="hidden items-center gap-2 rounded-xl border border-emerald-200/80 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-2xs transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-300 md:flex"
               title={workspaceRefreshing ? 'Refreshing workspace data' : workspaceStatus}
             >
               <span
                 className={`h-2 w-2 rounded-full ${
-                  isSynced ? 'bg-emerald-600' : 'bg-amber-500'
+                  isSynced ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
                 }`}
               />
               {workspaceRefreshing ? 'Refreshing' : isSynced ? 'Online' : 'Offline'}
             </button>
-            <div className="hidden rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300 xl:block">
+            <div className="hidden rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 xl:block">
               {formattedDate}
-              <span className="mx-2 text-slate-400 dark:text-slate-600">|</span>
+              <span className="mx-2 text-slate-300 dark:text-slate-600">|</span>
               {formattedTime}
             </div>
             <div className={`relative ${notificationsModuleEnabled ? '' : 'hidden'}`}>
@@ -1567,8 +1567,8 @@ export default function Layout({ children, onLogout }) {
                 type="button"
                 onClick={() => (notificationsOpen ? setNotificationsOpen(false) : openNotifications())}
                 title={unreadNotificationCount > 0 ? 'Unread notifications' : 'Notifications'}
-                className={`relative inline-flex h-11 w-11 items-center justify-center rounded-xl border bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 ${
-                  unreadNotificationCount > 0 ? 'border-red-200 shadow-sm shadow-red-100' : 'border-slate-200'
+                className={`relative inline-flex h-11 w-11 items-center justify-center rounded-xl border bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 ${
+                  unreadNotificationCount > 0 ? 'border-red-200 shadow-sm shadow-red-100 dark:border-rose-800' : 'border-slate-200'
                 }`}
               >
                 <BellAlertIcon className="h-5 w-5" />
@@ -1587,12 +1587,12 @@ export default function Layout({ children, onLogout }) {
                     onClick={() => setNotificationsOpen(false)}
                     className="notification-dismiss-layer fixed inset-x-0 bottom-0 top-16 z-40 cursor-default bg-transparent"
                   />
-                  <div className="notification-popover fixed inset-x-3 top-16 z-50 max-h-[calc(100dvh-5rem)] overflow-hidden rounded-xl border border-slate-200 bg-white md:absolute md:inset-x-auto md:right-0 md:top-12 md:w-[22.5rem]">
-                    <div className="notification-panel-head border-b border-slate-100 px-4 py-3">
+                  <div className="notification-popover fixed inset-x-3 top-16 z-50 max-h-[calc(100dvh-5rem)] overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 md:absolute md:inset-x-auto md:right-0 md:top-12 md:w-[22.5rem]">
+                    <div className="notification-panel-head border-b border-slate-100 px-4 py-3 dark:border-slate-800">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-slate-900">Notifications</div>
-                          <div className="mt-1 text-xs text-slate-500">
+                          <div className="text-sm font-semibold text-slate-900 dark:text-white">Notifications</div>
+                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                             {notificationItemCount > 0
                               ? `${unreadNotificationCount} unread of ${notificationItemCount} notification${notificationItemCount > 1 ? 's' : ''}`
                               : 'No notifications right now'}
@@ -2026,13 +2026,13 @@ export default function Layout({ children, onLogout }) {
                   setRemindersOpen(false);
                   setProfileOpen((value) => !value);
                 }}
-                className="flex h-11 max-w-[16rem] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 shadow-sm transition hover:border-primary/30 hover:shadow-md sm:px-2.5"
+                className={`flex h-11 max-w-[16rem] items-center gap-2 rounded-2xl border px-2 shadow-sm transition hover:shadow-md sm:px-2.5 ${darkMode ? 'border-slate-700 bg-slate-800 hover:border-emerald-700/40' : 'border-slate-200 bg-white hover:border-primary/30'}`}
                 aria-label="Open profile menu"
                 aria-expanded={profileOpen}
                 aria-haspopup="menu"
               >
                 <div className="hidden min-w-0 flex-col items-end md:flex">
-                  <span className="max-w-[10rem] truncate leading-none text-sm font-black text-slate-900">
+                  <span className={`max-w-[10rem] truncate leading-none text-sm font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>
                     {displayName}
                   </span>
                   <span className="mt-1 text-[10px] font-bold uppercase tracking-widest text-primary">
@@ -2321,8 +2321,8 @@ export default function Layout({ children, onLogout }) {
           </div>
         )}
 
-        <main className="ui-uniform custom-scrollbar min-w-0 flex-1 overflow-y-auto bg-slate-50/40 p-4 sm:p-5 lg:p-6">
-          <div className="mx-auto h-full w-full max-w-[1600px]">
+        <main className="ui-uniform custom-scrollbar min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-3.5 sm:p-5 lg:p-6" style={{ background: 'var(--sc-page)' }}>
+          <div className="mx-auto h-full w-full min-w-0 max-w-[1600px]">
             {!isSynced && (
               <DismissibleAlert
                 resetKey={`${isSynced}-${pendingSyncCount}`}
@@ -2352,7 +2352,7 @@ export default function Layout({ children, onLogout }) {
               <div className="flex min-w-0 items-center gap-3">
                 <BrandLogo className="h-10 w-10" />
                 <div className="min-w-0">
-                  <h2 className="mobile-sidebar-brand truncate text-lg font-semibold text-slate-950">MEALS</h2>
+                  <h2 className={`mobile-sidebar-brand truncate text-lg font-semibold ${darkMode ? 'text-white' : 'text-slate-900'}`}>MEALS</h2>
                   <p className="mobile-sidebar-role mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wider text-primary">
                     {user.role || 'staff'} workspace
                   </p>
@@ -2360,7 +2360,7 @@ export default function Layout({ children, onLogout }) {
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="mobile-sidebar-close inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                className={`mobile-sidebar-close inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition ${darkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'}`}
                 aria-label="Close navigation menu"
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -2397,10 +2397,10 @@ export default function Layout({ children, onLogout }) {
               })}
             </div>
 
-            <div className="mobile-sidebar-footer border-t border-slate-200 p-3">
+            <div className={`mobile-sidebar-footer border-t p-3 ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
               <button
                 onClick={requestLogout}
-                className="mobile-sidebar-logout flex w-full items-center gap-3 rounded-lg px-3.5 py-3 text-sm font-semibold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                className={`mobile-sidebar-logout flex w-full items-center gap-3 rounded-lg px-3.5 py-3 text-sm font-semibold transition ${darkMode ? 'text-slate-400 hover:bg-red-950/40 hover:text-red-300' : 'text-slate-500 hover:bg-red-50 hover:text-red-600'}`}
               >
                 <ArrowRightOnRectangleIcon className="h-5 w-5" /> Logout
               </button>

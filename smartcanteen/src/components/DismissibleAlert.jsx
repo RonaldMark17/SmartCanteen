@@ -3,24 +3,24 @@ import { XMarkIcon } from '@heroicons/react/24/outline';
 
 const TONE_STYLES = {
   amber: {
-    container: 'border-amber-200 bg-amber-50 text-amber-800',
-    button: 'text-amber-500 hover:bg-amber-100 hover:text-amber-700',
+    container: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/40 dark:text-amber-300',
+    button: 'text-amber-500 hover:bg-amber-100 hover:text-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/50 dark:hover:text-amber-200',
   },
   red: {
-    container: 'border-red-200 bg-red-50 text-red-700',
-    button: 'text-red-500 hover:bg-red-100 hover:text-red-700',
+    container: 'border-red-200 bg-red-50 text-red-700 dark:border-rose-800/70 dark:bg-rose-950/40 dark:text-rose-300',
+    button: 'text-red-500 hover:bg-red-100 hover:text-red-700 dark:text-rose-400 dark:hover:bg-rose-900/50 dark:hover:text-rose-200',
   },
   sky: {
-    container: 'border-sky-200 bg-sky-50 text-sky-800',
-    button: 'text-sky-500 hover:bg-sky-100 hover:text-sky-700',
+    container: 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800/70 dark:bg-sky-950/40 dark:text-sky-300',
+    button: 'text-sky-500 hover:bg-sky-100 hover:text-sky-700 dark:text-sky-400 dark:hover:bg-sky-900/50 dark:hover:text-sky-200',
   },
   emerald: {
-    container: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    button: 'text-emerald-500 hover:bg-emerald-100 hover:text-emerald-700',
+    container: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-300',
+    button: 'text-emerald-500 hover:bg-emerald-100 hover:text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-200',
   },
   slate: {
-    container: 'border-slate-200 bg-slate-50 text-slate-700',
-    button: 'text-slate-500 hover:bg-slate-200 hover:text-slate-700',
+    container: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900/80 dark:text-slate-300',
+    button: 'text-slate-500 hover:bg-slate-200 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200',
   },
 };
 

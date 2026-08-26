@@ -1056,16 +1056,16 @@ export default function Login({ onLogin }) {
   const canAppealAuthenticatorRecovery = currentAuthRecoveryStatus === 'declined';
 
   return (
-    <div className="login-view min-h-[100dvh] overflow-y-auto bg-slate-50 px-4 py-6 text-slate-700 sm:px-6 lg:px-8">
+    <div className="login-view min-h-[100dvh] overflow-y-auto bg-slate-50 dark:bg-slate-950 px-4 py-6 text-slate-700 dark:text-slate-300 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-lg items-center">
-        <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="w-full overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
           <section className="flex items-center justify-center px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
             <div className="w-full max-w-md">
               <div className="mb-8 flex items-center gap-3">
                 <BrandLogo className="h-12 w-12" />
                 <div className="min-w-0">
-                  <div className="truncate text-xl font-semibold text-slate-950">MEALS</div>
-                  <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                  <div className="truncate text-xl font-semibold text-slate-950 dark:text-white">MEALS</div>
+                  <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     Operations Workspace
                   </div>
                 </div>
@@ -1073,10 +1073,10 @@ export default function Login({ onLogin }) {
 
               <div>
                 <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold leading-8 text-slate-950">
+                  <h2 className="text-2xl font-semibold leading-8 text-slate-950 dark:text-white">
                     Welcome back
                   </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                  <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
                     Sign in to continue to MEALS.
                   </p>
                 </div>
@@ -1084,7 +1084,7 @@ export default function Login({ onLogin }) {
 
               <div className="mt-5 space-y-3">
                 {lockoutState.isLocked && (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+                  <div className="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm leading-6 text-amber-800 dark:text-amber-300">
                     <div className="font-semibold">Too many failed attempts</div>
                     <div className="mt-1">
                       This account is temporarily locked. Try again in {lockoutRemainingLabel}.
@@ -1100,14 +1100,14 @@ export default function Login({ onLogin }) {
 
               <form onSubmit={handleSubmit} className="mt-6 space-y-4">
                 <label className="block">
-                  <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <span className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     Username
                   </span>
                   <input
                     type="text"
                     required
                     placeholder="Enter your username"
-                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 text-base font-normal text-slate-900 dark:text-slate-100 outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-primary dark:focus:border-emerald-500 focus:ring-2 focus:ring-primary/10 dark:focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
                     value={username}
                     onChange={handleUsernameChange}
                     disabled={loading || isAuthenticatorStep}
@@ -1116,7 +1116,7 @@ export default function Login({ onLogin }) {
                 </label>
 
                 <label className="block">
-                  <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <span className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     Password
                   </span>
                   <div className="relative mt-1.5">
@@ -1124,7 +1124,7 @@ export default function Login({ onLogin }) {
                       type={showPassword ? 'text' : 'password'}
                       required
                       placeholder="Enter your password"
-                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-12 text-base font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 pr-12 text-base font-normal text-slate-900 dark:text-slate-100 outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-primary dark:focus:border-emerald-500 focus:ring-2 focus:ring-primary/10 dark:focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       disabled={loading || isAuthenticatorStep}
@@ -1133,7 +1133,7 @@ export default function Login({ onLogin }) {
                     <button
                       type="button"
                       onClick={() => setShowPassword((prev) => !prev)}
-                      className="absolute inset-y-0 right-2 inline-flex h-full w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
+                      className="absolute inset-y-0 right-2 inline-flex h-full w-10 items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 transition hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white"
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
                       {showPassword ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
@@ -1142,12 +1142,12 @@ export default function Login({ onLogin }) {
                 </label>
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-400">
                     <input
                       type="checkbox"
                       checked={rememberUsername}
                       onChange={(event) => setRememberUsername(event.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-2 focus:ring-primary/20"
+                      className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-2 focus:ring-primary/20"
                     />
                     Remember me for 30 days
                   </label>
@@ -1155,7 +1155,7 @@ export default function Login({ onLogin }) {
                     <button
                       type="button"
                       onClick={() => openAuthenticatorRecovery('request')}
-                      className="text-sm font-semibold text-slate-500 transition hover:text-primary"
+                      className="text-sm font-semibold text-slate-500 dark:text-slate-400 transition hover:text-primary"
                     >
                       Authenticator Recovery
                     </button>

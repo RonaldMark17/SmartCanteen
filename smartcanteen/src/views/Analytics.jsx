@@ -631,7 +631,7 @@ function AnalyticsSkeleton() {
           <Skeleton className="h-10 w-72 rounded-xl" />
           <Skeleton className="h-7 w-32 rounded-full" />
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-11">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-11">
           {Array.from({ length: EMPTY_HEATMAP.length }, (_, index) => (
             <Skeleton key={index} className="h-24 rounded-xl" />
           ))}
@@ -947,10 +947,10 @@ export default function Analytics() {
         : 'No hourly sales activity found for school hours yet.';
   const heatmapGridClass =
     period === 'year'
-      ? 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-12'
+      ? 'grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-12'
       : period === 'month'
-        ? 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7'
-        : 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-11';
+        ? 'grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7'
+        : 'grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-11';
   const trendMeta =
     period === 'day'
       ? `${formatNumber(summary.totalTransactions)} ${pluralize(summary.totalTransactions, 'transaction')} across school hours`

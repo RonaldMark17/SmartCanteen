@@ -179,6 +179,24 @@ class TransactionItem(Base):
     product: Mapped[Optional["Product"]] = relationship("Product", back_populates="transaction_items")
 
 
+class InventoryLog(Base):
+    __tablename__ = "inventory_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    movement_type: Mapped[str] = mapped_column(String, nullable=False, index=True)  # "replenishment" | "adjustment" | "sale" | "correction"
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)  # positive for stock in, negative for stock out
+    previous_stock: Mapped[float] = mapped_column(Float, nullable=False)
+    new_stock: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, index=True)
+
+    product: Mapped[Optional["Product"]] = relationship("Product")
+    user: Mapped[Optional["User"]] = relationship("User")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

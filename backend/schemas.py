@@ -212,6 +212,41 @@ class QuickSaleProductResponse(ProductResponse):
     last_sold_at: Optional[datetime] = None
 
 
+class InventoryReplenishRequest(BaseModel):
+    product_id: int
+    quantity: float
+    date: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class InventoryAdjustRequest(BaseModel):
+    product_id: int
+    adjustment_type: str = "adjust"  # "deduct", "add", "set"
+    quantity: float
+    reason: str  # "Damaged", "Spoiled", "Missing", "Inventory Correction", "Other"
+    remarks: Optional[str] = None
+
+
+class InventoryLogResponse(BaseModel):
+    id: int
+    product_id: int
+    product_name: Optional[str] = None
+    product_category: Optional[str] = None
+    unit_type: Optional[str] = None
+    base_unit: Optional[str] = None
+    user_id: Optional[int] = None
+    user_name: Optional[str] = None
+    movement_type: str
+    quantity: float
+    previous_stock: float
+    new_stock: float
+    reason: Optional[str] = None
+    remarks: Optional[str] = None
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
 # ── Transaction ────────────────────────────────────────────────────────────────
 
 class TransactionItemCreate(BaseModel):

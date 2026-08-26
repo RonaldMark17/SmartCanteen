@@ -128,6 +128,14 @@ def require_admin(current_user: models.User = Depends(get_current_user)) -> mode
     return current_user
 
 
+def require_staff_or_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
+    """Raises 403 if the caller is neither admin nor staff."""
+    if (current_user.role or "").strip().lower() not in {"admin", "administrator", "staff"}:
+        raise HTTPException(status_code=403, detail="Staff or admin access required")
+    return current_user
+
+
+
 def get_user_from_token(token: str, db: Session) -> Optional[models.User]:
     """Validates a JWT token string and returns the active user if valid."""
     try:
