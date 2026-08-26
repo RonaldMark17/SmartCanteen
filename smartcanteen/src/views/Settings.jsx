@@ -7,6 +7,7 @@ import {
   CommandLineIcon,
   ComputerDesktopIcon,
   EyeIcon,
+  EyeSlashIcon,
   InformationCircleIcon,
   KeyIcon,
   LockClosedIcon,
@@ -120,6 +121,8 @@ export default function Settings() {
   const user = { ...(authUser || {}), role };
   const isAdmin = user.role === 'admin';
 
+  const [activeTab, setActiveTab] = useState('accessibility');
+
   const {
     settings: accSettings,
     updateSetting: updateAccSetting,
@@ -139,7 +142,18 @@ export default function Settings() {
   const [refreshing, setRefreshing] = useState(false);
   const [saveError, setSaveError] = useState('');
 
-  // Password reset request state
+  // Password Direct Change State
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [changePwLoading, setChangePwLoading] = useState(false);
+  const [changePwMessage, setChangePwMessage] = useState('');
+  const [changePwError, setChangePwError] = useState('');
+
+  // Admin Request Fallback state
+  const [showAdminResetOption, setShowAdminResetOption] = useState(false);
   const [pwResetLoading, setPwResetLoading] = useState(false);
   const [pwResetMessage, setPwResetMessage] = useState('');
 
@@ -151,6 +165,43 @@ export default function Settings() {
   const enabledCount = SYSTEM_MODULES.filter((module) => draftModules[module.key]).length;
   const disabledCount = SYSTEM_MODULES.length - enabledCount;
   const dirty = !areModuleSettingsEqual(draftModules, modules);
+
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    setChangePwMessage('');
+    setChangePwError('');
+
+    if (!currentPassword) {
+      setChangePwError('Please enter your current password.');
+      return;
+    }
+    if (!newPassword || newPassword.length < 6) {
+      setChangePwError('New password must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setChangePwError('New password and confirmation password do not match.');
+      return;
+    }
+
+    setChangePwLoading(true);
+    try {
+      const res = await API.changePassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setChangePwMessage(res.message || 'Password updated successfully!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      window.showToast?.('Password updated successfully!', 'success');
+    } catch (err) {
+      setChangePwError(err.message || 'Failed to update password.');
+      window.showToast?.(err.message || 'Failed to update password.', 'error');
+    } finally {
+      setChangePwLoading(false);
+    }
+  }
 
   async function handleRequestPasswordReset() {
     if (!user.username) return;
@@ -225,48 +276,63 @@ export default function Settings() {
   }
 
   return (
-    <div className="view-shell overflow-x-hidden pr-0 space-y-6 pt-1">
-      {/* 1. Page Header */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-200/80 bg-emerald-50/80 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-800 dark:border-emerald-800/80 dark:bg-emerald-950/60 dark:text-emerald-300">
-              <ComputerDesktopIcon className="h-4 w-4" />
-              Desktop App Settings
-            </div>
-            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-              Settings & Desktop Accessibility
-            </h1>
-            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600 dark:text-slate-400 max-w-3xl">
-              {isAdmin
-                ? 'Customize desktop interface scaling, visual accessibility, account security, and workspace system modules.'
-                : 'Customize desktop interface scaling, visual accessibility options, and manage your account security.'}
-            </p>
+    <div className="view-shell overflow-x-hidden pr-0 space-y-5">
+      {/* Integrated Header Block */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/80 pb-4 dark:border-slate-800">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+            <Cog6ToothIcon className="h-4 w-4" />
+            Settings & Preferences
           </div>
+          <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
+            Settings & Accessibility
+          </h1>
+          <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+            Configure desktop interface scaling, visual accessibility, account password, and workspace settings.
+          </p>
+        </div>
+
+        {/* Tab Navigation Controls */}
+        <div className="inline-flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/80 bg-slate-100/90 p-1.5 dark:border-slate-800 dark:bg-slate-800/80">
+          <button
+            type="button"
+            onClick={() => setActiveTab('accessibility')}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
+              activeTab === 'accessibility'
+                ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-white'
+                : 'text-slate-600 hover:bg-white/60 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white'
+            }`}
+          >
+            <PaintBrushIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            Accessibility
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('account')}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
+              activeTab === 'account'
+                ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-white'
+                : 'text-slate-600 hover:bg-white/60 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white'
+            }`}
+          >
+            <UserIcon className="h-4 w-4 text-sky-500" />
+            Account & Security
+          </button>
 
           {isAdmin && (
-            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-              <button
-                type="button"
-                onClick={handleRefresh}
-                disabled={loading || refreshing || saving}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                title="Reload module settings from server"
-              >
-                <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={!dirty || loading || saving}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-                title="Save module visibility changes"
-              >
-                <CheckCircleIcon className="h-4 w-4 stroke-[2.5]" />
-                {saving ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('modules')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
+                activeTab === 'modules'
+                  ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-white'
+                  : 'text-slate-600 hover:bg-white/60 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white'
+              }`}
+            >
+              <PowerIcon className="h-4 w-4 text-amber-500" />
+              System Modules
+            </button>
           )}
         </div>
       </div>
@@ -277,463 +343,562 @@ export default function Settings() {
         </DismissibleAlert>
       )}
 
-      {/* 2. User Profile Summary & Security Section */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* User Profile Card (4 cols) */}
-        <div className="lg:col-span-4 flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-          <div>
-            <div className="flex items-center gap-3.5 border-b border-slate-100 pb-4 dark:border-slate-800">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white font-black text-lg shadow-sm shadow-emerald-600/20">
-                {(user.full_name || user.username || 'U').substring(0, 2).toUpperCase()}
+      {/* TAB 1: ACCESSIBILITY SETTINGS (Both Admin & Staff) */}
+      {activeTab === 'accessibility' && (
+        <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-6">
+          <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                <ComputerDesktopIcon className="h-4 w-4" />
+                Desktop Accessibility
               </div>
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-base font-black text-slate-900 dark:text-white">
-                  {user.full_name || user.username || 'User Profile'}
-                </h3>
-                <p className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  @{user.username || 'user'}
-                </p>
-              </div>
+              <h2 className="mt-1.5 text-lg font-black text-slate-900 dark:text-white">
+                Visual & Desktop Display Options
+              </h2>
+              <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400 max-w-3xl">
+                Customize display scaling, text size, contrast, bold text, and keyboard navigation for Windows desktop displays (1366×768, 1920×1080 & higher). Saved per user account.
+              </p>
             </div>
 
-            <div className="mt-4 space-y-3 text-xs">
-              <div className="flex items-center justify-between py-1">
-                <span className="font-semibold text-slate-500 dark:text-slate-400">Role / Access Level</span>
-                <span className="rounded-lg bg-emerald-50 px-2.5 py-1 font-black uppercase text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60">
-                  {user.role || 'Staff'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800">
-                <span className="font-semibold text-slate-500 dark:text-slate-400">Account Status</span>
-                <span className="inline-flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Active
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Account Password & Security Card (8 cols) */}
-        <div className="lg:col-span-8 flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-              <LockClosedIcon className="h-4 w-4" />
-              Account Security & Password
-            </div>
-            <h3 className="mt-1 text-base font-black text-slate-900 dark:text-white">
-              Password Reset Request
-            </h3>
-            <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400">
-              Submit a password reset request if you need your password updated. An administrator will review and approve your request.
-            </p>
-
-            {pwResetMessage && (
-              <div className="mt-3.5 rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 text-xs font-bold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
-                {pwResetMessage}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-4 pt-3.5 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={handleRequestPasswordReset}
-              disabled={pwResetLoading}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
-              title="Send a password reset request to administrator"
+              onClick={handleResetAccessibility}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 shrink-0"
+              title="Restore default accessibility settings"
             >
-              <KeyIcon className="h-4 w-4" />
-              {pwResetLoading ? 'Submitting...' : 'Request Password Reset'}
+              <ArrowPathIcon className="h-4 w-4" />
+              Reset to Default
             </button>
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              Requires admin approval
-            </span>
           </div>
-        </div>
-      </div>
 
-      {/* 3. DESKTOP ACCESSIBILITY SETTINGS SECTION (Both Admin & Staff) */}
-      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-6">
-        <div className="flex flex-col gap-3 border-b border-slate-100 pb-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-200/80 bg-emerald-50/80 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-emerald-800 dark:border-emerald-800/80 dark:bg-emerald-950/60 dark:text-emerald-300">
-              <PaintBrushIcon className="h-4 w-4" />
-              Accessibility Settings
+          {/* 1. Interface Scale (Desktop Layout Zoom) */}
+          <div className="rounded-xl border border-slate-200/90 bg-slate-50/60 p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-850/60 space-y-3">
+            <div>
+              <span className="text-sm font-black text-slate-900 dark:text-white">Interface Scale</span>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                Increase overall size of text, buttons, cards, tables, and UI elements for high-resolution desktop screens.
+              </p>
             </div>
-            <h2 className="mt-2 text-xl font-black text-slate-900 dark:text-white">
-              Desktop Visual & Accessibility Options
-            </h2>
-            <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400 max-w-3xl">
-              Customize display scaling, text size, contrast, bold text, and keyboard navigation for Windows desktop displays (1366×768, 1920×1080 & higher). Saved per user account.
-            </p>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { key: '100', label: 'Default (100%)', desc: 'Standard desktop view' },
+                { key: '110', label: '110% Scale', desc: 'Slightly larger layout' },
+                { key: '125', label: '125% Scale', desc: 'Medium desktop scale' },
+                { key: '150', label: '150% Scale', desc: 'Large desktop scale' },
+              ].map((option) => {
+                const isSelected = accSettings.interfaceScale === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => updateAccSetting('interfaceScale', option.key)}
+                    className={`flex flex-col items-center justify-center rounded-xl border py-3.5 px-3 min-h-[76px] text-center transition-all ${
+                      isSelected
+                        ? 'border-emerald-600 bg-emerald-50/90 text-emerald-950 ring-2 ring-emerald-500 shadow-xs dark:border-emerald-500 dark:bg-emerald-950/80 dark:text-emerald-100 font-bold'
+                        : 'border-slate-200/90 bg-white text-slate-700 hover:border-slate-300 dark:border-slate-700/80 dark:bg-slate-800 dark:text-slate-200'
+                    }`}
+                    title={`Set interface scaling to ${option.label}`}
+                  >
+                    <span className="text-sm font-black leading-tight">{option.label}</span>
+                    <span className={`mt-1 text-xs font-semibold leading-tight ${isSelected ? 'text-emerald-800 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                      {option.desc}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleResetAccessibility}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 shrink-0"
-            title="Restore default accessibility settings"
-          >
-            <ArrowPathIcon className="h-4 w-4" />
-            Reset Accessibility Settings
-          </button>
-        </div>
+          {/* 2. Text Size Options */}
+          <div className="rounded-xl border border-slate-200/90 bg-slate-50/60 p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-850/60 space-y-3">
+            <div>
+              <span className="text-sm font-black text-slate-900 dark:text-white">Text Size</span>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                Increase text size while maintaining proper layout, table alignment, and readability.
+              </p>
+            </div>
 
-        {/* 1. Interface Scale (Desktop Layout Zoom) */}
-        <div className="rounded-xl border border-slate-200/90 bg-slate-50/60 p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-850/60 space-y-3">
-          <div>
-            <span className="text-sm font-black text-slate-900 dark:text-white">Interface Scale</span>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Increase the overall size of text, buttons, cards, tables, and UI elements for high-resolution desktop screens.
-            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {[
+                { key: 'default', label: 'Default Text', desc: 'Standard font size' },
+                { key: 'large', label: 'Large Text', desc: '115% larger font size' },
+                { key: 'xlarge', label: 'Extra Large Text', desc: '130% larger font size' },
+              ].map((option) => {
+                const isSelected = accSettings.textSize === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => updateAccSetting('textSize', option.key)}
+                    className={`flex flex-col items-center justify-center rounded-xl border py-3.5 px-3 min-h-[76px] text-center transition-all ${
+                      isSelected
+                        ? 'border-emerald-600 bg-emerald-50/90 text-emerald-950 ring-2 ring-emerald-500 shadow-xs dark:border-emerald-500 dark:bg-emerald-950/80 dark:text-emerald-100 font-bold'
+                        : 'border-slate-200/90 bg-white text-slate-700 hover:border-slate-300 dark:border-slate-700/80 dark:bg-slate-800 dark:text-slate-200'
+                    }`}
+                    title={`Set text size to ${option.label}`}
+                  >
+                    <span className="text-sm font-black leading-tight">{option.label}</span>
+                    <span className={`mt-1 text-xs font-semibold leading-tight ${isSelected ? 'text-emerald-800 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                      {option.desc}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              { key: '100', label: 'Default (100%)', desc: 'Standard desktop view' },
-              { key: '110', label: '110% Scale', desc: 'Slightly larger layout' },
-              { key: '125', label: '125% Scale', desc: 'Medium desktop scale' },
-              { key: '150', label: '150% Scale', desc: 'Large desktop scale' },
-            ].map((option) => {
-              const isSelected = accSettings.interfaceScale === option.key;
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => updateAccSetting('interfaceScale', option.key)}
-                  className={`flex flex-col items-center justify-center rounded-xl border py-3.5 px-3 min-h-[76px] text-center transition-all ${
-                    isSelected
-                      ? 'border-emerald-600 bg-emerald-50/90 text-emerald-950 ring-2 ring-emerald-500 shadow-xs dark:border-emerald-500 dark:bg-emerald-950/80 dark:text-emerald-100 font-bold'
-                      : 'border-slate-200/90 bg-white text-slate-700 hover:border-slate-300 dark:border-slate-700/80 dark:bg-slate-800 dark:text-slate-200'
+          {/* 3. Accessibility Toggles Grid */}
+          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+            {/* High Contrast Mode */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  <EyeIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">High Contrast</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Improve contrast between text, backgrounds, borders, and UI controls.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('highContrast', !accSettings.highContrast)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.highContrast ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle High Contrast Mode"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.highContrast ? 'translate-x-5.5' : 'translate-x-0.5'
                   }`}
-                  title={`Set interface scaling to ${option.label}`}
-                >
-                  <span className="text-sm font-black leading-tight">{option.label}</span>
-                  <span className={`mt-1 text-xs font-semibold leading-tight ${isSelected ? 'text-emerald-800 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'}`}>
-                    {option.desc}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                />
+              </button>
+            </div>
 
-        {/* 2. Text Size Options */}
-        <div className="rounded-xl border border-slate-200/90 bg-slate-50/60 p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-850/60 space-y-3">
-          <div>
-            <span className="text-sm font-black text-slate-900 dark:text-white">Text Size</span>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Increase text size while maintaining proper layout, table alignment, and readability.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {[
-              { key: 'default', label: 'Default Text', desc: 'Standard font size' },
-              { key: 'large', label: 'Large Text', desc: '115% larger font size' },
-              { key: 'xlarge', label: 'Extra Large Text', desc: '130% larger font size' },
-            ].map((option) => {
-              const isSelected = accSettings.textSize === option.key;
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => updateAccSetting('textSize', option.key)}
-                  className={`flex flex-col items-center justify-center rounded-xl border py-3.5 px-3 min-h-[76px] text-center transition-all ${
-                    isSelected
-                      ? 'border-emerald-600 bg-emerald-50/90 text-emerald-950 ring-2 ring-emerald-500 shadow-xs dark:border-emerald-500 dark:bg-emerald-950/80 dark:text-emerald-100 font-bold'
-                      : 'border-slate-200/90 bg-white text-slate-700 hover:border-slate-300 dark:border-slate-700/80 dark:bg-slate-800 dark:text-slate-200'
+            {/* Reduce Motion */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  <SparklesIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">Reduce Motion</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Reduce or disable unnecessary animations and screen transitions.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('reduceMotion', !accSettings.reduceMotion)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.reduceMotion ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle Reduce Motion"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.reduceMotion ? 'translate-x-5.5' : 'translate-x-0.5'
                   }`}
-                  title={`Set text size to ${option.label}`}
-                >
-                  <span className="text-sm font-black leading-tight">{option.label}</span>
-                  <span className={`mt-1 text-xs font-semibold leading-tight ${isSelected ? 'text-emerald-800 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'}`}>
-                    {option.desc}
+                />
+              </button>
+            </div>
+
+            {/* Readable Font */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  <PaintBrushIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">Readable Font</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Provide an option to use a highly readable system font with enhanced spacing.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('readableFont', !accSettings.readableFont)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.readableFont ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle Readable Font"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.readableFont ? 'translate-x-5.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Bold Text Mode */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 font-black text-base">
+                  B
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">Bold Text</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Increase text weight across all headings, tables, and labels for better readability.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('boldText', !accSettings.boldText)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.boldText ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle Bold Text Mode"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.boldText ? 'translate-x-5.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Focus Highlight */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  <EyeIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">Focus Highlight</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Clearly indicate selected inputs, buttons, table rows, or controls when navigating.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('focusHighlight', !accSettings.focusHighlight)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.focusHighlight ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle Focus Highlight"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.focusHighlight ? 'translate-x-5.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Keyboard Navigation Helper */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  <CommandLineIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">Keyboard Navigation Helper</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Ensure all functions can be accessed using Tab, Shift+Tab, Enter, Space, and Arrow keys.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('keyboardNav', !accSettings.keyboardNav)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.keyboardNav ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle Keyboard Navigation Helper"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.keyboardNav ? 'translate-x-5.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Color-Blind Friendly Mode */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  <ShieldCheckIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">Color-Blind Friendly Mode</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Use icons, symbols, and labels together with colors to communicate status clearly.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('colorBlindMode', !accSettings.colorBlindMode)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.colorBlindMode ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle Color-Blind Friendly Mode"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.colorBlindMode ? 'translate-x-5.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Tooltip Assistance */}
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
+              <div className="flex items-start gap-3.5">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  <InformationCircleIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-slate-900 dark:text-white">Tooltip Assistance</span>
+                  <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+                    Show helpful description popups when hovering over unfamiliar buttons or icons.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateAccSetting('tooltipAssistance', !accSettings.tooltipAssistance)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
+                  accSettings.tooltipAssistance ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                title="Toggle Tooltip Assistance"
+              >
+                <span
+                  className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    accSettings.tooltipAssistance ? 'translate-x-5.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* TAB 2: ACCOUNT & SECURITY (Both Admin & Staff) */}
+      {activeTab === 'account' && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          {/* User Profile Card (4 cols) */}
+          <div className="lg:col-span-4 flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+            <div>
+              <div className="flex items-center gap-3.5 border-b border-slate-100 pb-4 dark:border-slate-800">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white font-black text-lg shadow-sm shadow-emerald-600/20">
+                  {(user.full_name || user.username || 'U').substring(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate text-base font-black text-slate-900 dark:text-white">
+                    {user.full_name || user.username || 'User Profile'}
+                  </h3>
+                  <p className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    @{user.username || 'user'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-3 text-xs">
+                <div className="flex items-center justify-between py-1">
+                  <span className="font-semibold text-slate-500 dark:text-slate-400">Role / Access Level</span>
+                  <span className="rounded-lg bg-emerald-50 px-2.5 py-1 font-black uppercase text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60">
+                    {user.role || 'Staff'}
                   </span>
-                </button>
-              );
-            })}
+                </div>
+                <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800">
+                  <span className="font-semibold text-slate-500 dark:text-slate-400">Account Status</span>
+                  <span className="inline-flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Active
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Self-Service Direct Password Change Card (8 cols) */}
+          <div className="lg:col-span-8 flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                <LockClosedIcon className="h-4 w-4" />
+                Account Security
+              </div>
+              <h3 className="mt-1 text-base font-black text-slate-900 dark:text-white">
+                Change Password
+              </h3>
+              <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400">
+                Update your account password directly without requiring administrator approval.
+              </p>
+
+              {changePwMessage && (
+                <div className="mt-3 rounded-xl border border-emerald-200/80 bg-emerald-50/80 p-3 text-xs font-bold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  {changePwMessage}
+                </div>
+              )}
+
+              {changePwError && (
+                <div className="mt-3 rounded-xl border border-rose-200/80 bg-rose-50/80 p-3 text-xs font-bold text-rose-900 dark:border-rose-800 dark:bg-rose-950/50 dark:text-rose-300">
+                  {changePwError}
+                </div>
+              )}
+
+              <form onSubmit={handleChangePassword} className="mt-4 space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Current Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showCurrentPw ? 'text' : 'password'}
+                      required
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Enter current password"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:border-emerald-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPw(!showCurrentPw)}
+                      className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      title={showCurrentPw ? 'Hide password' : 'Show password'}
+                    >
+                      {showCurrentPw ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      New Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showNewPw ? 'text' : 'password'}
+                        required
+                        minLength={6}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="At least 6 characters"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:border-emerald-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPw(!showNewPw)}
+                        className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        title={showNewPw ? 'Hide password' : 'Show password'}
+                      >
+                        {showNewPw ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Confirm New Password
+                    </label>
+                    <input
+                      type={showNewPw ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter new password"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:border-emerald-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="submit"
+                    disabled={changePwLoading}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+                  >
+                    <KeyIcon className="h-4 w-4" />
+                    {changePwLoading ? 'Updating Password...' : 'Update Password'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminResetOption(!showAdminResetOption)}
+                    className="text-xs font-semibold text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 underline"
+                  >
+                    Forgot current password? Request admin reset
+                  </button>
+                </div>
+              </form>
+
+              {/* Optional Admin Request Accordion */}
+              {showAdminResetOption && (
+                <div className="mt-4 rounded-xl border border-slate-200/80 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/60 space-y-2">
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Administrator Password Reset Request</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    If you cannot remember your current password, submit a request to your canteen administrator to approve a password reset.
+                  </p>
+                  {pwResetMessage && (
+                    <div className="rounded-lg bg-emerald-100/70 p-2.5 text-xs font-bold text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+                      {pwResetMessage}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleRequestPasswordReset}
+                    disabled={pwResetLoading}
+                    className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-slate-900 disabled:opacity-50 dark:bg-slate-700 dark:hover:bg-slate-600"
+                  >
+                    <KeyIcon className="h-3.5 w-3.5" />
+                    {pwResetLoading ? 'Submitting...' : 'Submit Request to Admin'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
+      )}
 
-        {/* 3. Accessibility Toggles Grid */}
-        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
-          {/* High Contrast Mode */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
-                <EyeIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">High Contrast</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Improve contrast between text, backgrounds, borders, and UI controls.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('highContrast', !accSettings.highContrast)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.highContrast ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle High Contrast Mode"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.highContrast ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Reduce Motion */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
-                <SparklesIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">Reduce Motion</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Reduce or disable unnecessary animations and screen transitions.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('reduceMotion', !accSettings.reduceMotion)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.reduceMotion ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle Reduce Motion"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.reduceMotion ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Readable Font */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
-                <PaintBrushIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">Readable Font</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Provide an option to use a highly readable system font with enhanced spacing.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('readableFont', !accSettings.readableFont)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.readableFont ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle Readable Font"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.readableFont ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Bold Text Mode */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 font-black text-base">
-                B
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">Bold Text</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Increase text weight across all headings, tables, and labels for better readability.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('boldText', !accSettings.boldText)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.boldText ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle Bold Text Mode"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.boldText ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Focus Highlight */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
-                <EyeIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">Focus Highlight</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Clearly indicate selected inputs, buttons, table rows, or controls when navigating.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('focusHighlight', !accSettings.focusHighlight)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.focusHighlight ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle Focus Highlight"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.focusHighlight ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Keyboard Navigation Helper */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
-                <CommandLineIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">Keyboard Navigation Helper</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Ensure all functions can be accessed using Tab, Shift+Tab, Enter, Space, and Arrow keys.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('keyboardNav', !accSettings.keyboardNav)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.keyboardNav ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle Keyboard Navigation Helper"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.keyboardNav ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Color-Blind Friendly Mode */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
-                <ShieldCheckIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">Color-Blind Friendly Mode</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Use icons, symbols, and labels together with colors to communicate status clearly.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('colorBlindMode', !accSettings.colorBlindMode)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.colorBlindMode ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle Color-Blind Friendly Mode"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.colorBlindMode ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Tooltip Assistance */}
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-4 transition dark:border-slate-800 dark:bg-slate-850">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300">
-                <InformationCircleIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-              <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">Tooltip Assistance</span>
-                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-                  Show helpful description popups when hovering over unfamiliar buttons or icons.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateAccSetting('tooltipAssistance', !accSettings.tooltipAssistance)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 ${
-                accSettings.tooltipAssistance ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-              title="Toggle Tooltip Assistance"
-            >
-              <span
-                className={`inline-block h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  accSettings.tooltipAssistance ? 'translate-x-5.5' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* 4. Module Management Section (Admin Only) */}
-      {isAdmin ? (
+      {/* TAB 3: SYSTEM MODULES (Admin Only) */}
+      {activeTab === 'modules' && isAdmin && (
         <>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="flex items-start justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Enabled
-                </div>
-                <div className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white">{enabledCount}</div>
-                <div className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">Active workspace modules</div>
+          <div className="flex items-center justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400">
+                <PowerIcon className="h-5 w-5" />
               </div>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/60 dark:text-emerald-400">
-                <PowerIcon className="h-5 w-5 stroke-[2]" />
-              </div>
-            </div>
-
-            <div className="flex items-start justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Hidden
-                </div>
-                <div className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white">{disabledCount}</div>
-                <div className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">Disabled or hidden modules</div>
-              </div>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200/60 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                <Squares2X2Icon className="h-5 w-5 stroke-[2]" />
+              <div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">Workspace Module Configuration</h3>
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                  {enabledCount} enabled module(s) active across workspace navigation
+                </p>
               </div>
             </div>
 
-            <div className="flex items-start justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Access
-                </div>
-                <div className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white">Admin Only</div>
-                <div className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">Protected configuration</div>
-              </div>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/60 dark:text-emerald-400">
-                <ShieldCheckIcon className="h-5 w-5 stroke-[2]" />
-              </div>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={loading || refreshing || saving}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!dirty || loading || saving}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <CheckCircleIcon className="h-4 w-4 stroke-[2.5]" />
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
             </div>
           </div>
 
@@ -793,13 +958,6 @@ export default function Settings() {
             </div>
           </section>
         </>
-      ) : (
-        <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-slate-50 p-4 text-xs font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
-          <ShieldCheckIcon className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-          <span>
-            System Module Management is reserved for Administrators. Contact your canteen manager if module configuration changes are needed.
-          </span>
-        </div>
       )}
     </div>
   );

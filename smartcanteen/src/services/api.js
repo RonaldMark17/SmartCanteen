@@ -1259,6 +1259,8 @@ export const API = {
       reason: reason || appeal_reason,
     }),
   completePasswordReset: (data) => request('POST', '/auth/password-reset/complete', data),
+  changePassword: ({ current_password, new_password }) =>
+    request('POST', '/auth/change-password', { current_password, new_password }),
   requestAuthenticatorRecovery: ({ usernameOrEmail, identifier, reason }) =>
     request('POST', '/auth/authenticator-recovery/request', {
       usernameOrEmail: usernameOrEmail || identifier,

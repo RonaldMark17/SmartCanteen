@@ -2802,6 +2802,37 @@ def complete_password_reset(
     }
 
 
+@app.post("/auth/change-password", include_in_schema=False)
+@app.post("/api/auth/change-password", tags=["Auth"])
+def change_password(
+    data: schemas.ChangePasswordRequest,
+    req: Request,
+    current: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not auth.verify_password(data.current_password, current.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    new_pwd = _validate_user_password(data.new_password)
+    if data.current_password == new_pwd:
+        raise HTTPException(status_code=400, detail="New password must be different from current password")
+
+    current.password_hash = auth.get_password_hash(new_pwd)
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="USER_PASSWORD_CHANGED",
+        details=f"User {current.username} updated their password directly in settings",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "message": "Password updated successfully!",
+    }
+
+
+
 @app.post("/auth/register", include_in_schema=False)
 @app.post("/api/auth/register", tags=["Auth"])
 def register(
