@@ -48,13 +48,13 @@ This folder contains pre-compiled Windows executable binaries for the **MEALS De
 1. Double-click the **MEALS** shortcut on your Desktop.
 2. Log in using your assigned credentials:
    - **Admin PC**: Access Admin Dashboard, Sales Analytics, DepEd Financial Reports, and Settings.
-   - **Staff / Cashier PC**: Access POS (Point of Sale) terminal and daily inventory operations.
+   - **Staff PC**: Access Inventory Management, Stock Levels, and Daily Operations.
 
 ---
 
 ## 👥 Multi-PC Real-Time Synchronization
 
-Both Admin and Cashier workstations connect to the same central database on your virtual server via secure HTTPS. All sales, inventory deductions, and financial figures are synchronized in real-time.
+Both Admin and Staff workstations connect to the same central database on your virtual server via secure HTTPS. All stock updates, expense logs, and financial figures are synchronized in real-time.
 
 ---
 

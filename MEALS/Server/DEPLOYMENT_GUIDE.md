@@ -138,13 +138,13 @@ Copy `MEALS Setup.exe` (or `MEALS.exe`) and `README.txt` into `MEALS/Client/`.
 ## 7. Verify Two-PC Realtime Database Synchronization
 
 1. **Staff Action**:
-   - On Staff PC, log into POS view.
-   - Record a sale transaction (e.g., 2 items, total 150.00).
-   - Ensure a green transaction success confirmation message appears.
+   - On Staff PC, log into Inventory view.
+   - Update stock or record an inventory count change.
+   - Ensure the updated stock level saves with a success confirmation.
 
 2. **Admin Verification**:
-   - On Admin PC, open **Sales Reports** or **Financial Reports**.
-   - Confirm that the new sale transaction appears immediately in reports.
+   - On Admin PC, open **Inventory** or **Financial Reports**.
+   - Confirm that the updated stock and expense data appear immediately.
    - Both PCs read/write directly to the same remote virtual server database.
 
 ---

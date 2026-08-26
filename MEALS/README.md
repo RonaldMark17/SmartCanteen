@@ -4,7 +4,7 @@
 [![Client](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6.svg?style=flat&logo=Windows&logoColor=white)](#)
 [![Server](https://img.shields.io/badge/Linux-Ubuntu%20%7C%20Debian-E95420.svg?style=flat&logo=Ubuntu&logoColor=white)](#)
 
-This directory contains the production release artifacts, precompiled client binaries, and virtual server (VPS) deployment configurations for the **MEALS** (*Management of Expenses, Assets, and Logistics System*) canteen management platform.
+This directory contains the production release artifacts, precompiled client binaries, and virtual server (VPS) deployment configurations for the **MEALS** (*Management of Expenses, Assets, and Logistics System*) canteen management and DepEd financial reporting platform.
 
 ---
 
@@ -32,10 +32,10 @@ MEALS/
 
 ## 🖥️ Client Distribution (`MEALS/Client`)
 
-The client package is distributed to school administrative and cashier PCs:
+The client package is distributed to school administrative and canteen staff workstations:
 - **No Python or Node.js required** on client PCs.
 - **Configurable Server URL**: Edit `config.json` in the application directory to point `apiBaseUrl` to your central server (e.g., `https://smartcanteen.yourdomain.com/api`).
-- **Multi-PC Synchronization**: Both Admin and Cashier PCs communicate in real time over HTTPS with the central database on the server.
+- **Multi-Workstation Synchronization**: Both Admin and Staff PCs communicate in real time over HTTPS with the central database on the server.
 
 For client setup details, see [MEALS/Client/README.md](file:///c:/Users/ronal/OneDrive/Desktop/New%20folder%20%2811%29/MEALS/Client/README.md).
 
