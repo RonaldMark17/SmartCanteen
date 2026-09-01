@@ -26,9 +26,3 @@ smartcanteen/release/
 
 # Logs
 *.log
-
-# Database
-*.db
-canteen.db
-
-*.exe
