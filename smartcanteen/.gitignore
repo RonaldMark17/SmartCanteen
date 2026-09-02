@@ -1,5 +1,5 @@
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,15 +7,39 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+dist-electron/
+release/
 *.local
+
+# Electron & Desktop Builds
+win-unpacked/
+mac/
+linux-unpacked/
+builder-debug.yml
+builder-effective-config.yaml
+*.exe
+*.blockmap
+
+# Protect default config template
+!electron/config.json
+
+# Environment files
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
+!.vscode/settings.json
+!.vscode/launch.json
+.idea/
 .DS_Store
 *.suo
 *.ntvs*

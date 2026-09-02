@@ -1,28 +1,239 @@
-# Environment
+# ==============================================================================
+# MEALS / SmartCanteen - Comprehensive Git Ignore & Protection Policy
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. ENVIRONMENT VARIABLES & SECRETS (PROTECTED)
+# ------------------------------------------------------------------------------
 .env
 .env.*
-!.env.example
+*.env
 **/.env
 **/.env.*
+!.env.example
+!.env.template
 !**/.env.example
+!**/.env.template
 
-# Python
-venv/
-.venv/
+# Credentials, Private Keys & Certificates
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+*.jks
+*.keystore
+secrets/
+**/secrets/
+credentials.json
+token.json
+client_secret*.json
+
+# ------------------------------------------------------------------------------
+# 2. LOCAL DATABASES & PERSISTENT DATA
+# ------------------------------------------------------------------------------
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+canteen.db*
+smartcanteen.db*
+*.backup*
+*.bak
+*.dump
+*.sql.gz
+
+# Local storage and file uploads
+uploads/
+**/uploads/
+!**/report_templates/**
+
+# ------------------------------------------------------------------------------
+# 3. PYTHON & VIRTUAL ENVIRONMENTS
+# ------------------------------------------------------------------------------
 __pycache__/
 **/__pycache__/
 *.py[cod]
-*.pyc
+*$py.class
+*.pyo
+*.pyd
+.Python
 
-# Node
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+**/venv/
+**/.venv/
+**/env/
+
+# Python test, lint & type cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Python packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ------------------------------------------------------------------------------
+# 4. NODE.JS & FRONTEND
+# ------------------------------------------------------------------------------
 node_modules/
 **/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Build output
+# Build outputs
 dist/
+dist-ssr/
+dist-electron/
+release/
 smartcanteen/dist/
 smartcanteen/dist-electron/
 smartcanteen/release/
+**/dist/
+**/dist-ssr/
+**/dist-electron/
+**/release/
 
-# Logs
+# Package manager caches
+.npm/
+.eslintcache
+.stylelintcache
+.turbo/
+.pnpm-store/
+
+# ------------------------------------------------------------------------------
+# 5. ELECTRON & DESKTOP PACKAGING
+# ------------------------------------------------------------------------------
+**/dist-electron/**
+**/win-unpacked/**
+**/mac/**
+**/linux-unpacked/**
+builder-debug.yml
+builder-effective-config.yaml
+*.blockmap
+
+# Binaries & Installers
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.zip
+*.7z
+*.tar.gz
+*.msi
+
+# Protect default config template
+!smartcanteen/electron/config.json
+
+# ------------------------------------------------------------------------------
+# 6. MOBILE & CAPACITOR (ANDROID / IOS)
+# ------------------------------------------------------------------------------
+**/android/.gradle/
+**/android/.idea/
+**/android/app/build/
+**/android/build/
+**/android/local.properties
+**/android/capacitor-cordova-android-plugins/
+**/android/app/src/main/assets/public/
+**/android/app/src/main/assets/capacitor.config.json
+**/ios/App/public/
+**/ios/App/Pods/
+*.apk
+*.aab
+*.ipa
+
+# ------------------------------------------------------------------------------
+# 7. LOGS & TEMPORARY FILES
+# ------------------------------------------------------------------------------
 *.log
+**/*.log
+logs/
+**/logs/
+*.tmp
+*.temp
+*~
+*.swp
+*.swo
+*.stackdump
+
+# ------------------------------------------------------------------------------
+# 8. IDE & OPERATING SYSTEM JUNK
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+ehthumbs_vista.db
+Thumbs.db
+desktop.ini
+
+# IDEs
+.idea/
+**/.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.user
+*.userosscache
+*.sln.docstates
+
+# VS Code (preserve shared configuration if any)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Agent / Scratch Workspaces
+scratch/
+**/scratch/
+.agents/scratch/
+
+# ------------------------------------------------------------------------------
+# 9. EXPLICIT PROTECTIONS & REPOSITORY MUST-HAVES
+# ------------------------------------------------------------------------------
+!.gitignore
+!.gitkeep
+!README.md
+!smartcanteen/package.json
+!smartcanteen/package-lock.json
+!backend/requirements.txt
+!pyrightconfig.json

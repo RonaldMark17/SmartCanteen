@@ -25,6 +25,7 @@ import re
 import secrets
 import struct
 import subprocess
+import threading
 import time
 from urllib.parse import quote
 
@@ -550,6 +551,22 @@ def _ensure_user_authenticator_columns():
         (
             "authenticator_locked_until",
             "ALTER TABLE users ADD COLUMN authenticator_locked_until DATETIME",
+        ),
+        (
+            "authenticator_lockout_count",
+            "ALTER TABLE users ADD COLUMN authenticator_lockout_count INTEGER DEFAULT 0",
+        ),
+        (
+            "login_failed_attempts",
+            "ALTER TABLE users ADD COLUMN login_failed_attempts INTEGER DEFAULT 0",
+        ),
+        (
+            "login_locked_until",
+            "ALTER TABLE users ADD COLUMN login_locked_until DATETIME",
+        ),
+        (
+            "login_lockout_count",
+            "ALTER TABLE users ADD COLUMN login_lockout_count INTEGER DEFAULT 0",
         ),
     ]
 
@@ -1177,12 +1194,181 @@ AUTHENTICATOR_PERIOD_SECONDS = 30
 AUTHENTICATOR_DIGITS = 6
 AUTHENTICATOR_WINDOW_STEPS = 1
 TRUSTED_DEVICE_DAYS = 30
-AUTHENTICATOR_MAX_FAILED_ATTEMPTS = 3
-AUTHENTICATOR_LOCKOUT_SECONDS = 60
+
+LOGIN_MAX_FAILED_ATTEMPTS = 5
+LOGIN_LOCKOUT_INITIAL_SECONDS = 120       # 2 minutes
+LOGIN_LOCKOUT_REPEATED_SECONDS = 900      # 15 minutes
+
+AUTHENTICATOR_MAX_FAILED_ATTEMPTS = 5
+AUTHENTICATOR_LOCKOUT_SECONDS = 120       # 2 minutes
+AUTHENTICATOR_REPEATED_LOCKOUT_SECONDS = 900  # 15 minutes
+
 RECOVERY_CODE_COUNT = 10
 RECOVERY_CODE_GROUPS = 3
 RECOVERY_CODE_GROUP_LENGTH = 4
 RECOVERY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _format_lockout_duration(seconds: int) -> str:
+    total_seconds = max(0, int(seconds))
+    minutes = total_seconds // 60
+    secs = total_seconds % 60
+    if minutes <= 0:
+        return f"{secs}s"
+    return f"{minutes}:{str(secs).zfill(2)}"
+
+
+class _LoginLockoutEntry:
+    def __init__(self):
+        self.failed_attempts: int = 0
+        self.lockout_count: int = 0
+        self.locked_until: Optional[datetime] = None
+
+
+class LoginLockoutManager:
+    """
+    Manages brute force login lockout tracking per Account + IP / Device.
+    - 5 failed attempts before lock
+    - 2 minutes temporary lockout
+    - 15 minutes after repeated lockouts
+    - Reset counter on successful login
+    """
+    def __init__(self):
+        self._entries: dict[str, _LoginLockoutEntry] = {}
+        self._lock = threading.Lock()
+
+    def _get_key(self, username: str, client_ip: Optional[str] = None, device_id: Optional[str] = None) -> str:
+        norm_user = (username or "").strip().lower()
+        ip = (client_ip or "").strip()
+        dev = (device_id or "").strip()
+        return f"{norm_user}|{ip}|{dev}"
+
+    def check_lockout(
+        self,
+        username: str,
+        client_ip: Optional[str] = None,
+        device_id: Optional[str] = None,
+        user: Optional[models.User] = None,
+    ) -> tuple[bool, Optional[datetime], int]:
+        now = utc_now_naive()
+        key = self._get_key(username, client_ip, device_id)
+
+        with self._lock:
+            entry = self._entries.get(key)
+            mem_locked_until = entry.locked_until if entry else None
+
+        db_locked_until = getattr(user, "login_locked_until", None) if user else None
+
+        locked_until = None
+        if mem_locked_until and mem_locked_until > now:
+            locked_until = mem_locked_until
+        if db_locked_until and db_locked_until > now:
+            if not locked_until or db_locked_until > locked_until:
+                locked_until = db_locked_until
+
+        if locked_until:
+            remaining_seconds = max(1, int((locked_until - now).total_seconds() + 0.999))
+            return True, locked_until, remaining_seconds
+
+        # Clean expired lockouts
+        with self._lock:
+            if entry and entry.locked_until and entry.locked_until <= now:
+                entry.locked_until = None
+                entry.failed_attempts = 0
+
+        if user and db_locked_until and db_locked_until <= now:
+            user.login_locked_until = None
+            user.login_failed_attempts = 0
+
+        return False, None, 0
+
+    def record_failure(
+        self,
+        db: Session,
+        username: str,
+        client_ip: Optional[str] = None,
+        device_id: Optional[str] = None,
+        user: Optional[models.User] = None,
+    ) -> dict:
+        now = utc_now_naive()
+        key = self._get_key(username, client_ip, device_id)
+
+        with self._lock:
+            if key not in self._entries:
+                self._entries[key] = _LoginLockoutEntry()
+            entry = self._entries[key]
+
+            if user:
+                entry.lockout_count = max(entry.lockout_count, int(getattr(user, "login_lockout_count", 0) or 0))
+                db_attempts = int(getattr(user, "login_failed_attempts", 0) or 0)
+                entry.failed_attempts = max(entry.failed_attempts, db_attempts)
+
+            entry.failed_attempts += 1
+
+            if entry.failed_attempts >= LOGIN_MAX_FAILED_ATTEMPTS:
+                lock_duration = (
+                    LOGIN_LOCKOUT_INITIAL_SECONDS
+                    if entry.lockout_count == 0
+                    else LOGIN_LOCKOUT_REPEATED_SECONDS
+                )
+                entry.lockout_count += 1
+                locked_until = now + timedelta(seconds=lock_duration)
+                entry.locked_until = locked_until
+                entry.failed_attempts = 0
+
+                if user:
+                    user.login_failed_attempts = 0
+                    user.login_lockout_count = entry.lockout_count
+                    user.login_locked_until = locked_until
+                    db.commit()
+
+                return {
+                    "locked": True,
+                    "remaining_attempts": 0,
+                    "remaining_seconds": lock_duration,
+                    "locked_until": locked_until,
+                    "lockout_count": entry.lockout_count,
+                    "duration_seconds": lock_duration,
+                }
+            else:
+                remaining_attempts = max(0, LOGIN_MAX_FAILED_ATTEMPTS - entry.failed_attempts)
+                if user:
+                    user.login_failed_attempts = entry.failed_attempts
+                    user.login_locked_until = None
+                    db.commit()
+
+                return {
+                    "locked": False,
+                    "remaining_attempts": remaining_attempts,
+                    "remaining_seconds": 0,
+                    "locked_until": None,
+                    "lockout_count": entry.lockout_count,
+                    "duration_seconds": 0,
+                }
+
+    def reset_lockout(
+        self,
+        db: Session,
+        username: str,
+        client_ip: Optional[str] = None,
+        device_id: Optional[str] = None,
+        user: Optional[models.User] = None,
+    ):
+        key = self._get_key(username, client_ip, device_id)
+        with self._lock:
+            if key in self._entries:
+                self._entries[key].failed_attempts = 0
+                self._entries[key].lockout_count = 0
+                self._entries[key].locked_until = None
+
+        if user:
+            user.login_failed_attempts = 0
+            user.login_lockout_count = 0
+            user.login_locked_until = None
+            db.commit()
+
+
+login_lockout_manager = LoginLockoutManager()
 
 
 def _generate_authenticator_secret() -> str:
@@ -1238,22 +1424,24 @@ def _authenticator_retry_after_seconds(locked_until: datetime, now: Optional[dat
     return max(1, int((locked_until - now).total_seconds() + 0.999))
 
 
-def _authenticator_locked_detail(locked_until: datetime) -> dict:
+def _authenticator_locked_detail(locked_until: datetime, lock_seconds: Optional[int] = None) -> dict:
     retry_after_seconds = _authenticator_retry_after_seconds(locked_until)
+    duration_seconds = lock_seconds or retry_after_seconds
+    duration_str = _format_lockout_duration(retry_after_seconds)
     return {
         "code": "authenticator_verification_locked",
         "title": "Verification locked",
-        "message": "Too many invalid verification attempts. Please try again after 1 minute.",
+        "message": f"Too many invalid verification attempts. Please try again in {duration_str}.",
         "remaining_attempts": 0,
         "locked": True,
-        "lock_seconds": AUTHENTICATOR_LOCKOUT_SECONDS,
+        "lock_seconds": duration_seconds,
         "retry_after_seconds": retry_after_seconds,
         "locked_until": locked_until.isoformat() + "Z",
     }
 
 
-def _raise_authenticator_locked(locked_until: datetime) -> NoReturn:
-    detail = _authenticator_locked_detail(locked_until)
+def _raise_authenticator_locked(locked_until: datetime, lock_seconds: Optional[int] = None) -> NoReturn:
+    detail = _authenticator_locked_detail(locked_until, lock_seconds)
     raise HTTPException(
         status_code=429,
         detail=detail,
@@ -1264,6 +1452,7 @@ def _raise_authenticator_locked(locked_until: datetime) -> NoReturn:
 def _clear_authenticator_verification_attempts(user: models.User):
     user.authenticator_failed_attempts = 0
     user.authenticator_locked_until = None
+    user.authenticator_lockout_count = 0
 
 
 def _enforce_authenticator_verification_not_locked(user: models.User):
@@ -1273,7 +1462,8 @@ def _enforce_authenticator_verification_not_locked(user: models.User):
         _raise_authenticator_locked(locked_until)
 
     if locked_until and locked_until <= now:
-        _clear_authenticator_verification_attempts(user)
+        user.authenticator_failed_attempts = 0
+        user.authenticator_locked_until = None
 
 
 def _record_failed_authenticator_verification(
@@ -1296,20 +1486,30 @@ def _record_failed_authenticator_verification(
     )
 
     if remaining_attempts <= 0:
-        locked_until = now + timedelta(seconds=AUTHENTICATOR_LOCKOUT_SECONDS)
+        lockout_count = int(getattr(user, "authenticator_lockout_count", 0) or 0)
+        lock_duration = (
+            AUTHENTICATOR_LOCKOUT_SECONDS
+            if lockout_count == 0
+            else AUTHENTICATOR_REPEATED_LOCKOUT_SECONDS
+        )
+        user.authenticator_lockout_count = lockout_count + 1
+        user.authenticator_failed_attempts = 0
+        locked_until = now + timedelta(seconds=lock_duration)
         user.authenticator_locked_until = locked_until
         _add_audit_log(
             db,
             user_id=user.id,
             action="LOGIN_AUTHENTICATOR_LOCKED",
-            details="Too many invalid authenticator verification attempts",
+            details=f"Too many invalid authenticator verification attempts; locked for {_format_lockout_duration(lock_duration)}",
             request=req,
         )
         db.commit()
-        _raise_authenticator_locked(locked_until)
+        _raise_authenticator_locked(locked_until, lock_duration)
 
     user.authenticator_locked_until = None
     attempt_label = "attempt" if remaining_attempts == 1 else "attempts"
+    lockout_count = int(getattr(user, "authenticator_lockout_count", 0) or 0)
+    next_lock_str = "15-minute" if lockout_count > 0 else "2-minute"
     _add_audit_log(
         db,
         user_id=user.id,
@@ -1325,11 +1525,11 @@ def _record_failed_authenticator_verification(
             "title": "Verification issue",
             "message": (
                 f"Invalid verification code. {remaining_attempts} {attempt_label} "
-                "remaining before a 1-minute lock."
+                f"remaining before a {next_lock_str} lock."
             ),
             "remaining_attempts": remaining_attempts,
             "locked": False,
-            "lock_seconds": AUTHENTICATOR_LOCKOUT_SECONDS,
+            "lock_seconds": AUTHENTICATOR_LOCKOUT_SECONDS if lockout_count == 0 else AUTHENTICATOR_REPEATED_LOCKOUT_SECONDS,
         },
     )
 
@@ -2131,21 +2331,94 @@ def _begin_authenticator_authentication(user: models.User):
 @app.post("/auth/login", include_in_schema=False)
 @app.post("/api/auth/login", tags=["Auth"])
 def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get_db)):
+    client_ip = _get_client_ip(req)
+    device_id = req.headers.get("x-smartcanteen-device-id") or req.headers.get("x-device-id") or ""
     user = db.query(models.User).filter(models.User.username == payload.username).first()
 
-    if not user or not auth.verify_password(payload.password, user.password_hash):
+    # Check if this Account + IP/Device is currently locked out
+    is_locked, locked_until, remaining_seconds = login_lockout_manager.check_lockout(
+        payload.username, client_ip, device_id, user=user
+    )
+    if is_locked and locked_until:
         _add_audit_log(
             db,
-            action="LOGIN_FAILED",
-            details=f"Username: {payload.username}",
+            user_id=user.id if user else None,
+            action="LOGIN_LOCKED",
+            details=f"Username: {payload.username}; lockout remaining: {_format_lockout_duration(remaining_seconds)}",
             request=req,
         )
         db.commit()
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "account_locked",
+                "title": "Too many failed attempts",
+                "message": f"This account is temporarily locked. Try again in {_format_lockout_duration(remaining_seconds)}.",
+                "remaining_attempts": 0,
+                "remaining_seconds": remaining_seconds,
+                "retry_after_seconds": remaining_seconds,
+                "locked_until": locked_until.isoformat() + "Z",
+                "locked": True,
+            },
+            headers={"Retry-After": str(remaining_seconds)},
+        )
+
+    if not user or not auth.verify_password(payload.password, user.password_hash):
+        fail_res = login_lockout_manager.record_failure(
+            db, payload.username, client_ip, device_id, user=user
+        )
+        if fail_res["locked"]:
+            duration_str = _format_lockout_duration(fail_res["remaining_seconds"])
+            _add_audit_log(
+                db,
+                user_id=user.id if user else None,
+                action="LOGIN_LOCKED",
+                details=f"Username: {payload.username}; locked for {duration_str}",
+                request=req,
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "account_locked",
+                    "title": "Too many failed attempts",
+                    "message": f"This account is temporarily locked. Try again in {duration_str}.",
+                    "remaining_attempts": 0,
+                    "remaining_seconds": fail_res["remaining_seconds"],
+                    "retry_after_seconds": fail_res["remaining_seconds"],
+                    "locked_until": fail_res["locked_until"].isoformat() + "Z",
+                    "locked": True,
+                },
+                headers={"Retry-After": str(fail_res["remaining_seconds"])},
+            )
+        else:
+            rem = fail_res["remaining_attempts"]
+            attempt_label = "attempt" if rem == 1 else "attempts"
+            next_lock_str = "15-minute" if fail_res["lockout_count"] > 0 else "2-minute"
+            _add_audit_log(
+                db,
+                user_id=user.id if user else None,
+                action="LOGIN_FAILED",
+                details=f"Username: {payload.username}; {rem} {attempt_label} remaining",
+                request=req,
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "invalid_credentials",
+                    "title": "Sign-in issue",
+                    "message": f"Invalid username or password. {rem} {attempt_label} remaining before a {next_lock_str} lock.",
+                    "remaining_attempts": rem,
+                    "locked": False,
+                },
+            )
 
     if user.authenticator_enabled and user.authenticator_secret:
         trusted_device = _get_valid_trusted_device(db, user, payload.remember_device_token)
         if trusted_device:
+            login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
+            _clear_authenticator_verification_attempts(user)
             response = _build_login_success(db, user)
             response["authenticator_mfa_verified"] = True
             response["remember_device_verified"] = True
@@ -2166,6 +2439,8 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
     else:
         # MFA is optional for staff and cashier roles (mandatory for administrators)
         if user.role != "admin":
+            login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
+            _clear_authenticator_verification_attempts(user)
             response = _build_login_success(db, user)
             response["authenticator_mfa_enabled"] = False
             _add_audit_log(
@@ -2389,6 +2664,9 @@ def authenticator_authentication_verify(
                 _record_failed_authenticator_verification(db, user, req)
 
     _clear_authenticator_verification_attempts(user)
+    client_ip = _get_client_ip(req)
+    device_id = req.headers.get("x-smartcanteen-device-id") or req.headers.get("x-device-id") or ""
+    login_lockout_manager.reset_lockout(db, user.username, client_ip, device_id, user=user)
     remember_device_token = None
     remember_device_expires_at = None
     if data.remember_device:

@@ -23,6 +23,10 @@ class User(Base):
     authenticator_last_counter: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     authenticator_failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
     authenticator_locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    authenticator_lockout_count: Mapped[int] = mapped_column(Integer, default=0)
+    login_failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    login_locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    login_lockout_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
     transactions: Mapped[List["Transaction"]] = relationship("Transaction", back_populates="user")

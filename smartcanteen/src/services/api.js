@@ -597,6 +597,20 @@ function buildApiError(payload, fallbackMessage, status, headers) {
   return error;
 }
 
+function getOrCreateDeviceId() {
+  const DEVICE_ID_KEY = 'sc_device_id';
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id = 'dev_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return 'unknown_device';
+  }
+}
+
 function getClientRequestHeaders() {
   const platform = getRuntimePlatform();
   const nativeRuntime = isNativeRuntime();
@@ -605,6 +619,7 @@ function getClientRequestHeaders() {
     'X-SmartCanteen-Client': nativeRuntime ? 'native' : 'web',
     'X-SmartCanteen-Platform': platform,
     'X-SmartCanteen-Device-Class': getDeviceClass(),
+    'X-SmartCanteen-Device-Id': getOrCreateDeviceId(),
   };
 }
 

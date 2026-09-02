@@ -13,8 +13,9 @@ import {
 const LOGIN_LOCKOUT_STORAGE_KEY = 'sc_login_lockouts';
 const REMEMBERED_USERNAME_STORAGE_KEY = 'sc_remembered_username';
 const MFA_CHALLENGE_STORAGE_KEY = 'sc_pending_authenticator_challenge';
-const MAX_LOGIN_ATTEMPTS = 3;
-const LOGIN_LOCKOUT_MS = 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_INITIAL_MS = 2 * 60 * 1000;    // 2 minutes
+const LOGIN_LOCKOUT_REPEATED_MS = 15 * 60 * 1000;  // 15 minutes
 const MFA_CHALLENGE_MAX_AGE_MS = 5 * 60 * 1000;
 const RECOVERY_CODE_LENGTH = 12;
 const PASSWORD_RESET_REQUEST_SENT_MESSAGE = 'Your password reset request has been sent. Please wait for admin approval.';
@@ -119,15 +120,17 @@ function readLoginLockouts(now = Date.now()) {
     const activeLockouts = {};
     Object.entries(parsed).forEach(([identifier, record]) => {
       const attempts = Number(record?.attempts || 0);
+      const lockoutCount = Number(record?.lockoutCount || 0);
       const lockedUntil = Number(record?.lockedUntil || 0);
 
       if (lockedUntil > 0 && lockedUntil <= now) {
+        activeLockouts[identifier] = { attempts: 0, lockoutCount, lockedUntil: 0 };
         changed = true;
         return;
       }
 
-      if (attempts > 0 || lockedUntil > now) {
-        activeLockouts[identifier] = { attempts, lockedUntil };
+      if (attempts > 0 || lockedUntil > now || lockoutCount > 0) {
+        activeLockouts[identifier] = { attempts, lockoutCount, lockedUntil };
       }
     });
 
@@ -153,6 +156,7 @@ function getLoginLockoutState(identifier, now = Date.now()) {
   if (!identifier) {
     return {
       attempts: 0,
+      lockoutCount: 0,
       isLocked: false,
       lockedUntil: 0,
       remainingAttempts: MAX_LOGIN_ATTEMPTS,
@@ -164,10 +168,12 @@ function getLoginLockoutState(identifier, now = Date.now()) {
   const lockedUntil = Number(record.lockedUntil || 0);
   const remainingMs = Math.max(0, lockedUntil - now);
   const isLocked = remainingMs > 0;
+  const lockoutCount = Number(record.lockoutCount || 0);
   const attempts = isLocked ? MAX_LOGIN_ATTEMPTS : Number(record.attempts || 0);
 
   return {
     attempts,
+    lockoutCount,
     isLocked,
     lockedUntil,
     remainingAttempts: Math.max(0, MAX_LOGIN_ATTEMPTS - attempts),
@@ -175,19 +181,42 @@ function getLoginLockoutState(identifier, now = Date.now()) {
   };
 }
 
-function recordFailedLogin(identifier, now = Date.now()) {
+function recordFailedLogin(identifier, now = Date.now(), serverLockDetails = null) {
   if (!identifier) {
     return getLoginLockoutState(identifier, now);
   }
 
   const lockouts = readLoginLockouts(now);
-  const currentAttempts = Number(lockouts[identifier]?.attempts || 0);
-  const attempts = Math.min(MAX_LOGIN_ATTEMPTS, currentAttempts + 1);
-  const lockedUntil = attempts >= MAX_LOGIN_ATTEMPTS ? now + LOGIN_LOCKOUT_MS : 0;
+  const existingRecord = lockouts[identifier] || {};
+  const currentAttempts = Number(existingRecord.attempts || 0);
+  let lockoutCount = Number(existingRecord.lockoutCount || 0);
 
-  lockouts[identifier] = { attempts, lockedUntil };
+  if (serverLockDetails?.locked) {
+    const serverLockedUntil = Number(serverLockDetails.lockedUntil || 0);
+    const serverRetryMs = Number(serverLockDetails.retryAfterSeconds || 0) * 1000;
+    const duration = serverLockedUntil > now ? serverLockedUntil : now + (serverRetryMs || LOGIN_LOCKOUT_INITIAL_MS);
+    lockoutCount = Number(serverLockDetails.lockoutCount ?? (lockoutCount + 1));
+    lockouts[identifier] = { attempts: 0, lockoutCount, lockedUntil: duration };
+  } else {
+    const attempts = Math.min(MAX_LOGIN_ATTEMPTS, currentAttempts + 1);
+    if (attempts >= MAX_LOGIN_ATTEMPTS) {
+      const lockDuration = lockoutCount === 0 ? LOGIN_LOCKOUT_INITIAL_MS : LOGIN_LOCKOUT_REPEATED_MS;
+      lockoutCount += 1;
+      lockouts[identifier] = {
+        attempts: 0,
+        lockoutCount,
+        lockedUntil: now + lockDuration,
+      };
+    } else {
+      lockouts[identifier] = {
+        attempts,
+        lockoutCount,
+        lockedUntil: 0,
+      };
+    }
+  }
+
   saveLoginLockouts(lockouts);
-
   return getLoginLockoutState(identifier, now);
 }
 
@@ -609,38 +638,50 @@ export default function Login({ onLogin }) {
         isAuthenticatorStep ? DEFAULT_VERIFICATION_ERROR_MESSAGE : 'Invalid username or password'
       );
 
-      if (isAuthenticatorStep) {
-        const detail = getErrorResponseDetail(err);
-        const detailObject = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
-        const retryAfterSeconds = Number(err.retryAfterSeconds ?? detailObject.retry_after_seconds ?? 0);
-        const parsedLockedUntil = Date.parse(err.lockedUntil || detailObject.locked_until || '');
-        const nextLockedUntil = Number.isFinite(parsedLockedUntil)
-          ? parsedLockedUntil
-          : retryAfterSeconds > 0
-            ? Date.now() + retryAfterSeconds * 1000
-            : 0;
-        const isLockedError = Boolean(err.locked || detailObject.locked || nextLockedUntil);
+      const detail = getErrorResponseDetail(err);
+      const detailObject = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
+      const retryAfterSeconds = Number(err.retryAfterSeconds ?? detailObject.retry_after_seconds ?? 0);
+      const parsedLockedUntil = Date.parse(err.lockedUntil || detailObject.locked_until || '');
+      const serverLockedUntil = Number.isFinite(parsedLockedUntil)
+        ? parsedLockedUntil
+        : retryAfterSeconds > 0
+          ? Date.now() + retryAfterSeconds * 1000
+          : 0;
+      const isLockedError = Boolean(err.locked || detailObject.locked || err.status === 429 || serverLockedUntil > 0);
 
+      if (isAuthenticatorStep) {
         setAuthenticatorErrorTitle(
           getReadableErrorTitle(err, isLockedError ? 'Verification locked' : 'Verification issue')
         );
         if (isLockedError) {
-          setAuthenticatorLockedUntil(nextLockedUntil || Date.now() + LOGIN_LOCKOUT_MS);
+          setAuthenticatorLockedUntil(serverLockedUntil || Date.now() + LOGIN_LOCKOUT_INITIAL_MS);
           setLockoutNow(Date.now());
         } else {
           setAuthenticatorLockedUntil(0);
         }
         setError(message);
-      } else if (isCredentialFailure(message)) {
-        const nextLockoutState = recordFailedLogin(identifier);
+      } else if (isLockedError || isCredentialFailure(message) || err.status === 401 || err.status === 429) {
+        const nextLockoutState = recordFailedLogin(
+          identifier,
+          Date.now(),
+          isLockedError
+            ? {
+                locked: true,
+                lockedUntil: serverLockedUntil,
+                retryAfterSeconds,
+                lockoutCount: detailObject.lockout_count,
+              }
+            : null
+        );
         setLockoutNow(Date.now());
 
         if (nextLockoutState.isLocked) {
           setError('');
         } else {
           const attemptLabel = nextLockoutState.remainingAttempts === 1 ? 'attempt' : 'attempts';
+          const nextLockDurationStr = nextLockoutState.lockoutCount > 0 ? '15-minute' : '2-minute';
           setError(
-            `${message}. ${nextLockoutState.remainingAttempts} ${attemptLabel} remaining before a 1-minute lock.`
+            `${message}. ${nextLockoutState.remainingAttempts} ${attemptLabel} remaining before a ${nextLockDurationStr} lock.`
           );
         }
       } else {
@@ -1110,7 +1151,7 @@ export default function Login({ onLogin }) {
                     className="mt-1.5 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 text-base font-normal text-slate-900 dark:text-slate-100 outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-primary dark:focus:border-emerald-500 focus:ring-2 focus:ring-primary/10 dark:focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
                     value={username}
                     onChange={handleUsernameChange}
-                    disabled={loading || isAuthenticatorStep}
+                    disabled={loading || isAuthenticatorStep || lockoutState.isLocked}
                     autoComplete="username"
                   />
                 </label>
@@ -1127,7 +1168,7 @@ export default function Login({ onLogin }) {
                       className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-4 py-3 pr-12 text-base font-normal text-slate-900 dark:text-slate-100 outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-primary dark:focus:border-emerald-500 focus:ring-2 focus:ring-primary/10 dark:focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      disabled={loading || isAuthenticatorStep}
+                      disabled={loading || isAuthenticatorStep || lockoutState.isLocked}
                       autoComplete="current-password"
                     />
                     <button
