@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Synchronously request app config from main process during preload init
-let appConfig = { apiBaseUrl: 'http://54.253.139.103/api' };
+let appConfig = { apiBaseUrl: 'http://3.91.7.109/api' };
 
 try {
   const syncConfig = ipcRenderer.sendSync('get-app-config-sync');

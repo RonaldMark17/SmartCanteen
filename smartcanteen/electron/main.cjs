@@ -56,7 +56,7 @@ function loadAppConfig() {
 
   console.log('[Main] No external config.json found; using default server URL.');
   return {
-    apiBaseUrl: 'http://54.253.139.103/api',
+    apiBaseUrl: 'http://3.91.7.109/api',
   };
 }
 
@@ -267,7 +267,7 @@ ipcMain.handle('get-system-info', () => {
     nodeVersion: process.versions.node,
     platform: process.platform,
     arch: process.arch,
-    apiBaseUrl: cachedConfig?.apiBaseUrl || 'http://54.253.139.103/api',
+    apiBaseUrl: cachedConfig?.apiBaseUrl || 'http://3.91.7.109/api',
   };
 });
 
