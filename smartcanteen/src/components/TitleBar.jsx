@@ -97,15 +97,9 @@ export default function TitleBar() {
     const start = performance.now();
     try {
       setServerStatus('checking');
-      const base = API.getBaseUrl ? API.getBaseUrl() : '';
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-      const res = await fetch(`${base}/health`, { signal: controller.signal }).catch(() => null);
-      clearTimeout(timeoutId);
-
+      const res = await API.health().catch(() => null);
       const elapsed = Math.round(performance.now() - start);
-      if (res && res.ok) {
+      if (res) {
         setServerPing(elapsed);
         setServerStatus('online');
       } else {

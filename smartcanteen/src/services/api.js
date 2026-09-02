@@ -1428,6 +1428,7 @@ export const API = {
   backupFinancialDatabase: () => request('POST', '/financial-reports/backup'),
   seed: () => request('POST', '/seed'),
   health: () => request('GET', '/health'),
+  getBaseUrl: getCurrentApiBase,
   primeOfflineData,
   syncPendingTransactions: syncPendingOfflineTransactions,
   syncPendingChanges: syncPendingOfflineChanges,
