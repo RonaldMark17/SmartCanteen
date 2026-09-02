@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import {
   ArrowPathIcon,
   BellIcon,
   CheckCircleIcon,
+  CheckIcon,
+  ClipboardDocumentCheckIcon,
+  ClipboardDocumentIcon,
   Cog6ToothIcon,
   CommandLineIcon,
   ComputerDesktopIcon,
@@ -13,11 +17,15 @@ import {
   LockClosedIcon,
   PaintBrushIcon,
   PowerIcon,
+  QrCodeIcon,
   ShieldCheckIcon,
+  ShieldExclamationIcon,
   SparklesIcon,
   Squares2X2Icon,
   SunIcon,
+  TrashIcon,
   UserIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from '../components/DismissibleAlert';
 import { useModuleSettings } from '../contexts/useModuleSettings';
@@ -117,9 +125,18 @@ function ModuleToggle({ module, enabled, disabled, onToggle }) {
 }
 
 export default function Settings() {
-  const { user: authUser, role } = useAuth();
+  const { user: authUser, role, refreshUser } = useAuth();
   const user = { ...(authUser || {}), role };
   const isAdmin = user.role === 'admin';
+  const userRoleLabel =
+    user.role === 'admin'
+      ? 'Administrator'
+      : user.role === 'cashier'
+      ? 'Cashier'
+      : user.role === 'staff'
+      ? 'Staff'
+      : 'User';
+  const isMfaEnabled = Boolean(user.authenticator_mfa_enabled);
 
   const [activeTab, setActiveTab] = useState('accessibility');
 
@@ -156,6 +173,155 @@ export default function Settings() {
   const [showAdminResetOption, setShowAdminResetOption] = useState(false);
   const [pwResetLoading, setPwResetLoading] = useState(false);
   const [pwResetMessage, setPwResetMessage] = useState('');
+
+  // Authenticator MFA State (Optional for Staff)
+  const [mfaSetupActive, setMfaSetupActive] = useState(false);
+  const [mfaSetupLoading, setMfaSetupLoading] = useState(false);
+  const [mfaSetupData, setMfaSetupData] = useState(null);
+  const [mfaQrCodeUrl, setMfaQrCodeUrl] = useState('');
+  const [mfaVerificationCode, setMfaVerificationCode] = useState('');
+  const [mfaVerifying, setMfaVerifying] = useState(false);
+  const [mfaSetupError, setMfaSetupError] = useState('');
+  const [mfaSecretCopied, setMfaSecretCopied] = useState(false);
+  const [showManualSecret, setShowManualSecret] = useState(false);
+  const [mfaDisableConfirmOpen, setMfaDisableConfirmOpen] = useState(false);
+  const [mfaDisabling, setMfaDisabling] = useState(false);
+  const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState([]);
+  const [mfaRecoveryCodesModalOpen, setMfaRecoveryCodesModalOpen] = useState(false);
+  const [mfaRecoveryCodesCopied, setMfaRecoveryCodesCopied] = useState(false);
+  const [mfaRegeneratingCodes, setMfaRegeneratingCodes] = useState(false);
+
+  async function handleStartMfaSetup() {
+    setMfaSetupLoading(true);
+    setMfaSetupError('');
+    setMfaVerificationCode('');
+    setMfaSecretCopied(false);
+    setShowManualSecret(false);
+    try {
+      const res = await API.startAuthenticatorSetup();
+      setMfaSetupData(res);
+      const otpUrl = res?.authenticator?.otpauth_url;
+      if (otpUrl) {
+        const dataUrl = await QRCode.toDataURL(otpUrl, {
+          margin: 1,
+          width: 192,
+          color: {
+            dark: '#0f172a',
+            light: '#ffffff',
+          },
+        });
+        setMfaQrCodeUrl(dataUrl);
+      }
+      setMfaSetupActive(true);
+    } catch (err) {
+      setMfaSetupError(err?.message || 'Failed to initialize authenticator setup.');
+      window.showToast?.(err?.message || 'Failed to start authenticator setup.', 'error');
+    } finally {
+      setMfaSetupLoading(false);
+    }
+  }
+
+  function handleCancelMfaSetup() {
+    setMfaSetupActive(false);
+    setMfaSetupData(null);
+    setMfaQrCodeUrl('');
+    setMfaVerificationCode('');
+    setMfaSetupError('');
+    setShowManualSecret(false);
+  }
+
+  async function handleVerifyMfaSetup(e) {
+    if (e) e.preventDefault();
+    const cleanCode = mfaVerificationCode.replace(/\D/g, '').trim();
+    if (cleanCode.length !== 6) {
+      setMfaSetupError('Please enter a valid 6-digit code from your authenticator app.');
+      return;
+    }
+
+    setMfaVerifying(true);
+    setMfaSetupError('');
+    try {
+      const res = await API.verifyAuthenticatorSetup({
+        mfaToken: mfaSetupData?.mfa_token,
+        code: cleanCode,
+        username: user.username,
+      });
+
+      setMfaSetupActive(false);
+      setMfaSetupData(null);
+      setMfaQrCodeUrl('');
+      setMfaVerificationCode('');
+
+      if (Array.isArray(res?.recovery_codes) && res.recovery_codes.length > 0) {
+        setMfaRecoveryCodes(res.recovery_codes);
+        setMfaRecoveryCodesModalOpen(true);
+      }
+
+      await refreshUser();
+      window.showToast?.('Two-factor authentication enabled successfully!', 'success');
+    } catch (err) {
+      setMfaSetupError(err?.message || 'Invalid authenticator code. Please check your app and try again.');
+      window.showToast?.(err?.message || 'Verification failed.', 'error');
+    } finally {
+      setMfaVerifying(false);
+    }
+  }
+
+  async function handleDisableMfa() {
+    setMfaDisabling(true);
+    try {
+      await API.disableAuthenticator();
+      setMfaDisableConfirmOpen(false);
+      await refreshUser();
+      window.showToast?.('Authenticator MFA disabled. Your account now signs in with password only.', 'info');
+    } catch (err) {
+      window.showToast?.(err?.message || 'Failed to disable authenticator MFA.', 'error');
+    } finally {
+      setMfaDisabling(false);
+    }
+  }
+
+  async function handleRegenerateRecoveryCodes() {
+    setMfaRegeneratingCodes(true);
+    try {
+      const res = await API.regenerateRecoveryCodes();
+      if (Array.isArray(res?.recovery_codes) && res.recovery_codes.length > 0) {
+        setMfaRecoveryCodes(res.recovery_codes);
+        setMfaRecoveryCodesModalOpen(true);
+      }
+      await refreshUser();
+      window.showToast?.('New recovery codes generated. Store them safely.', 'success');
+    } catch (err) {
+      window.showToast?.(err?.message || 'Failed to regenerate recovery codes.', 'error');
+    } finally {
+      setMfaRegeneratingCodes(false);
+    }
+  }
+
+  async function handleCopySecret() {
+    const rawSecret = mfaSetupData?.authenticator?.secret;
+    if (!rawSecret || !navigator?.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(rawSecret);
+      setMfaSecretCopied(true);
+      setTimeout(() => setMfaSecretCopied(false), 2000);
+      window.showToast?.('Secret key copied to clipboard.', 'info');
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleCopyRecoveryCodes() {
+    if (!mfaRecoveryCodes?.length || !navigator?.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(mfaRecoveryCodes.join('\n'));
+      setMfaRecoveryCodesCopied(true);
+      setTimeout(() => setMfaRecoveryCodesCopied(false), 2000);
+      window.showToast?.('All recovery codes copied to clipboard.', 'info');
+    } catch {
+      // ignore
+    }
+  }
 
   useEffect(() => {
     setDraftModules(normalizeModuleSettings(modules));
@@ -861,6 +1027,294 @@ export default function Settings() {
               )}
             </div>
           </div>
+
+          {/* Two-Factor Authentication (MFA / Authenticator) Card (12 cols) */}
+          <div className="lg:col-span-12 rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-5">
+            {/* Header */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                    <ShieldCheckIcon className="h-4 w-4" />
+                    Two-Factor Authentication (MFA)
+                  </div>
+                  {isAdmin ? (
+                    <span className="rounded-lg bg-emerald-100/90 px-2 py-0.5 text-xs font-bold text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300/60 dark:border-emerald-700/60">
+                      Mandatory for Admin
+                    </span>
+                  ) : (
+                    <span className="rounded-lg bg-sky-50 px-2.5 py-0.5 text-xs font-bold text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200/70 dark:border-sky-800/70">
+                      Optional for {userRoleLabel}
+                    </span>
+                  )}
+                </div>
+                <h3 className="mt-1.5 text-base font-black text-slate-900 dark:text-white">
+                  Authenticator App Verification
+                </h3>
+                <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-500 dark:text-slate-400 max-w-2xl">
+                  Add an extra layer of security to your account using time-based one-time passwords (TOTP) from Google Authenticator, Microsoft Authenticator, or Authy on your mobile phone.
+                </p>
+              </div>
+
+              {/* Status Badge */}
+              <div className="shrink-0 self-start sm:self-center">
+                {isMfaEnabled ? (
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/90 px-3.5 py-1.5 text-xs font-black text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Enabled & Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-xs font-bold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    <span className="h-2 w-2 rounded-full bg-slate-400" />
+                    Not Configured {isAdmin ? '' : '(Optional)'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* If MFA is Enabled */}
+            {isMfaEnabled && (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-4 dark:border-emerald-800/60 dark:bg-emerald-950/30">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs">
+                      <ShieldCheckIcon className="h-5 w-5 stroke-[2.5]" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                        Your account is protected with Two-Factor Authentication
+                      </h4>
+                      <p className="mt-0.5 text-xs font-medium text-slate-600 dark:text-slate-300 leading-relaxed">
+                        When signing in on an untrusted device, you will be required to enter a 6-digit code from your authenticator app.
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                        <span>
+                          Recovery Codes: <strong className="text-slate-900 dark:text-white">{user.recovery_codes_remaining !== undefined ? user.recovery_codes_remaining : 8} remaining</strong>
+                        </span>
+                        {user.remembered_devices_active > 0 && (
+                          <span>
+                            • Trusted Devices: <strong className="text-slate-900 dark:text-white">{user.remembered_devices_active} active</strong>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleRegenerateRecoveryCodes}
+                      disabled={mfaRegeneratingCodes}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition active:scale-95 disabled:opacity-50"
+                    >
+                      <ArrowPathIcon className={`h-3.5 w-3.5 ${mfaRegeneratingCodes ? 'animate-spin' : ''}`} />
+                      {mfaRegeneratingCodes ? 'Regenerating...' : 'Regenerate Backup Codes'}
+                    </button>
+
+                    {!isAdmin ? (
+                      <button
+                        type="button"
+                        onClick={() => setMfaDisableConfirmOpen(true)}
+                        disabled={mfaDisabling}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3.5 py-2 text-xs font-bold text-rose-600 shadow-2xs hover:bg-rose-50 dark:border-rose-900/60 dark:bg-slate-800 dark:text-rose-400 dark:hover:bg-rose-950/40 transition active:scale-95 disabled:opacity-50"
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                        Disable MFA
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {!isAdmin && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic">
+                    Note: As a staff member, MFA is optional for your role. You can disable or re-enable it at any time.
+                  </p>
+                )}
+                {isAdmin && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic">
+                    Note: Two-factor authentication is mandatory for administrators and cannot be disabled.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* If MFA is NOT Enabled and NOT in Setup Wizard */}
+            {!isMfaEnabled && !mfaSetupActive && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-850/60">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    <QrCodeIcon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                      Set up Two-Factor Authentication
+                    </h4>
+                    <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400 leading-relaxed max-w-xl">
+                      Configure your staff account with an authenticator app (Google Authenticator, Microsoft Authenticator, or Authy). MFA is optional for staff, but provides extra security against stolen or shared passwords.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleStartMfaSetup}
+                  disabled={mfaSetupLoading}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm shadow-emerald-600/20 hover:bg-emerald-700 active:scale-95 transition disabled:opacity-50 shrink-0 self-start sm:self-center"
+                >
+                  <ShieldCheckIcon className="h-4 w-4 stroke-[2.5]" />
+                  {mfaSetupLoading ? 'Starting Setup...' : 'Set Up Authenticator (MFA)'}
+                </button>
+              </div>
+            )}
+
+            {/* Setup Wizard */}
+            {!isMfaEnabled && mfaSetupActive && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-5 dark:border-emerald-800/80 dark:bg-emerald-950/20 space-y-5">
+                <div className="flex items-center justify-between border-b border-emerald-200/60 pb-3 dark:border-emerald-800/60">
+                  <div className="flex items-center gap-2">
+                    <QrCodeIcon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                    <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                      Connect Authenticator App
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCancelMfaSetup}
+                    className="text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                {mfaSetupError && (
+                  <DismissibleAlert resetKey={mfaSetupError} tone="rose" className="rounded-xl">
+                    {mfaSetupError}
+                  </DismissibleAlert>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                  {/* Step 1: QR Code & Manual Key (7 cols) */}
+                  <div className="md:col-span-7 space-y-3">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                      Step 1: Scan with Authenticator App
+                    </span>
+                    <p className="text-xs text-slate-600 dark:text-slate-300">
+                      Open <strong>Google Authenticator</strong>, <strong>Microsoft Authenticator</strong>, or any TOTP app on your phone and scan the QR code below:
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
+                      {mfaQrCodeUrl ? (
+                        <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-xs dark:border-slate-700 shrink-0">
+                          <img
+                            src={mfaQrCodeUrl}
+                            alt="Authenticator QR Code"
+                            className="h-44 w-44 object-contain"
+                          />
+                        </div>
+                      ) : (
+                        <div className="h-44 w-44 rounded-2xl border border-slate-200 bg-slate-100 flex items-center justify-center text-xs text-slate-400 dark:border-slate-700 dark:bg-slate-800 shrink-0">
+                          Loading QR...
+                        </div>
+                      )}
+
+                      <div className="space-y-2 text-xs text-slate-500 dark:text-slate-400 min-w-0 flex-1">
+                        <p className="font-medium">
+                          Can't scan the QR code? You can manually type the setup key into your authenticator app.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowManualSecret(!showManualSecret)}
+                          className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:underline"
+                        >
+                          {showManualSecret ? 'Hide manual key' : 'Show manual secret key'}
+                        </button>
+
+                        {showManualSecret && mfaSetupData?.authenticator?.secret && (
+                          <div className="mt-2 rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-850 space-y-1.5">
+                            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Secret Key (Base32)
+                            </span>
+                            <div className="flex items-center justify-between gap-2">
+                              <code className="text-xs font-mono font-black text-slate-900 dark:text-white break-all select-all">
+                                {mfaSetupData.authenticator.secret_formatted || mfaSetupData.authenticator.secret}
+                              </code>
+                              <button
+                                type="button"
+                                onClick={handleCopySecret}
+                                className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 shrink-0"
+                              >
+                                {mfaSecretCopied ? (
+                                  <>
+                                    <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
+                                    Copied
+                                  </>
+                                ) : (
+                                  <>
+                                    <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+                                    Copy
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Step 2: Verification Form (5 cols) */}
+                  <div className="md:col-span-5 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-700 dark:bg-slate-900 space-y-4">
+                    <div>
+                      <span className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                        Step 2: Verify Code
+                      </span>
+                      <h5 className="mt-1 text-sm font-black text-slate-900 dark:text-white">
+                        Enter 6-Digit Code
+                      </h5>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                        Enter the current code from your authenticator app to confirm setup.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleVerifyMfaSetup} className="space-y-4">
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          maxLength={6}
+                          autoFocus
+                          required
+                          value={mfaVerificationCode}
+                          onChange={(e) => setMfaVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                          placeholder="000 000"
+                          className="w-full text-center text-2xl font-mono font-black tracking-widest rounded-xl border border-slate-300 bg-slate-50 py-3 text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="submit"
+                          disabled={mfaVerifying || mfaVerificationCode.replace(/\D/g, '').length !== 6}
+                          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-xs font-black text-white shadow-sm shadow-emerald-600/20 hover:bg-emerald-700 active:scale-95 transition disabled:opacity-50"
+                        >
+                          <ShieldCheckIcon className="h-4 w-4 stroke-[2.5]" />
+                          {mfaVerifying ? 'Verifying...' : 'Verify & Enable MFA'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelMfaSetup}
+                          className="w-full py-2 text-xs font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                        >
+                          Cancel Setup
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -958,6 +1412,110 @@ export default function Settings() {
             </div>
           </section>
         </>
+      )}
+
+      {/* Recovery Codes Modal */}
+      {mfaRecoveryCodesModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 space-y-4">
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm shadow-emerald-600/20">
+                <ShieldCheckIcon className="h-6 w-6 stroke-[2.5]" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Save Your Emergency Recovery Codes
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Each one-time code can be used once if you lose access to your authenticator app.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-amber-200/80 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300 font-medium">
+              ⚠️ Store these codes in a password manager or secure location. They will not be displayed again.
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs font-black text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-white">
+              {mfaRecoveryCodes.map((code, idx) => (
+                <div key={idx} className="flex items-center justify-center rounded-xl bg-white p-2 border border-slate-200/80 dark:border-slate-800 dark:bg-slate-900 shadow-2xs">
+                  {code}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCopyRecoveryCodes}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition active:scale-95"
+              >
+                {mfaRecoveryCodesCopied ? (
+                  <>
+                    <CheckIcon className="h-4 w-4 text-emerald-600" />
+                    Copied All Codes!
+                  </>
+                ) : (
+                  <>
+                    <ClipboardDocumentCheckIcon className="h-4 w-4" />
+                    Copy All Codes
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMfaRecoveryCodesModalOpen(false)}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm shadow-emerald-600/20 hover:bg-emerald-700 active:scale-95 transition"
+              >
+                Done / I Have Saved My Codes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disable MFA Confirmation Dialog */}
+      {mfaDisableConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 dark:bg-rose-950/80 dark:text-rose-400">
+                <ShieldExclamationIcon className="h-6 w-6 stroke-[2]" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Disable Two-Factor Authentication?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Optional for {userRoleLabel} accounts
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Disabling MFA will remove the extra authenticator step at login. Your account will be protected by your password only. You can re-enable MFA anytime.
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setMfaDisableConfirmOpen(false)}
+                className="w-full sm:w-auto rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDisableMfa}
+                disabled={mfaDisabling}
+                className="w-full sm:w-auto rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm shadow-rose-600/20 hover:bg-rose-700 active:scale-95 transition disabled:opacity-50"
+              >
+                {mfaDisabling ? 'Disabling...' : 'Yes, Disable MFA'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

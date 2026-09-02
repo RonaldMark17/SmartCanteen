@@ -1260,9 +1260,47 @@ async function verifyAuthenticatorLogin(
   return completeAuthenticatedLoginResponse(response, password, { rememberDevice, username });
 }
 
+export async function verifyAuthenticatorSetup({
+  mfaToken,
+  code,
+  username = '',
+  rememberDevice = false,
+}) {
+  const normalizedMfaToken = String(mfaToken || '').trim();
+  if (!normalizedMfaToken) {
+    throw new Error('Verification session expired. Please start authenticator setup again.');
+  }
+
+  const response = await request(
+    'POST',
+    '/auth/authenticator/verify',
+    {
+      username,
+      mfa_token: normalizedMfaToken,
+      code,
+      remember_device: rememberDevice,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${normalizedMfaToken}`,
+      },
+    }
+  );
+
+  if (response?.access_token) {
+    safeLocalStorageSetItem('sc_token', response.access_token);
+  }
+  if (response?.user) {
+    safeLocalStorageSetJson('sc_user', response.user);
+  }
+
+  return response;
+}
+
 export const API = {
   login,
   verifyAuthenticatorLogin,
+  verifyAuthenticatorSetup,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
   requestPasswordReset: (usernameOrEmail) => request('POST', '/auth/password-reset/request', { usernameOrEmail }),
