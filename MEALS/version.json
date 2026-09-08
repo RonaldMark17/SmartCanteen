@@ -1,14 +1,14 @@
 ﻿{
-    "updated_at":  "2026-09-05 19:07:43",
+    "updated_at":  "2026-09-08 18:01:43",
     "server":  {
                    "init_db":  true,
                    "service":  true,
                    "requirements":  true,
                    "nginx":  true
                },
-    "version":  "1.1.0",
+    "version":  "1.2.0",
     "client":  {
-                   "installer":  88434236,
-                   "portable":  88146995
+                   "installer":  84355227,
+                   "portable":  119718390
                }
 }
