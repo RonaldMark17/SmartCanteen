@@ -81,32 +81,32 @@ if (-not $SkipClientBuild) {
     } finally {
         Pop-Location
     }
-
-    Write-Host "`n==> Step 2/3: Copying Client Binaries into MEALS/Client/..." -ForegroundColor Green
-    
-    $setupSrc = Join-Path $DistElectronDir "MEALS Setup.exe"
-    $portableSrc = Join-Path $DistElectronDir "MEALS.exe"
-    
-    $setupDest = Join-Path $ClientDistDir "MEALS Setup.exe"
-    $portableDest = Join-Path $ClientDistDir "MEALS.exe"
-
-    if (Test-Path $setupSrc) {
-        Copy-Item -Path $setupSrc -Destination $setupDest -Force
-        $setupSizeMb = [math]::Round((Get-Item $setupDest).Length / 1MB, 2)
-        Write-Host "  [OK] Updated: MEALS/Client/MEALS Setup.exe ($setupSizeMb MB)" -ForegroundColor Green
-    } else {
-        Write-Warning "Could not find $setupSrc"
-    }
-
-    if (Test-Path $portableSrc) {
-        Copy-Item -Path $portableSrc -Destination $portableDest -Force
-        $portableSizeMb = [math]::Round((Get-Item $portableDest).Length / 1MB, 2)
-        Write-Host "  [OK] Updated: MEALS/Client/MEALS.exe ($portableSizeMb MB)" -ForegroundColor Green
-    } else {
-        Write-Warning "Could not find $portableSrc"
-    }
 } else {
     Write-Host "`n[Skipping Client build as requested]" -ForegroundColor DarkYellow
+}
+
+Write-Host "`n==> Step 2/3: Copying Client Binaries into MEALS/Client/..." -ForegroundColor Green
+
+$setupSrc = Join-Path $DistElectronDir "MEALS Setup.exe"
+$portableSrc = Join-Path $DistElectronDir "MEALS.exe"
+
+$setupDest = Join-Path $ClientDistDir "MEALS Setup.exe"
+$portableDest = Join-Path $ClientDistDir "MEALS.exe"
+
+if (Test-Path $setupSrc) {
+    Copy-Item -Path $setupSrc -Destination $setupDest -Force
+    $setupSizeMb = [math]::Round((Get-Item $setupDest).Length / 1MB, 2)
+    Write-Host "  [OK] Updated: MEALS/Client/MEALS Setup.exe ($setupSizeMb MB)" -ForegroundColor Green
+} else {
+    Write-Warning "Could not find $setupSrc"
+}
+
+if (Test-Path $portableSrc) {
+    Copy-Item -Path $portableSrc -Destination $portableDest -Force
+    $portableSizeMb = [math]::Round((Get-Item $portableDest).Length / 1MB, 2)
+    Write-Host "  [OK] Updated: MEALS/Client/MEALS.exe ($portableSizeMb MB)" -ForegroundColor Green
+} else {
+    Write-Warning "Could not find $portableSrc"
 }
 
 # 4. Synchronize Server Package

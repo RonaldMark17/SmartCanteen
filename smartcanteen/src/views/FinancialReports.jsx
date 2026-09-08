@@ -12,6 +12,8 @@ import { saveReceipt } from '../services/receiptStorage';
 import {
   ArchiveBoxIcon,
   ArrowDownTrayIcon,
+  ArrowPathIcon,
+  ArrowUpTrayIcon,
   BanknotesIcon,
   CalendarDaysIcon,
   ChartBarIcon,
@@ -2919,27 +2921,42 @@ export default function FinancialReports({ mode = 'financial' }) {
                 </FormField>
                 <FormField label="Receipt Upload (Optional)">
                   <div className="space-y-2.5">
+                    {/* Hidden Native File Input */}
                     <input
                       ref={expenseFileInputRef}
                       type="file"
                       accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
                       onChange={handleReceiptFileChange}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 text-xs font-semibold text-slate-900 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-200 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-slate-800 hover:file:bg-slate-300"
+                      className="hidden"
                     />
-                    <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>Formats: JPG, PNG, WEBP, GIF, PDF</span>
-                      <span>Max: 5 MB</span>
-                    </div>
 
-                    {expenseReceiptError && (
-                      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
-                        <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
-                        <span>{expenseReceiptError}</span>
-                      </div>
-                    )}
-
-                    {expenseReceiptValidation && (
-                      <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
+                    {!expenseReceiptValidation ? (
+                      /* Custom Styled Choose File Button */
+                      <button
+                        type="button"
+                        onClick={() => expenseFileInputRef.current?.click()}
+                        className="group flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-3 text-left transition hover:border-emerald-500 hover:bg-emerald-50/40 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:border-emerald-500 dark:hover:bg-emerald-950/20"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition group-hover:border-emerald-300 group-hover:text-emerald-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:group-hover:text-emerald-400">
+                            <ArrowUpTrayIcon className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-700 dark:text-slate-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                              Choose a File
+                            </div>
+                            <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                              JPG, PNG, WEBP, GIF, PDF (Max: 5 MB)
+                            </div>
+                          </div>
+                        </div>
+                        <span className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-2xs group-hover:border-emerald-300 group-hover:text-emerald-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:group-hover:border-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
+                          Browse
+                        </span>
+                      </button>
+                    ) : (
+                      /* Active File Preview Card */
+                      <div className="flex items-center justify-between rounded-xl border border-emerald-300/80 bg-emerald-50/80 p-3 dark:border-emerald-800/80 dark:bg-emerald-950/40">
                         <div className="flex items-center gap-2.5 overflow-hidden">
                           {expenseReceiptDataUrl && !expenseReceiptValidation.isPdf ? (
                             <img
@@ -2948,43 +2965,58 @@ export default function FinancialReports({ mode = 'financial' }) {
                               className="h-10 w-10 shrink-0 rounded-lg object-cover border border-emerald-300 shadow-2xs"
                             />
                           ) : (
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
                               <PhotoIcon className="h-5 w-5" />
                             </div>
                           )}
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5">
-                              <span className="truncate text-xs font-bold text-slate-900 font-mono">
+                              <span className="truncate text-xs font-bold text-slate-900 dark:text-white font-mono" title={expenseEntryDraft.receiptName}>
                                 {expenseEntryDraft.receiptName}
                               </span>
-                              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-xs font-bold text-emerald-800">
+                              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200">
                                 <ShieldCheckIcon className="h-3 w-3" />
-                                Sanitized
+                                Ready
                               </span>
                             </div>
-                            <span className="text-xs text-slate-500">
+                            <span className="text-xs text-slate-500 dark:text-slate-400">
                               {expenseReceiptValidation.sizeFormatted}
                             </span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
                             onClick={() => handleQuickPreviewUploadedReceipt(selectedReport)}
                             title="Preview uploaded receipt"
-                            className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition"
+                            className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition dark:text-emerald-300 dark:hover:bg-emerald-900/50"
                           >
                             <EyeIcon className="h-4 w-4" />
                           </button>
                           <button
                             type="button"
+                            onClick={() => expenseFileInputRef.current?.click()}
+                            title="Change file"
+                            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-200/60 transition dark:text-slate-300 dark:hover:bg-slate-800"
+                          >
+                            <ArrowPathIcon className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={handleClearReceiptUpload}
                             title="Remove receipt"
-                            className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-100 transition"
+                            className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-100 transition dark:text-rose-400 dark:hover:bg-rose-950/60"
                           >
                             <TrashIcon className="h-4 w-4" />
                           </button>
                         </div>
+                      </div>
+                    )}
+
+                    {expenseReceiptError && (
+                      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-300">
+                        <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                        <span>{expenseReceiptError}</span>
                       </div>
                     )}
                   </div>
