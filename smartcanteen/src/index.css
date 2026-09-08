@@ -363,6 +363,28 @@ html.dark body {
     caret-color: #34d399;
   }
 
+  html.dark .ui-uniform select.bg-transparent,
+  html.dark .ui-uniform input.bg-transparent,
+  html.dark select.bg-transparent,
+  html.dark input.bg-transparent {
+    background: transparent !important;
+    background-color: transparent !important;
+    border-color: transparent !important;
+  }
+
+  html.dark .ui-uniform select.bg-transparent:focus,
+  html.dark .ui-uniform input.bg-transparent:focus {
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  select.appearance-none {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+  }
+
   html.dark .field-control::placeholder,
   html.dark .ui-uniform input::placeholder,
   html.dark .ui-uniform textarea::placeholder {

@@ -20,6 +20,7 @@ import {
   CalendarDaysIcon,
   ChartBarIcon,
   CheckCircleIcon,
+  ChevronDownIcon,
   ClipboardDocumentCheckIcon,
   ClockIcon,
   CubeIcon,
@@ -988,38 +989,66 @@ export default function Dashboard() {
 
         <div className="flex flex-wrap items-center gap-2.5">
           {/* School Year Select */}
-          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-            <CalendarDaysIcon className="h-4 w-4 text-slate-400" />
+          <label className="group relative inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-750">
+            <CalendarDaysIcon className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-slate-600 dark:text-slate-400 dark:group-hover:text-slate-200 transition-colors" />
             <select
               value={selectedSchoolYearId}
               onChange={(e) => setSelectedSchoolYearId(e.target.value)}
-              className="cursor-pointer bg-transparent text-xs font-bold outline-none"
+              className="cursor-pointer appearance-none bg-transparent pr-5 text-xs font-bold text-slate-700 outline-none dark:text-slate-200"
+              style={{
+                backgroundColor: 'transparent',
+                border: 'none',
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: '1.25rem',
+                outline: 'none',
+                boxShadow: 'none',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                MozAppearance: 'none',
+              }}
               aria-label="Select School Year"
             >
               {schoolYears.map((sy) => (
-                <option key={sy.id} value={sy.id} className="bg-white text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                <option key={sy.id} value={sy.id} className="bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100">
                   {sy.name}
                 </option>
               ))}
             </select>
-          </div>
+            <ChevronDownIcon className="pointer-events-none absolute right-3 h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-slate-600 dark:text-slate-400 dark:group-hover:text-slate-200 transition-colors" />
+          </label>
 
           {/* Month Select */}
-          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-            <ClockIcon className="h-4 w-4 text-slate-400" />
+          <label className="group relative inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-750">
+            <ClockIcon className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-slate-600 dark:text-slate-400 dark:group-hover:text-slate-200 transition-colors" />
             <select
               value={selectedReportId}
               onChange={(e) => setSelectedReportId(e.target.value)}
-              className="cursor-pointer bg-transparent text-xs font-bold outline-none"
+              className="cursor-pointer appearance-none bg-transparent pr-5 text-xs font-bold text-slate-700 outline-none dark:text-slate-200"
+              style={{
+                backgroundColor: 'transparent',
+                border: 'none',
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: '1.25rem',
+                outline: 'none',
+                boxShadow: 'none',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                MozAppearance: 'none',
+              }}
               aria-label="Select Month"
             >
               {reports.map((r) => (
-                <option key={r.id} value={r.id} className="bg-white text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                <option key={r.id} value={r.id} className="bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100">
                   {r.month_label}
                 </option>
               ))}
             </select>
-          </div>
+            <ChevronDownIcon className="pointer-events-none absolute right-3 h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-slate-600 dark:text-slate-400 dark:group-hover:text-slate-200 transition-colors" />
+          </label>
 
           {/* Export Summary Button */}
           <button
