@@ -3126,15 +3126,7 @@ export default function FinancialReports({ mode = 'financial' }) {
                       return (
                         <tr key={schoolYear.id} className={`transition hover:bg-slate-50/70 dark:hover:bg-slate-800/50 ${selectedRow || rowIsActive ? 'bg-emerald-50/20 dark:bg-emerald-950/20' : ''}`}>
                           <td className="px-5 py-4">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-bold text-slate-900 dark:text-white">{schoolYear.name}</span>
-                              {rowIsActive ? (
-                                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-black uppercase tracking-wider text-emerald-700 border border-emerald-200/60 dark:bg-emerald-950 dark:text-emerald-300">
-                                  <CheckCircleIcon className="h-3 w-3" />
-                                  Active Now
-                                </span>
-                              ) : null}
-                            </div>
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">{schoolYear.name}</span>
                             <div className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
                               {schoolYear.months_with_entries || 0} of {schoolYear.report_count || 12} months started
                             </div>
