@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useMemo } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -29,6 +29,7 @@ import {
   ExclamationTriangleIcon,
   FunnelIcon,
   MagnifyingGlassIcon,
+  MinusIcon,
   PencilSquareIcon,
   PlusCircleIcon,
   PlusIcon,
@@ -244,13 +245,14 @@ export default function Inventory() {
   });
   const [adjustError, setAdjustError] = useState('');
   const [savingAdjust, setSavingAdjust] = useState(false);
+  const quickAdjustQueueRef = useRef({});
 
   function initialProductForm() {
     return {
       id: null,
       name: '',
       category: 'General',
-      price: '',
+      price: 0,
       stock: 0,
       min_stock: 5,
       unit_type: 'pcs',
@@ -539,7 +541,10 @@ export default function Inventory() {
       const baseUnit = isBulk ? (productForm.base_unit || 'kg') : 'pcs';
       const stock = Number(productForm.stock);
       const minStock = Number(productForm.min_stock);
-      const price = parseFloat(productForm.price);
+      const rawPrice = productForm.price;
+      const price = rawPrice !== '' && rawPrice !== null && !isNaN(Number(rawPrice))
+        ? parseFloat(rawPrice)
+        : 0.0;
 
       if (!productForm.name.trim()) {
         setProductFormError('Product name is required.');
@@ -728,6 +733,56 @@ export default function Inventory() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Inline Quick Stock Stepper (+ / -)
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleQuickStepStock = useCallback(
+    (product, delta) => {
+      if (!canManageInventory) return;
+
+      const pId = product.id;
+      const currentStock = Number(product.stock || 0);
+      if (delta < 0 && currentStock <= 0) return;
+
+      // Instant optimistic update for activeProducts
+      // Automatically recalculates KPI cards (Total Stock, Low Stock, Sold Out, Stock Value)
+      // and updates stock status badge in real time
+      setActiveProducts((prev) =>
+        prev.map((p) => {
+          if (p.id === pId) {
+            const nextStock = Math.max(0, Number(p.stock || 0) + delta);
+            return { ...p, stock: nextStock };
+          }
+          return p;
+        })
+      );
+
+      // Queue sequential API call for this product to prevent concurrency race conditions
+      const prevPromise = quickAdjustQueueRef.current[pId] || Promise.resolve();
+      const nextPromise = prevPromise
+        .then(async () => {
+          await API.adjustInventory({
+            product_id: pId,
+            adjustment_type: delta > 0 ? 'add' : 'deduct',
+            quantity: Math.abs(delta),
+            reason: delta > 0 ? 'Quick Stock Increment (+1)' : 'Quick Stock Decrement (-1)',
+            remarks: `Inline quick stock edit (${delta > 0 ? '+1' : '-1'})`,
+          });
+          requestAlertRefresh({ source: 'inventory', reason: 'quick-stepper' });
+          if (activeTab === 'history') {
+            fetchHistory();
+          }
+        })
+        .catch((err) => {
+          fetchProducts();
+          window.showToast?.(err.message || 'Failed to update stock.', 'error');
+        });
+
+      quickAdjustQueueRef.current[pId] = nextPromise;
+    },
+    [canManageInventory, activeTab, fetchHistory, fetchProducts]
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Deactivate & Restore Handlers (Admin Only)
   // ─────────────────────────────────────────────────────────────────────────
   const handleDeactivate = async (product) => {
@@ -839,16 +894,14 @@ export default function Inventory() {
         <div className="flex flex-wrap items-center gap-2.5">
           {canManageInventory && (
             <>
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={handleOpenAdd}
-                  className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95"
-                >
-                  <PlusIcon className="h-4 w-4 stroke-[2.5]" />
-                  + New Product
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleOpenAdd}
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95"
+              >
+                <PlusIcon className="h-4 w-4 stroke-[2.5]" />
+                + Add Product
+              </button>
 
               <button
                 type="button"
@@ -1167,8 +1220,6 @@ export default function Inventory() {
                   <option value="name_desc">Name (Z to A)</option>
                   <option value="stock_asc">Stock (Low → High)</option>
                   <option value="stock_desc">Stock (High → Low)</option>
-                  <option value="price_asc">Price (Low → High)</option>
-                  <option value="price_desc">Price (High → Low)</option>
                 </select>
               </div>
             </div>
@@ -1182,10 +1233,9 @@ export default function Inventory() {
                   <tr>
                     <th className="px-5 py-3.5">Product Name</th>
                     <th className="px-4 py-3.5">Category</th>
-                    <th className="px-4 py-3.5 text-right">Available Stock</th>
+                    <th className="px-4 py-3.5 text-center">Available Stock</th>
                     <th className="px-4 py-3.5">Unit</th>
                     <th className="px-4 py-3.5">Status</th>
-                    <th className="px-4 py-3.5 text-right">Selling Price</th>
                     <th className="px-5 py-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -1195,23 +1245,36 @@ export default function Inventory() {
                       <tr key={`skeleton-${i}`}>
                         <td className="px-5 py-4"><Skeleton className="h-4 w-40" /></td>
                         <td className="px-4 py-4"><Skeleton className="h-6 w-20 rounded-full" /></td>
-                        <td className="px-4 py-4 text-right"><Skeleton className="ml-auto h-5 w-16" /></td>
+                        <td className="px-4 py-4 text-center"><Skeleton className="mx-auto h-5 w-20" /></td>
                         <td className="px-4 py-4"><Skeleton className="h-4 w-12" /></td>
                         <td className="px-4 py-4"><Skeleton className="h-6 w-24 rounded-full" /></td>
-                        <td className="px-4 py-4 text-right"><Skeleton className="ml-auto h-4 w-16" /></td>
                         <td className="px-5 py-4 text-right"><Skeleton className="ml-auto h-8 w-28 rounded-lg" /></td>
                       </tr>
                     ))
                   ) : paginatedActiveProducts.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-12 text-center">
+                      <td colSpan={6} className="px-6 py-12 text-center">
                         <CubeIcon className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
                         <div className="mt-2 text-base font-bold text-slate-700 dark:text-slate-300">
-                          No products found
+                          {activeProducts.length === 0 ? 'No products in catalog yet' : 'No products found'}
                         </div>
                         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                          Try adjusting your search query or filters.
+                          {activeProducts.length === 0
+                            ? 'Get started by adding your first food or drink item to the canteen inventory.'
+                            : 'Try adjusting your search query or filters.'}
                         </p>
+                        {canManageInventory && (
+                          <div className="mt-4">
+                            <button
+                              type="button"
+                              onClick={handleOpenAdd}
+                              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95"
+                            >
+                              <PlusIcon className="h-4 w-4 stroke-[2.5]" />
+                              + Add Product
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : (
@@ -1259,19 +1322,50 @@ export default function Inventory() {
                             </span>
                           </td>
 
-                          {/* Stock (Large, clear number) */}
-                          <td className="px-4 py-4 text-right">
-                            <span
-                              className={`text-sm font-black ${
-                                outOfStock
-                                  ? 'text-rose-600 dark:text-rose-400'
-                                  : lowStock
-                                  ? 'text-amber-600 dark:text-amber-400'
-                                  : 'text-slate-900 dark:text-white'
-                              }`}
-                            >
-                              {formatCount(product.stock)}
-                            </span>
+                          {/* Stock Stepper Controls ([-] count [+]) */}
+                          <td className="px-4 py-4 text-center">
+                            <div className="inline-flex items-center justify-center gap-2">
+                              {canManageInventory && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleQuickStepStock(product, -1);
+                                  }}
+                                  disabled={Number(product.stock || 0) <= 0}
+                                  title={Number(product.stock || 0) <= 0 ? 'Stock is already 0' : 'Decrease stock by 1 (-)'}
+                                  className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 active:scale-90 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-700 dark:hover:text-white"
+                                >
+                                  <MinusIcon className="h-3 w-3 stroke-[2.5]" />
+                                </button>
+                              )}
+
+                              <span
+                                className={`min-w-[28px] text-center text-sm font-black ${
+                                  outOfStock
+                                    ? 'text-rose-600 dark:text-rose-400'
+                                    : lowStock
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-slate-900 dark:text-white'
+                                }`}
+                              >
+                                {formatCount(product.stock)}
+                              </span>
+
+                              {canManageInventory && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleQuickStepStock(product, 1);
+                                  }}
+                                  title="Increase stock by 1 (+)"
+                                  className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 active:scale-90 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-700 dark:hover:text-white"
+                                >
+                                  <PlusIcon className="h-3 w-3 stroke-[2.5]" />
+                                </button>
+                              )}
+                            </div>
                           </td>
 
                           {/* Unit */}
@@ -1282,11 +1376,6 @@ export default function Inventory() {
                           {/* Status */}
                           <td className="px-4 py-4">
                             <StockStatusBadge product={product} />
-                          </td>
-
-                          {/* Price */}
-                          <td className="px-4 py-4 text-right text-sm font-black text-slate-900 dark:text-slate-100">
-                            ₱{Number(product.price || 0).toFixed(2)}
                           </td>
 
                           {/* Actions */}
@@ -1671,14 +1760,13 @@ export default function Inventory() {
                     <th className="px-4 py-3.5">Category</th>
                     <th className="px-4 py-3.5 text-right">Archived Stock</th>
                     <th className="px-4 py-3.5">Unit</th>
-                    <th className="px-4 py-3.5 text-right">Selling Price</th>
                     <th className="px-5 py-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
                   {paginatedInactiveProducts.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-6 py-10 text-center text-slate-500 dark:text-slate-400">
+                      <td colSpan={5} className="px-6 py-10 text-center text-slate-500 dark:text-slate-400">
                         No archived products found.
                       </td>
                     </tr>
@@ -1696,9 +1784,6 @@ export default function Inventory() {
                         </td>
                         <td className="px-4 py-4 text-xs font-bold uppercase text-slate-500">
                           {formatUnit(getProductBaseUnit(product))}
-                        </td>
-                        <td className="px-4 py-4 text-right font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
-                          ₱{Number(product.price || 0).toFixed(2)}
                         </td>
                         <td className="px-5 py-4 text-right">
                           <button
@@ -2067,43 +2152,25 @@ export default function Inventory() {
                 />
               </div>
 
-              {/* Category & Price */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                    Food Category *
-                  </label>
-                  <select
-                    value={productForm.category}
-                    onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-900 shadow-2xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="General">General</option>
-                    <option value="Staple">Staple (Rice / Noodles)</option>
-                    <option value="Viand">Viand (Main Dish)</option>
-                    <option value="Soup">Soup</option>
-                    <option value="Snacks">Snacks</option>
-                    <option value="Bread">Bread / Pastries</option>
-                    <option value="Drinks">Drinks / Beverages</option>
-                    <option value="Dessert">Dessert</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                    Selling Price (PHP) *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    required
-                    value={productForm.price}
-                    onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
-                    placeholder="0.00"
-                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-900 shadow-2xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
+              {/* Category */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Food Category *
+                </label>
+                <select
+                  value={productForm.category}
+                  onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-900 shadow-2xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                >
+                  <option value="General">General</option>
+                  <option value="Staple">Staple (Rice / Noodles)</option>
+                  <option value="Viand">Viand (Main Dish)</option>
+                  <option value="Soup">Soup</option>
+                  <option value="Snacks">Snacks</option>
+                  <option value="Bread">Bread / Pastries</option>
+                  <option value="Drinks">Drinks / Beverages</option>
+                  <option value="Dessert">Dessert</option>
+                </select>
               </div>
 
               {/* Unit Type & Base Unit */}
@@ -2208,17 +2275,6 @@ export default function Inventory() {
                   </p>
                 </div>
               </div>
-
-              {/* Pin to Quick Sale */}
-              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs font-bold text-slate-700 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-200">
-                <input
-                  type="checkbox"
-                  checked={Boolean(productForm.is_favorite)}
-                  onChange={(e) => setProductForm({ ...productForm, is_favorite: e.target.checked })}
-                  className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                />
-                <span>Pin to Quick Sale buttons on POS (for fast checkout)</span>
-              </label>
 
               {/* Actions */}
               <div className="flex items-center gap-3 pt-2">

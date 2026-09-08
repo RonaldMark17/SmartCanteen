@@ -287,10 +287,10 @@ export default function ManageAccounts() {
   const [busyAuthRecoveryId, setBusyAuthRecoveryId] = useState(null);
 
   // View Mode & Pagination States
-  const [resetViewMode, setResetViewMode] = useState('grid');
+  const [resetViewMode, setResetViewMode] = useState('list');
   const [resetPage, setResetPage] = useState(1);
 
-  const [recoveryViewMode, setRecoveryViewMode] = useState('grid');
+  const [recoveryViewMode, setRecoveryViewMode] = useState('list');
   const [recoveryPage, setRecoveryPage] = useState(1);
 
   const [accountsViewMode, setAccountsViewMode] = useState('list');
@@ -796,8 +796,8 @@ export default function ManageAccounts() {
               mode={resetViewMode}
               onChange={setResetViewMode}
               options={[
+                { mode: 'list', icon: ListBulletIcon, label: 'Table' },
                 { mode: 'grid', icon: Squares2X2Icon, label: 'Grid' },
-                { mode: 'list', icon: ListBulletIcon, label: 'List' },
               ]}
             />
           </div>
@@ -1072,8 +1072,8 @@ export default function ManageAccounts() {
               mode={recoveryViewMode}
               onChange={setRecoveryViewMode}
               options={[
+                { mode: 'list', icon: ListBulletIcon, label: 'Table' },
                 { mode: 'grid', icon: Squares2X2Icon, label: 'Grid' },
-                { mode: 'list', icon: ListBulletIcon, label: 'List' },
               ]}
             />
           </div>

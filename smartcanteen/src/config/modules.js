@@ -25,7 +25,7 @@ export const SYSTEM_MODULES = [
   },
   {
     key: MODULE_KEYS.FINANCIAL_REPORTS,
-    label: 'Financial Reports',
+    label: 'Financial Management',
     group: 'Financial',
     defaultEnabled: true,
   },

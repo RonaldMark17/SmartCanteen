@@ -54,7 +54,7 @@ const MODULE_DESCRIPTIONS = {
   [MODULE_KEYS.INVENTORY]: 'Products, stock levels, and low-stock review.',
   [MODULE_KEYS.DEMAND_FORECAST]: 'Forecasting, restock planning, and demand reminders.',
   [MODULE_KEYS.ANALYTICS]: 'Charts, trends, best sellers, and performance views.',
-  [MODULE_KEYS.NOTIFICATIONS]: 'In-app and phone reminders for stock, demand, and account notices.',
+  [MODULE_KEYS.NOTIFICATIONS]: 'In-app and desktop reminders for stock, demand, and account notices.',
 };
 
 const LOCKED_ON_MODULES = new Set([MODULE_KEYS.SETTINGS]);

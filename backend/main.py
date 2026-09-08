@@ -347,6 +347,72 @@ def _queue_stock_alert_refresh(background_tasks: BackgroundTasks, reason: str, *
     background_tasks.add_task(_broadcast_realtime_event, "alerts.changed", details)
 
 
+LOW_STOCK_ALERT_TYPE = "low_stock"
+HIGH_DEMAND_ALERT_TYPE = "high_demand"
+ALERT_STATE_TYPES = {LOW_STOCK_ALERT_TYPE, HIGH_DEMAND_ALERT_TYPE}
+ALERT_STATES = {"read", "dismissed"}
+
+
+def _normalize_alert_signature(value) -> str:
+    return str(value or "").strip()[:240]
+
+
+def _resolve_product_low_stock_alerts(db: Session, product_id: int, product_name: Optional[str] = None) -> int:
+    """
+    Deletes all UserAlertState records for a specific product's low_stock alert.
+    Ensures that when an item is replenished or transitions across threshold,
+    stale dismissal/read suppression states are purged.
+    """
+    signatures = [_normalize_alert_signature(product_id)]
+    if not product_name and product_id:
+        prod_row = db.query(models.Product.name).filter(models.Product.id == product_id).first()
+        if prod_row and prod_row[0]:
+            product_name = prod_row[0]
+
+    if product_name:
+        clean_name = _normalize_alert_signature(product_name)
+        if clean_name and clean_name not in signatures:
+            signatures.append(clean_name)
+
+    return (
+        db.query(models.UserAlertState)
+        .filter(
+            models.UserAlertState.alert_type == LOW_STOCK_ALERT_TYPE,
+            models.UserAlertState.signature.in_(signatures),
+        )
+        .delete(synchronize_session=False)
+    )
+
+
+def _cleanup_resolved_low_stock_alerts(db: Session) -> int:
+    """
+    Purges low_stock UserAlertState records for products that are currently
+    healthy (stock >= min_stock), inactive, or deleted.
+    """
+    active_low_stock_rows = (
+        db.query(models.Product.id, models.Product.name)
+        .filter(models.Product.is_active == True, models.Product.stock < models.Product.min_stock)
+        .all()
+    )
+    active_low_stock_signatures = set()
+    for row in active_low_stock_rows:
+        if row[0] is not None:
+            active_low_stock_signatures.add(str(row[0]).strip())
+        if row[1]:
+            active_low_stock_signatures.add(str(row[1]).strip())
+
+    query = db.query(models.UserAlertState).filter(
+        models.UserAlertState.alert_type == LOW_STOCK_ALERT_TYPE
+    )
+    if active_low_stock_signatures:
+        query = query.filter(~models.UserAlertState.signature.in_(active_low_stock_signatures))
+
+    deleted_count = query.delete(synchronize_session=False)
+    if deleted_count:
+        db.commit()
+    return deleted_count
+
+
 SYSTEM_MODULE_DEFAULTS = [
     ("dashboard", True),
     ("financialReports", True),
@@ -505,6 +571,10 @@ def _persist_transaction(
         deduction = float(item["inventory_quantity"])
         new_stock = round(max(0.0, prev_stock - deduction), 6)
         product.stock = new_stock
+
+        min_stock_val = float(product.min_stock or 0)
+        if float(prev_stock) >= min_stock_val and float(new_stock) < min_stock_val:
+            _resolve_product_low_stock_alerts(db, product.id, product.name)
 
         db.add(models.TransactionItem(
             transaction_id=txn.id,
@@ -3915,6 +3985,7 @@ def get_alert_state(
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.get_current_user),
 ):
+    _cleanup_resolved_low_stock_alerts(db)
     payload = _empty_alert_state_payload()
     rows = (
         db.query(models.UserAlertState)
@@ -3937,12 +4008,10 @@ def update_alert_state(
     current: models.User = Depends(auth.get_current_user),
 ):
     alert_type = (data.alert_type or "").strip()
-    state = (data.state or "").strip()
+    state = (data.state or "").strip().lower()
 
     if alert_type not in ALERT_STATE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid alert_type")
-    if state not in ALERT_STATES:
-        raise HTTPException(status_code=400, detail="Invalid alert state")
 
     signatures = [
         signature
@@ -3951,6 +4020,24 @@ def update_alert_state(
     ]
     if not signatures:
         return get_alert_state(db, current)
+
+    if state in {"resolved", "clear", "deleted"}:
+        db.query(models.UserAlertState).filter(
+            models.UserAlertState.user_id == current.id,
+            models.UserAlertState.alert_type == alert_type,
+            models.UserAlertState.signature.in_(signatures),
+        ).delete(synchronize_session=False)
+        db.commit()
+        _queue_stock_alert_refresh(
+            background_tasks,
+            "alert-state-resolved",
+            alert_type=alert_type,
+            user_id=current.id,
+        )
+        return get_alert_state(db, current)
+
+    if state not in ALERT_STATES:
+        raise HTTPException(status_code=400, detail="Invalid alert state")
 
     for signature in sorted(set(signatures)):
         row = (
@@ -3985,6 +4072,43 @@ def update_alert_state(
     return get_alert_state(db, current)
 
 
+@app.delete("/api/alert-state", tags=["Alerts"])
+def delete_alert_state(
+    data: schemas.AlertStateDeleteRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.get_current_user),
+):
+    alert_type = (data.alert_type or "").strip()
+    if alert_type not in ALERT_STATE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid alert_type")
+
+    signatures = [
+        signature
+        for signature in (_normalize_alert_signature(value) for value in data.signatures)
+        if signature
+    ]
+    if signatures:
+        query = db.query(models.UserAlertState).filter(
+            models.UserAlertState.user_id == current.id,
+            models.UserAlertState.alert_type == alert_type,
+            models.UserAlertState.signature.in_(signatures),
+        )
+        if data.state and data.state.strip().lower() in ALERT_STATES:
+            query = query.filter(models.UserAlertState.state == data.state.strip().lower())
+
+        query.delete(synchronize_session=False)
+        db.commit()
+        _queue_stock_alert_refresh(
+            background_tasks,
+            "alert-state-deleted",
+            alert_type=alert_type,
+            user_id=current.id,
+        )
+
+    return get_alert_state(db, current)
+
+
 @app.get("/api/alerts/background-summary", tags=["Alerts"])
 def get_background_alert_summary(
     x_smartcanteen_alert_token: Optional[str] = Header(None),
@@ -3994,6 +4118,8 @@ def get_background_alert_summary(
     current = db.query(models.User).filter(models.User.username == token_payload["sub"]).first()
     if not current or not current.is_active:
         raise HTTPException(status_code=401, detail="Invalid or expired background alert token")
+
+    _cleanup_resolved_low_stock_alerts(db)
 
     low_stock_excluded = _get_user_alert_state_signatures(db, current.id, LOW_STOCK_ALERT_TYPE)
     high_demand_excluded = _get_user_alert_state_signatures(db, current.id, HIGH_DEMAND_ALERT_TYPE)
@@ -4174,6 +4300,8 @@ def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
 
     old_stock = float(product.stock or 0)
+    old_min_stock = float(product.min_stock or 0)
+    old_name = product.name
     update_data = data.model_dump(exclude_unset=True)
     if "name" in update_data and update_data["name"] is not None:
         update_data["name"] = str(update_data["name"]).strip()
@@ -4192,6 +4320,19 @@ def update_product(
     product.updated_at = utc_now_naive()
 
     new_stock = float(product.stock or 0)
+    new_min_stock = float(product.min_stock or 0)
+    old_is_low = old_stock < old_min_stock
+    new_is_low = new_stock < new_min_stock and bool(product.is_active)
+
+    if not new_is_low:
+        _resolve_product_low_stock_alerts(db, product.id, product.name)
+        if old_name and old_name != product.name:
+            _resolve_product_low_stock_alerts(db, product.id, old_name)
+    elif not old_is_low and new_is_low:
+        _resolve_product_low_stock_alerts(db, product.id, product.name)
+        if old_name and old_name != product.name:
+            _resolve_product_low_stock_alerts(db, product.id, old_name)
+
     if "stock" in update_data and round(old_stock, 4) != round(new_stock, 4):
         db.add(models.InventoryLog(
             product_id=product.id,
@@ -4238,6 +4379,7 @@ def delete_product(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     product.is_active = False
+    _resolve_product_low_stock_alerts(db, product.id, product.name)
     db.commit()
     _add_audit_log(
         db,
@@ -4261,6 +4403,7 @@ def low_stock(
     db: Session = Depends(get_db),
     _: models.User = Depends(auth.get_current_user),
 ):
+    _cleanup_resolved_low_stock_alerts(db)
     return (
         db.query(models.Product)
         .filter(models.Product.is_active == True,
@@ -4294,6 +4437,9 @@ def replenish_stock(
     new_stock = round(prev_stock + qty, 4 if is_bulk else 0)
     product.stock = new_stock
     product.updated_at = utc_now_naive()
+
+    if float(new_stock) >= float(product.min_stock or 0):
+        _resolve_product_low_stock_alerts(db, product.id, product.name)
 
     log_entry = models.InventoryLog(
         product_id=product.id,
@@ -4378,6 +4524,13 @@ def adjust_stock(
 
     product.stock = new_stock
     product.updated_at = utc_now_naive()
+
+    min_stock_val = float(product.min_stock or 0)
+    if float(new_stock) >= min_stock_val:
+        _resolve_product_low_stock_alerts(db, product.id, product.name)
+    elif float(prev_stock) >= min_stock_val and float(new_stock) < min_stock_val:
+        _resolve_product_low_stock_alerts(db, product.id, product.name)
+
 
     log_entry = models.InventoryLog(
         product_id=product.id,

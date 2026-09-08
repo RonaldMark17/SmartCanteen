@@ -116,7 +116,6 @@ EXPENSE_CELL_BY_CATEGORY = {
 FUND_MONITORING_COLUMNS = ("B", "C", "D", "E", "F", "G")
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 FUTURE_FINANCIAL_REPORT_ERROR = "You cannot add a financial report for a future school year."
-CURRENT_FINANCIAL_REPORT_ERROR = "Financial reports can only be saved for the current active school year."
 OOXML_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 OOXML_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 OOXML_PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -299,16 +298,10 @@ def _compare_school_year_to_current(start_year: int, end_year: int) -> int:
     return 0
 
 
-def _validate_current_active_school_year(start_year: int, end_year: int) -> None:
-    comparison = _compare_school_year_to_current(start_year, end_year)
+def _validate_school_year_write_allowed(school_year: models.SchoolYear) -> None:
+    comparison = _compare_school_year_to_current(school_year.start_year, school_year.end_year)
     if comparison > 0:
         raise HTTPException(status_code=400, detail=FUTURE_FINANCIAL_REPORT_ERROR)
-    if comparison < 0:
-        raise HTTPException(status_code=400, detail=CURRENT_FINANCIAL_REPORT_ERROR)
-
-
-def _validate_school_year_write_allowed(school_year: models.SchoolYear) -> None:
-    _validate_current_active_school_year(school_year.start_year, school_year.end_year)
 
 
 def _school_year_is_future(school_year: models.SchoolYear) -> bool:
@@ -941,6 +934,8 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
         for report in reports
     }
     beginning_cash_carry_forward = _get_beginning_cash_carry_forward(db, school_year)
+    prev_sy_fund_balances = _get_previous_school_year_ending_fund_balances(db, school_year)
+    has_prev_sy_reports = bool(prev_sy_fund_balances)
 
     previous_report = None
     previous_fund_balances: dict[str, float] = _get_initial_fund_balances_for_school_year(
@@ -1004,11 +999,25 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
                 "net_profit_delta": _round_money(report["net_profit"] - previous_report["net_profit"]),
             }
 
+        has_previous_month = (previous_report is not None) or has_prev_sy_reports
+        report["has_previous_month"] = has_previous_month
+        report["is_first_month"] = not has_previous_month
+
+        for alloc_dict in report.get("allocations", []):
+            cat_key = (alloc_dict.get("category_key") or "").strip()
+            alloc_dict["opening_balance"] = _round_money(previous_fund_balances.get(cat_key, 0.0))
+            alloc_dict["has_previous_month"] = has_previous_month
+            alloc_dict["is_first_month"] = not has_previous_month
+
         next_fund_balances = _calculate_next_fund_balances(
             report,
             allocations,
             previous_fund_balances,
         )
+        for alloc_dict in report.get("allocations", []):
+            cat_key = (alloc_dict.get("category_key") or "").strip()
+            alloc_dict["current_balance"] = _round_money(next_fund_balances.get(cat_key, 0.0))
+
         report["fund_current_balance_total"] = _fund_balance_total(allocations, next_fund_balances)
         previous_fund_balances = next_fund_balances
         previous_report = report
@@ -1022,6 +1031,7 @@ def _serialize_school_year_detail(db: Session, school_year: models.SchoolYear) -
             "start_year": school_year.start_year,
             "end_year": school_year.end_year,
             "is_active": school_year.is_active,
+            "is_historical": school_year.start_year < _resolve_current_active_school_year_bounds()[0],
             "created_at": school_year.created_at.isoformat() if school_year.created_at else None,
             "updated_at": school_year.updated_at.isoformat() if school_year.updated_at else None,
         },
@@ -1071,6 +1081,29 @@ def _load_previous_school_year(
     )
 
 
+def _has_previous_month_record_in_db(db: Session, report: models.MonthlyReport) -> bool:
+    if (report.month_index or 0) > 0:
+        has_earlier_in_sy = (
+            db.query(models.MonthlyReport.id)
+            .filter(
+                models.MonthlyReport.school_year_id == report.school_year_id,
+                models.MonthlyReport.month_index < report.month_index,
+            )
+            .first()
+            is not None
+        )
+        if has_earlier_in_sy:
+            return True
+
+    school_year = report.school_year or db.query(models.SchoolYear).filter(models.SchoolYear.id == report.school_year_id).first()
+    if school_year:
+        prev_sy = _load_previous_school_year(db, school_year)
+        if prev_sy and prev_sy.monthly_reports:
+            return True
+
+    return False
+
+
 def _get_previous_school_year_ending_fund_balances(
     db: Session,
     school_year: models.SchoolYear,
@@ -1089,10 +1122,8 @@ def _get_previous_school_year_ending_fund_balances(
     for allocation in allocations:
         category_key = (allocation.category_key or "").strip()
         saved_opening = getattr(allocation, "opening_balance", 0.0)
-        if saved_opening and float(saved_opening) > 0:
-            previous_fund_balances[category_key] = _round_money(saved_opening)
-        elif category_key in older_balances:
-            previous_fund_balances[category_key] = _round_money(older_balances[category_key])
+        if older_balances:
+            previous_fund_balances[category_key] = _round_money(older_balances.get(category_key, 0.0))
         else:
             previous_fund_balances[category_key] = _round_money(saved_opening or 0.0)
 
@@ -1121,10 +1152,8 @@ def _get_initial_fund_balances_for_school_year(
     for allocation in allocations:
         category_key = (allocation.category_key or "").strip()
         saved_opening = getattr(allocation, "opening_balance", 0.0)
-        if saved_opening and float(saved_opening) > 0:
-            initial_balances[category_key] = _round_money(saved_opening)
-        elif category_key in prev_sy_fund_balances:
-            initial_balances[category_key] = _round_money(prev_sy_fund_balances[category_key])
+        if prev_sy_fund_balances:
+            initial_balances[category_key] = _round_money(prev_sy_fund_balances.get(category_key, 0.0))
         else:
             initial_balances[category_key] = _round_money(saved_opening or 0.0)
     return initial_balances
@@ -1278,6 +1307,7 @@ def _build_school_year_summary(db: Session, school_year: models.SchoolYear) -> d
         "start_year": school_year.start_year,
         "end_year": school_year.end_year,
         "is_active": school_year.is_active,
+        "is_historical": school_year.start_year < _resolve_current_active_school_year_bounds()[0],
         "status": "Active" if school_year.is_active else "Closed",
         "opening_beginning_cash": opening_beginning_cash,
         "ending_balance": ending_balance,
@@ -1965,31 +1995,61 @@ def create_school_year(
     if end_year <= start_year:
         raise HTTPException(status_code=400, detail="End year must be after the start year")
 
-    _validate_current_active_school_year(start_year, end_year)
+    current_start_year, current_end_year = _resolve_current_active_school_year_bounds()
+
+    # Determine school year category
+    if start_year < current_start_year:
+        # Historical year: must be archived and cannot become active
+        if payload.set_active:
+            raise HTTPException(
+                status_code=400,
+                detail="Historical school years are archived for record-keeping and cannot become the active school year.",
+            )
+        is_active = False
+    elif start_year > current_start_year + 1:
+        # Too far in the future
+        raise HTTPException(
+            status_code=400,
+            detail=f"You can only create the immediate next school year ({current_start_year + 1}-{current_end_year + 1}). School years further in the future are not allowed.",
+        )
+    else:
+        # Current or immediate next school year
+        is_active = bool(payload.set_active)
 
     school_year_name = _format_school_year_name(start_year, end_year)
     existing = db.query(models.SchoolYear).filter(models.SchoolYear.name == school_year_name).first()
     if existing:
-        raise HTTPException(status_code=409, detail="School year already exists")
+        raise HTTPException(status_code=409, detail=f"School year {school_year_name} already exists")
 
-    if payload.set_active:
+    if is_active:
         db.query(models.SchoolYear).update({models.SchoolYear.is_active: False})
 
     school_year = models.SchoolYear(
         name=school_year_name,
         start_year=start_year,
         end_year=end_year,
-        is_active=payload.set_active,
+        is_active=is_active,
     )
     db.add(school_year)
     db.flush()
     _ensure_school_year_defaults(db, school_year)
-    _apply_beginning_cash_carry_forward(db, school_year)
+
+    if payload.opening_beginning_cash is not None:
+        opening_report = next(
+            (report for report in school_year.monthly_reports if (report.month_index or 0) == 0),
+            None,
+        )
+        if opening_report:
+            opening_report.beginning_cash_on_hand = _round_money(payload.opening_beginning_cash)
+            opening_report.beginning_cash_manual_override = True
+    else:
+        _apply_beginning_cash_carry_forward(db, school_year)
+
     _audit_log(
         db,
         user_id=current.id,
         action="FINANCIAL_REPORT_SCHOOL_YEAR_CREATED",
-        details=f"Created school year {school_year_name}",
+        details=f"Created {'historical ' if start_year < current_start_year else ''}school year {school_year_name}",
         request=request,
     )
     db.commit()
@@ -2034,6 +2094,12 @@ def update_school_year(
         )
 
     if updates.get("is_active") is True:
+        current_start_year, _ = _resolve_current_active_school_year_bounds()
+        if next_start_year < current_start_year:
+            raise HTTPException(
+                status_code=400,
+                detail="Historical school years are archived for record-keeping and cannot become the active school year.",
+            )
         db.query(models.SchoolYear).update({models.SchoolYear.is_active: False})
 
     school_year.start_year = next_start_year
@@ -2071,6 +2137,12 @@ def _set_school_year_active_state(
         raise HTTPException(status_code=404, detail="School year not found")
 
     if is_active:
+        current_start_year, _ = _resolve_current_active_school_year_bounds()
+        if school_year.start_year < current_start_year:
+            raise HTTPException(
+                status_code=400,
+                detail="Historical school years are archived for record-keeping and cannot become the active school year.",
+            )
         db.query(models.SchoolYear).update({models.SchoolYear.is_active: False})
         school_year.is_active = True
         action = "FINANCIAL_REPORT_SCHOOL_YEAR_ACTIVATED"
@@ -2153,8 +2225,10 @@ def delete_school_year(
         .first()
     )
     if not active_school_year:
+        current_start_year, _ = _resolve_current_active_school_year_bounds()
         active_school_year = (
             db.query(models.SchoolYear)
+            .filter(models.SchoolYear.start_year >= current_start_year)
             .order_by(models.SchoolYear.start_year.desc(), models.SchoolYear.id.desc())
             .first()
         )
@@ -2387,6 +2461,14 @@ def replace_report_fund_monitoring(
                 cash_on_bank=_round_money(item.cash_on_bank),
             )
         )
+
+        if item.opening_balance is not None and not _has_previous_month_record_in_db(db, report):
+            matching_alloc = next(
+                (a for a in report.school_year.allocations if (a.category_key or "").strip() == category_key),
+                None,
+            )
+            if matching_alloc:
+                matching_alloc.opening_balance = max(0.0, _round_money(item.opening_balance))
 
     _audit_log(
         db,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import DismissibleAlert from '../components/DismissibleAlert';
@@ -22,12 +23,14 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ClipboardDocumentListIcon,
+  ClockIcon,
   DocumentArrowDownIcon,
   DocumentChartBarIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeIcon,
   FunnelIcon,
+  LockClosedIcon,
   MagnifyingGlassIcon,
   MinusCircleIcon,
   PencilSquareIcon,
@@ -37,6 +40,7 @@ import {
   ReceiptPercentIcon,
   ScaleIcon,
   ShieldCheckIcon,
+  Squares2X2Icon,
   TableCellsIcon,
   TrashIcon,
   XMarkIcon,
@@ -44,19 +48,24 @@ import {
 
 const PAGE_COPY = {
   financial: {
-    eyebrow: 'Financial Reports',
-    title: 'Monthly Financial Statement',
-    subtitle: 'Review the month, adjust beginning cash and current sales, then export or print the statement.',
+    eyebrow: 'Finance',
+    title: 'Financial Management',
+    subtitle: 'Review monthly finances, record daily sales, manage expenses, and monitor fund allocations in one place.',
+  },
+  'financial-management': {
+    eyebrow: 'Finance',
+    title: 'Financial Management',
+    subtitle: 'Review monthly finances, record daily sales, manage expenses, and monitor fund allocations in one place.',
   },
   sales: {
-    eyebrow: 'Daily Sales',
-    title: 'Record Daily Sales',
-    subtitle: 'Add one day of sales at a time and review sales entries without opening the full financial statement.',
+    eyebrow: 'Finance',
+    title: 'Financial Management',
+    subtitle: 'Review monthly finances, record daily sales, manage expenses, and monitor fund allocations in one place.',
   },
   expenses: {
-    eyebrow: 'Expenses',
-    title: 'Manage Expenses',
-    subtitle: 'Record canteen operating expenses, filter the history, and review category totals.',
+    eyebrow: 'Finance',
+    title: 'Financial Management',
+    subtitle: 'Review monthly finances, record daily sales, manage expenses, and monitor fund allocations in one place.',
   },
   reports: {
     eyebrow: 'Reports',
@@ -89,6 +98,42 @@ const OPERATION_EXPENSE_FIELDS = [
 ];
 
 const EXPENSE_CATEGORY_OPTIONS = OPERATION_EXPENSE_FIELDS.map((field) => field.category);
+const EXPENSE_CATEGORY_THEME_MAP = {
+  'Transportation/Freight': {
+    bar: 'bg-amber-500',
+    badge: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+  },
+  Gas: {
+    bar: 'bg-rose-500',
+    badge: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
+  },
+  Supplies: {
+    bar: 'bg-sky-500',
+    badge: 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300',
+  },
+  Helpers: {
+    bar: 'bg-violet-500',
+    badge: 'bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300',
+  },
+  Repair: {
+    bar: 'bg-emerald-500',
+    badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+  },
+  'Purchase from the looses of tools': {
+    bar: 'bg-indigo-500',
+    badge: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300',
+  },
+  'Other expenses': {
+    bar: 'bg-slate-500',
+    badge: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  },
+};
+
+const DEFAULT_EXPENSE_THEME = {
+  bar: 'bg-rose-500',
+  badge: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
+};
+
 const EXPENSE_TYPE_OPTIONS = [
   { key: 'daily', label: 'Daily Expense' },
   { key: 'monthly', label: 'Monthly Expense' },
@@ -146,7 +191,6 @@ const REPORT_TYPES = [
 ];
 
 const FUTURE_FINANCIAL_REPORT_MESSAGE = 'You cannot add a financial report for a future school year.';
-const CURRENT_FINANCIAL_REPORT_MESSAGE = 'Financial reports can only be saved for the current active school year.';
 
 const EXPENSES_PER_PAGE = 5;
 const MAX_PAGE_BUTTONS = 5;
@@ -308,9 +352,6 @@ function getSchoolYearValidationMessage(schoolYear, currentSchoolYear) {
   if (comparison > 0) {
     return FUTURE_FINANCIAL_REPORT_MESSAGE;
   }
-  if (comparison < 0) {
-    return CURRENT_FINANCIAL_REPORT_MESSAGE;
-  }
   return '';
 }
 
@@ -419,6 +460,8 @@ function parseExpenseNotes(report) {
           type,
           typeLabel: type === 'monthly' ? 'Monthly Expense' : 'Daily Expense',
           source: 'Entry',
+          rawLine: line,
+          noteIndex: index,
         };
       }
 
@@ -442,6 +485,8 @@ function parseExpenseNotes(report) {
         type: 'daily',
         typeLabel: 'Daily Expense',
         source: 'Entry',
+        rawLine: line,
+        noteIndex: index,
       };
     })
     .filter(Boolean);
@@ -455,9 +500,16 @@ function buildDailySaleRows(detail) {
 
 function buildExpenseHistoryRows(detail) {
   const noteRows = (detail?.reports || []).flatMap(parseExpenseNotes);
-  const monthlyRows = (detail?.reports || []).flatMap((report) =>
-    (report.expenses || [])
-      .filter((expense) => toMoney(expense.amount) > 0)
+  const monthlyRows = (detail?.reports || []).flatMap((report) => {
+    const reportNoteCategories = new Set(
+      parseExpenseNotes(report).map((n) => String(n.category || '').trim().toLowerCase())
+    );
+    return (report.expenses || [])
+      .filter(
+        (expense) =>
+          toMoney(expense.amount) > 0 &&
+          !reportNoteCategories.has(String(expense.category || '').trim().toLowerCase())
+      )
       .map((expense) => ({
         id: `expense-summary-${report.id}-${expense.id || expense.category}`,
         date: getReportMonthValue(report),
@@ -468,11 +520,12 @@ function buildExpenseHistoryRows(detail) {
         receipt: 'No receipt',
         monthLabel: report.month_label,
         reportId: report.id,
-        type: 'summary',
+        type: 'monthly',
         typeLabel: 'Monthly Total',
         source: 'Monthly total',
-      }))
-  );
+        isSummaryOnly: true,
+      }));
+  });
 
   return [...noteRows, ...monthlyRows].sort((left, right) => right.date.localeCompare(left.date));
 }
@@ -1152,15 +1205,106 @@ function ValidationNotice({ message }) {
   );
 }
 
-export default function FinancialReports({ mode = 'financial' }) {
+const FUND_MONITORING_VIEW_KEY = 'sc_fund_monitoring_view_mode';
+
+function ViewToggle({ mode, onChange, options }) {
+  return (
+    <div className="inline-flex items-center rounded-xl border border-slate-200/90 bg-slate-100/70 p-1 dark:border-slate-800 dark:bg-slate-800/70">
+      {options.map((opt) => {
+        const Icon = opt.icon;
+        const isActive = mode === opt.mode;
+        return (
+          <button
+            key={opt.mode}
+            type="button"
+            onClick={() => onChange(opt.mode)}
+            title={`${opt.label} View`}
+            aria-pressed={isActive}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+              isActive
+                ? 'bg-white text-slate-900 shadow-2xs dark:bg-slate-900 dark:text-white'
+                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            <span>{opt.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const FINANCIAL_SY_STORAGE_KEY = 'sc_financial_selected_sy';
+const FINANCIAL_REPORT_STORAGE_KEY = 'sc_financial_selected_report';
+
+function getStoredFinancialSyId() {
+  try {
+    const val = sessionStorage.getItem(FINANCIAL_SY_STORAGE_KEY);
+    return val ? Number(val) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getStoredFinancialReportId() {
+  try {
+    const val = sessionStorage.getItem(FINANCIAL_REPORT_STORAGE_KEY);
+    return val ? Number(val) : null;
+  } catch {
+    return null;
+  }
+}
+
+export default function FinancialReports({ mode = 'financial', defaultTab }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const resolveFinancialTab = useCallback((tab) => {
+    if (tab === 'daily-sales' || tab === 'sales') return 'daily-sales';
+    if (tab === 'expenses') return 'expenses';
+    if (tab === 'fund-allocation') return 'fund-allocation';
+    return 'overview';
+  }, []);
+
+  const isFinancialManagement = [
+    'financial-management',
+    'financial',
+    'expenses',
+    'daily-sales',
+    'sales',
+    'expense-management',
+  ].includes(mode);
+
   const normalizedMode =
-    mode === 'daily-sales'
-      ? 'sales'
-      : mode === 'school-years'
-        ? 'schoolYears'
-        : mode === 'expense-management'
+    mode === 'school-years'
+      ? 'schoolYears'
+      : isFinancialManagement
+        ? 'financialManagement'
+        : mode;
+
+  const currentTab = resolveFinancialTab(
+    urlTab ||
+      (defaultTab === 'daily-sales' || defaultTab === 'sales' || mode === 'daily-sales' || mode === 'sales'
+        ? 'daily-sales'
+        : defaultTab === 'expenses' || mode === 'expenses' || mode === 'expense-management'
           ? 'expenses'
-            : mode;
+          : 'overview')
+  );
+
+  const handleTabChange = useCallback(
+    (nextTab) => {
+      const target = resolveFinancialTab(nextTab);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('tab', target);
+          return next;
+        },
+        { replace: false }
+      );
+    },
+    [resolveFinancialTab, setSearchParams]
+  );
   const { user: authUser, role } = useAuth();
   const user = authUser || {};
   const isAdmin = ['admin', 'administrator'].includes(String(role || user.role || '').trim().toLowerCase());
@@ -1214,12 +1358,50 @@ export default function FinancialReports({ mode = 'financial' }) {
   const [expenseReceiptValidation, setExpenseReceiptValidation] = useState(null);
   const [expenseSuccessAlert, setExpenseSuccessAlert] = useState(null);
   const expenseFileInputRef = useRef(null);
+
+  // Expense Edit & Delete State
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [editExpenseDraft, setEditExpenseDraft] = useState({
+    type: 'daily',
+    date: '',
+    month: '',
+    category: EXPENSE_CATEGORY_OPTIONS[0],
+    amount: '',
+    supplier: '',
+    description: '',
+    receiptName: '',
+  });
+  const [editReceiptFile, setEditReceiptFile] = useState(null);
+  const [editReceiptDataUrl, setEditReceiptDataUrl] = useState('');
+  const [editReceiptError, setEditReceiptError] = useState('');
+  const [editReceiptValidation, setEditReceiptValidation] = useState(null);
+  const [savingEditExpense, setSavingEditExpense] = useState(false);
+  const editExpenseFileInputRef = useRef(null);
+
+  const [deletingExpense, setDeletingExpense] = useState(null);
+  const [savingDeleteExpense, setSavingDeleteExpense] = useState(false);
   const [reportType, setReportType] = useState('monthly');
+  const [fundMonitoringViewMode, setFundMonitoringViewMode] = useState(() => {
+    try {
+      return localStorage.getItem(FUND_MONITORING_VIEW_KEY) || 'table';
+    } catch {
+      return 'table';
+    }
+  });
   const [schoolYearForm, setSchoolYearForm] = useState({
     startYear: '',
     endYear: '',
     openingBeginningCash: '',
   });
+
+  const handleFundMonitoringViewChange = (newMode) => {
+    setFundMonitoringViewMode(newMode);
+    try {
+      localStorage.setItem(FUND_MONITORING_VIEW_KEY, newMode);
+    } catch {
+      // Ignore storage errors
+    }
+  };
 
   const selectedReport =
     detail?.reports?.find((report) => Number(report.id) === Number(selectedReportId)) ||
@@ -1238,6 +1420,25 @@ export default function FinancialReports({ mode = 'financial' }) {
   const currentSchoolYearExists = schoolYears.some((schoolYear) =>
     isCurrentSchoolYear(schoolYear, schoolYearSuggestion)
   );
+  const nextSchoolYearSuggestion = useMemo(() => {
+    const nextStart = schoolYearSuggestion.startYear + 1;
+    return {
+      startYear: nextStart,
+      endYear: nextStart + 1,
+      label: `${nextStart}-${nextStart + 1}`,
+    };
+  }, [schoolYearSuggestion]);
+  const nextSchoolYearLabel = nextSchoolYearSuggestion.label;
+  const nextSchoolYearExists = schoolYears.some(
+    (schoolYear) => Number(schoolYear.start_year) === nextSchoolYearSuggestion.startYear
+  );
+
+  const [showHistoricalModal, setShowHistoricalModal] = useState(false);
+  const [historicalForm, setHistoricalForm] = useState({
+    startYear: String(schoolYearSuggestion.startYear - 1),
+    openingBeginningCash: '0.00',
+  });
+  const [creatingHistoricalYear, setCreatingHistoricalYear] = useState(false);
   const statement = buildStatementReport(
     selectedReport,
     reportDraft.beginning_cash_on_hand,
@@ -1256,6 +1457,13 @@ export default function FinancialReports({ mode = 'financial' }) {
       return matchesQuery && matchesDate;
     });
   }, [dailySalesRows, salesDateFilter, salesSearch]);
+  const monthDailySales = useMemo(() => {
+    if (!selectedReport?.id) return [];
+    return dailySalesRows.filter((row) => Number(row.reportId) === Number(selectedReport.id));
+  }, [dailySalesRows, selectedReport?.id]);
+  const monthDailySalesTotal = useMemo(() => {
+    return monthDailySales.reduce((sum, row) => sum + row.amount, 0);
+  }, [monthDailySales]);
   const expenseHistoryRows = useMemo(() => buildExpenseHistoryRows(detail), [detail]);
   const filteredExpenseRows = useMemo(() => {
     const query = expenseSearch.trim().toLowerCase();
@@ -1296,6 +1504,87 @@ export default function FinancialReports({ mode = 'financial' }) {
     [detail, reportType, selectedReport]
   );
 
+  const selectedReportIndex = useMemo(() => {
+    return (detail?.reports || []).findIndex((r) => Number(r.id) === Number(selectedReport?.id));
+  }, [detail?.reports, selectedReport?.id]);
+
+  const previousReport = useMemo(() => {
+    return selectedReportIndex > 0 ? detail.reports[selectedReportIndex - 1] : null;
+  }, [detail?.reports, selectedReportIndex]);
+
+  const hasPreviousMonth = useMemo(() => {
+    if (previousReport) return true;
+    if (selectedReport?.has_previous_month) return true;
+    return false;
+  }, [previousReport, selectedReport?.has_previous_month]);
+
+  const canEditFundOpeningBalance = !hasPreviousMonth && isAdmin && canSaveSelectedSchoolYear;
+
+  const getFundPrevBalance = useCallback(
+    (allocation) => {
+      const key = allocation.category_key;
+      // If no previous month exists in DB, use the draft or allocation opening balance
+      if (!hasPreviousMonth) {
+        const draftVal = fundMonitoringDraft[key]?.opening_balance;
+        return draftVal !== undefined ? toMoney(draftVal) : toMoney(allocation.opening_balance);
+      }
+      // If previous month exists, pull ending Current Balance from previousReport or allocation.opening_balance
+      if (previousReport) {
+        const prevAlloc = (previousReport.allocations || []).find((a) => a.category_key === key);
+        if (prevAlloc) {
+          if (prevAlloc.current_balance !== undefined) {
+            return toMoney(prevAlloc.current_balance);
+          }
+          const prevOpening = toMoney(prevAlloc.opening_balance);
+          const prevNetInc = toMoney(prevAlloc.amount);
+          const prevInterest = toMoney(prevAlloc.fund_interest);
+          const prevExpenses = toMoney(prevAlloc.fund_expenses);
+          const prevOthers = toMoney(prevAlloc.fund_others);
+          return prevOpening + prevInterest + prevNetInc - (prevExpenses + prevOthers);
+        }
+      }
+      return toMoney(allocation.opening_balance);
+    },
+    [fundMonitoringDraft, hasPreviousMonth, previousReport]
+  );
+
+  const fundAllocationTotals = useMemo(() => {
+    return (selectedReport?.allocations || []).reduce(
+      (acc, allocation) => {
+        const key = allocation.category_key;
+        const draft = fundMonitoringDraft[key] || {};
+        const prevBal = getFundPrevBalance(allocation);
+        const netInc = toMoney(allocation.amount);
+        const interestVal = toMoney(draft.interest);
+        const expensesVal = toMoney(draft.expenses);
+        const othersVal = toMoney(draft.others);
+        const cashOnBankVal = toMoney(draft.cash_on_bank);
+        const totalExpVal = expensesVal + othersVal;
+        const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
+
+        acc.prevBal += prevBal;
+        acc.netInc += netInc;
+        acc.expenses += expensesVal;
+        acc.interest += interestVal;
+        acc.others += othersVal;
+        acc.cashOnBank += cashOnBankVal;
+        acc.totalExp += totalExpVal;
+        acc.currentBal += currentBalVal;
+        return acc;
+      },
+      {
+        prevBal: 0,
+        netInc: 0,
+        expenses: 0,
+        interest: 0,
+        others: 0,
+        cashOnBank: 0,
+        totalExp: 0,
+        currentBal: 0,
+      }
+    );
+  }, [selectedReport?.allocations, fundMonitoringDraft, getFundPrevBalance]);
+
   useEffect(() => {
     selectedSchoolYearIdRef.current = selectedSchoolYearId;
   }, [selectedSchoolYearId]);
@@ -1314,14 +1603,22 @@ export default function FinancialReports({ mode = 'financial' }) {
     try {
       const schoolYearDetail = await API.getFinancialSchoolYearDetail(schoolYearId);
       const reports = schoolYearDetail?.reports || [];
+      const storedReportId = getStoredFinancialReportId();
       const nextReportId =
         reports.find((report) => Number(report.id) === Number(preferredReportId))?.id ||
         reports.find((report) => Number(report.id) === Number(selectedReportIdRef.current))?.id ||
+        reports.find((report) => Number(report.id) === Number(storedReportId))?.id ||
         getCurrentReportId(reports);
 
       setDetail(schoolYearDetail);
       setSelectedReportId(nextReportId);
       setSelectedSchoolYearId(schoolYearId);
+      try {
+        if (schoolYearId) sessionStorage.setItem(FINANCIAL_SY_STORAGE_KEY, String(schoolYearId));
+        if (nextReportId) sessionStorage.setItem(FINANCIAL_REPORT_STORAGE_KEY, String(nextReportId));
+      } catch {
+        // Ignore storage errors
+      }
     } catch (error) {
       window.showToast?.(error.message || 'Unable to load the selected school year.', 'error');
     } finally {
@@ -1339,9 +1636,12 @@ export default function FinancialReports({ mode = 'financial' }) {
       const currentSchoolYearId =
         normalizedSchoolYears.find((schoolYear) => isCurrentSchoolYear(schoolYear, schoolYearSuggestion))?.id ||
         null;
+      const storedSyId = getStoredFinancialSyId();
+      const storedReportId = getStoredFinancialReportId();
       const nextSchoolYearId =
         findSchoolYearId(preferredSchoolYearId) ||
         findSchoolYearId(selectedSchoolYearIdRef.current) ||
+        findSchoolYearId(storedSyId) ||
         currentSchoolYearId ||
         normalizedSchoolYears.find((schoolYear) => schoolYear.is_active)?.id ||
         normalizedSchoolYears[0]?.id ||
@@ -1351,7 +1651,7 @@ export default function FinancialReports({ mode = 'financial' }) {
       setSelectedSchoolYearId(nextSchoolYearId);
 
       if (nextSchoolYearId) {
-        await loadSchoolYearDetail(nextSchoolYearId);
+        await loadSchoolYearDetail(nextSchoolYearId, storedReportId);
       } else {
         setDetail(null);
       }
@@ -1367,21 +1667,53 @@ export default function FinancialReports({ mode = 'financial' }) {
     loadSchoolYears();
   }, [loadSchoolYears]);
 
+  const handleSchoolYearChange = useCallback(
+    (schoolYearId) => {
+      try {
+        if (schoolYearId) {
+          sessionStorage.setItem(FINANCIAL_SY_STORAGE_KEY, String(schoolYearId));
+        }
+      } catch {
+        // Ignore storage errors
+      }
+      loadSchoolYearDetail(schoolYearId);
+    },
+    [loadSchoolYearDetail]
+  );
+
+  const handleMonthChange = useCallback((reportId) => {
+    setSelectedReportId(reportId);
+    try {
+      if (reportId) {
+        sessionStorage.setItem(FINANCIAL_REPORT_STORAGE_KEY, String(reportId));
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
   useEffect(() => {
     if (!selectedReport) {
       setFundMonitoringDraft({});
       return;
     }
 
+    const reportDailySales = parseDailySaleNotes(selectedReport);
+    const sumDailySales = reportDailySales.reduce((acc, row) => acc + row.amount, 0);
+    const autoCurrentSales = reportDailySales.length > 0
+      ? toInputValue(sumDailySales)
+      : toInputValue(selectedReport.default_inputs?.current_sales ?? selectedReport.current_sales);
+
     setReportDraft({
       beginning_cash_on_hand: toInputValue(selectedReport.default_inputs?.beginning_cash_on_hand ?? selectedReport.beginning_cash_on_hand),
-      current_sales: toInputValue(selectedReport.default_inputs?.current_sales ?? selectedReport.current_sales),
+      current_sales: autoCurrentSales,
       cost_of_sales: toInputValue(selectedReport.default_inputs?.cost_of_sales ?? selectedReport.cost_of_sales),
     });
 
     const draft = {};
     (selectedReport.allocations || []).forEach((alloc) => {
       draft[alloc.category_key] = {
+        opening_balance: toInputValue(alloc.opening_balance),
         interest: toInputValue(alloc.fund_interest),
         expenses: toInputValue(alloc.fund_expenses),
         others: toInputValue(alloc.fund_others),
@@ -1390,6 +1722,21 @@ export default function FinancialReports({ mode = 'financial' }) {
     });
     setFundMonitoringDraft(draft);
   }, [selectedReport]);
+
+  useEffect(() => {
+    if (monthDailySales.length > 0) {
+      const newSalesStr = toInputValue(monthDailySalesTotal);
+      setReportDraft((currentDraft) => {
+        if (currentDraft.current_sales === newSalesStr) {
+          return currentDraft;
+        }
+        return {
+          ...currentDraft,
+          current_sales: newSalesStr,
+        };
+      });
+    }
+  }, [monthDailySales.length, monthDailySalesTotal]);
 
   useEffect(() => {
     const selectedMonth = getReportMonthValue(selectedReport);
@@ -1442,28 +1789,79 @@ export default function FinancialReports({ mode = 'financial' }) {
     }
   }
 
-  async function handleCreateSchoolYear() {
+  async function handleCreateNextSchoolYear() {
     if (!isAdmin) {
       return;
     }
-    if (currentSchoolYearExists) {
-      window.showToast?.(`School year ${currentSchoolYearLabel} already exists.`, 'warning');
+    const target = !currentSchoolYearExists ? schoolYearSuggestion : nextSchoolYearSuggestion;
+    const isNext = currentSchoolYearExists;
+
+    if (isNext && nextSchoolYearExists) {
+      window.showToast?.(`Next school year ${nextSchoolYearLabel} already exists.`, 'warning');
       return;
     }
 
     setCreatingSchoolYear(true);
     try {
       const response = await API.createFinancialSchoolYear({
-        start_year: schoolYearSuggestion.startYear,
-        end_year: schoolYearSuggestion.endYear,
-        set_active: true,
+        start_year: target.startYear,
+        end_year: target.endYear,
+        set_active: !isNext,
       });
-      window.showToast?.(`School year ${response?.school_year?.name || currentSchoolYearLabel} created.`, 'success');
+      window.showToast?.(`School year ${response?.school_year?.name || target.label} created successfully.`, 'success');
       await loadSchoolYears(response?.school_year?.id || null);
     } catch (error) {
       window.showToast?.(error.message || 'Unable to create the school year.', 'error');
     } finally {
       setCreatingSchoolYear(false);
+    }
+  }
+
+  async function handleAddHistoricalYear(e) {
+    if (e && e.preventDefault) {
+      e.preventDefault();
+    }
+    if (!isAdmin) {
+      return;
+    }
+
+    const startYear = Number(historicalForm.startYear);
+    if (!Number.isInteger(startYear) || startYear >= schoolYearSuggestion.startYear) {
+      window.showToast?.(`Historical start year must be earlier than ${schoolYearSuggestion.startYear}.`, 'error');
+      return;
+    }
+    const endYear = startYear + 1;
+    const name = `${startYear}-${endYear}`;
+    if (schoolYears.some((sy) => sy.name === name || Number(sy.start_year) === startYear)) {
+      window.showToast?.(`School year ${name} already exists.`, 'warning');
+      return;
+    }
+
+    const openingBeginningCash = parseNonNegativeMoney(historicalForm.openingBeginningCash);
+    if (openingBeginningCash === null) {
+      window.showToast?.('Please enter a valid opening beginning cash amount (or 0.00).', 'error');
+      return;
+    }
+
+    setCreatingHistoricalYear(true);
+    try {
+      const response = await API.createFinancialSchoolYear({
+        start_year: startYear,
+        end_year: endYear,
+        set_active: false,
+        opening_beginning_cash: openingBeginningCash,
+      });
+      window.showToast?.(`Historical school year ${name} added successfully.`, 'success');
+      setShowHistoricalModal(false);
+      setHistoricalForm({
+        startYear: String(schoolYearSuggestion.startYear - 1),
+        openingBeginningCash: '0.00',
+      });
+      await loadSchoolYears(response?.school_year?.id || null);
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to add historical school year.', 'error');
+    } finally {
+      setCreatingHistoricalYear(false);
     }
   }
 
@@ -1653,6 +2051,9 @@ export default function FinancialReports({ mode = 'financial' }) {
         const itemDraft = fundMonitoringDraft[key] || {};
         return {
           category_key: key,
+          opening_balance: canEditFundOpeningBalance
+            ? (parseNonNegativeMoney(itemDraft.opening_balance) ?? 0)
+            : toMoney(alloc.opening_balance),
           interest: parseNonNegativeMoney(itemDraft.interest) ?? 0,
           expenses: parseNonNegativeMoney(itemDraft.expenses) ?? 0,
           others: parseNonNegativeMoney(itemDraft.others) ?? 0,
@@ -1700,7 +2101,10 @@ export default function FinancialReports({ mode = 'financial' }) {
 
     setSavingDailySale(true);
     try {
-      const nextSalesTotal = toMoney(targetReport.current_sales) + amount;
+      const existingEntries = parseDailySaleNotes(targetReport);
+      const existingSum = existingEntries.reduce((sum, s) => sum + s.amount, 0);
+      const baseSales = existingEntries.length > 0 ? existingSum : toMoney(targetReport.current_sales);
+      const nextSalesTotal = baseSales + amount;
       const line = `[Daily Sale] ${dailySaleDraft.date} | ${formatCurrency(amount)} | ${cleanNoteValue(dailySaleDraft.notes) || 'No remarks'}`;
       await API.updateFinancialReport(targetReport.id, {
         current_sales: nextSalesTotal,
@@ -1951,6 +2355,359 @@ export default function FinancialReports({ mode = 'financial' }) {
     }
   }
 
+  function handleOpenEditExpense(row) {
+    if (!row) return;
+    setEditingExpense(row);
+    const isMonthly = row.type === 'monthly';
+    setEditExpenseDraft({
+      type: isMonthly ? 'monthly' : 'daily',
+      date: isMonthly ? '' : row.date,
+      month: isMonthly ? row.date.slice(0, 7) : '',
+      category: row.category || EXPENSE_CATEGORY_OPTIONS[0],
+      amount: String(row.amount || ''),
+      supplier: row.supplier && row.supplier !== '-' ? row.supplier : '',
+      description: row.description && row.description !== '-' && row.description !== 'Monthly category total' ? row.description : '',
+      receiptName: row.receipt && row.receipt !== 'No receipt' && row.receipt !== '-' ? row.receipt : '',
+    });
+    setEditReceiptFile(null);
+    setEditReceiptDataUrl('');
+    setEditReceiptError('');
+    setEditReceiptValidation(null);
+  }
+
+  function handleCloseEditExpense() {
+    setEditingExpense(null);
+    setEditReceiptFile(null);
+    setEditReceiptDataUrl('');
+    setEditReceiptError('');
+    setEditReceiptValidation(null);
+  }
+
+  async function handleEditReceiptFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setEditReceiptFile(null);
+      setEditReceiptDataUrl('');
+      setEditReceiptError('');
+      setEditReceiptValidation(null);
+      return;
+    }
+
+    const validation = validateReceiptFile(file);
+    if (!validation.valid) {
+      setEditReceiptError(validation.error || 'Invalid receipt file.');
+      setEditReceiptFile(null);
+      setEditReceiptDataUrl('');
+      setEditReceiptValidation(null);
+      if (editExpenseFileInputRef.current) {
+        editExpenseFileInputRef.current.value = '';
+      }
+      return;
+    }
+
+    setEditReceiptError('');
+    setEditReceiptValidation(validation);
+    setEditReceiptFile(file);
+    setEditExpenseDraft((draft) => ({ ...draft, receiptName: validation.sanitizedName }));
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setEditReceiptDataUrl(dataUrl);
+    } catch {
+      setEditReceiptError('Failed to read receipt file preview.');
+    }
+  }
+
+  function handleClearEditReceiptUpload() {
+    setEditReceiptFile(null);
+    setEditReceiptDataUrl('');
+    setEditReceiptError('');
+    setEditReceiptValidation(null);
+    setEditExpenseDraft((draft) => ({ ...draft, receiptName: '' }));
+    if (editExpenseFileInputRef.current) {
+      editExpenseFileInputRef.current.value = '';
+    }
+  }
+
+  async function handleSaveEditExpense() {
+    if (!editingExpense || savingEditExpense || !canSaveSelectedSchoolYear) {
+      return;
+    }
+
+    const amount = parseCurrencyInput(editExpenseDraft.amount);
+    if (!amount || amount <= 0) {
+      window.showToast?.('Please enter a valid expense amount greater than zero.', 'error');
+      return;
+    }
+
+    const expenseType = editExpenseDraft.type === 'monthly' ? 'monthly' : 'daily';
+    const effectiveMonth = editExpenseDraft.month || getReportMonthValue(selectedReport);
+    if (expenseType === 'daily' && !isValidDateString(editExpenseDraft.date)) {
+      window.showToast?.('Please provide a valid expense date.', 'error');
+      return;
+    }
+    if (expenseType === 'monthly' && !isValidMonthString(effectiveMonth)) {
+      window.showToast?.('Please provide a valid expense month.', 'error');
+      return;
+    }
+
+    const targetReport =
+      expenseType === 'monthly'
+        ? findReportForMonth(detail, effectiveMonth)
+        : findReportForDate(detail, editExpenseDraft.date);
+    if (!targetReport) {
+      window.showToast?.(
+        expenseType === 'monthly'
+          ? 'The expense month is outside the selected school year.'
+          : 'The expense date is outside the selected school year.',
+        'error'
+      );
+      return;
+    }
+
+    const originalReport = detail?.reports?.find((r) => Number(r.id) === Number(editingExpense.reportId));
+    if (!originalReport) {
+      window.showToast?.('Original monthly report not found.', 'error');
+      return;
+    }
+
+    setSavingEditExpense(true);
+    try {
+      const sanitizedReceiptName = editExpenseDraft.receiptName
+        ? sanitizeReceiptFilename(editExpenseDraft.receiptName)
+        : '';
+      const periodValue = expenseType === 'monthly' ? getReportMonthValue(targetReport) : editExpenseDraft.date;
+      const typeLabel = expenseType === 'monthly' ? 'Monthly Expense' : 'Daily Expense';
+      const newLine = [
+        `[${typeLabel}] ${periodValue}`,
+        editExpenseDraft.category,
+        formatCurrency(amount),
+        `Supplier: ${cleanNoteValue(editExpenseDraft.supplier) || '-'}`,
+        `Description: ${cleanNoteValue(editExpenseDraft.description) || '-'}`,
+        `Receipt: ${cleanNoteValue(sanitizedReceiptName) || 'No receipt'}`,
+      ].join(' | ');
+
+      // Save receipt if new file / dataUrl provided
+      if (sanitizedReceiptName && (editReceiptDataUrl || editReceiptFile)) {
+        const receiptEntry = {
+          key: sanitizedReceiptName,
+          filename: sanitizedReceiptName,
+          rawName: editReceiptFile?.name || editExpenseDraft.receiptName,
+          dataUrl: editReceiptDataUrl,
+          mimeType: editReceiptValidation?.mimeType || 'image/png',
+          size: editReceiptValidation?.size || 0,
+          sizeFormatted: editReceiptValidation?.sizeFormatted || '',
+          date: periodValue,
+          category: editExpenseDraft.category,
+          amount,
+          supplier: editExpenseDraft.supplier,
+          description: editExpenseDraft.description,
+          reportId: targetReport.id,
+          type: expenseType,
+          typeLabel,
+          isPdf: editReceiptValidation?.isPdf || false,
+        };
+        await saveReceipt(receiptEntry);
+        if (editReceiptFile) {
+          try {
+            await API.uploadFinancialReceipt(editReceiptFile);
+          } catch (uploadErr) {
+            console.warn('Backend receipt upload fallback:', uploadErr);
+          }
+        }
+      }
+
+      const isSameReport = Number(originalReport.id) === Number(targetReport.id);
+      const oldAmount = toMoney(editingExpense.amount);
+      const oldCategory = String(editingExpense.category || '').trim().toLowerCase();
+      const newCategory = String(editExpenseDraft.category || '').trim().toLowerCase();
+
+      if (isSameReport) {
+        // 1. Update notes
+        const lines = String(targetReport.notes || '').split(/\r?\n/);
+        let replaced = false;
+        const nextLines = lines.map((line, idx) => {
+          if (!replaced && (line === editingExpense.rawLine || idx === editingExpense.noteIndex)) {
+            replaced = true;
+            return newLine;
+          }
+          return line;
+        });
+        if (!replaced) {
+          nextLines.push(newLine);
+        }
+        const updatedNotes = nextLines.join('\n');
+
+        // 2. Update category totals in targetReport.expenses
+        const expenseMap = new Map(
+          (targetReport.expenses || []).map((exp) => [String(exp.category || '').trim().toLowerCase(), exp])
+        );
+        const nextExpenses = (targetReport.expenses || []).map((exp, idx) => {
+          const cat = String(exp.category || '').trim().toLowerCase();
+          let currentAmt = toMoney(exp.amount);
+          if (cat === oldCategory) {
+            currentAmt = Math.max(0, currentAmt - oldAmount);
+          }
+          if (cat === newCategory) {
+            currentAmt += amount;
+          }
+          return {
+            category: exp.category,
+            amount: currentAmt,
+            sort_order: exp.sort_order ?? idx,
+          };
+        });
+
+        if (!expenseMap.has(newCategory)) {
+          nextExpenses.push({
+            category: editExpenseDraft.category,
+            amount,
+            sort_order: nextExpenses.length,
+          });
+        }
+
+        await API.updateFinancialReportExpenses(targetReport.id, nextExpenses);
+        await API.updateFinancialReport(targetReport.id, { notes: updatedNotes });
+      } else {
+        // Moved to a different month report
+        // A. Remove from original report
+        const origLines = String(originalReport.notes || '').split(/\r?\n/);
+        let removed = false;
+        const nextOrigLines = origLines.filter((line, idx) => {
+          if (!removed && (line === editingExpense.rawLine || idx === editingExpense.noteIndex)) {
+            removed = true;
+            return false;
+          }
+          return true;
+        });
+        const updatedOrigNotes = nextOrigLines.join('\n');
+        const nextOrigExpenses = (originalReport.expenses || []).map((exp, idx) => {
+          if (String(exp.category || '').trim().toLowerCase() === oldCategory) {
+            return {
+              category: exp.category,
+              amount: Math.max(0, toMoney(exp.amount) - oldAmount),
+              sort_order: exp.sort_order ?? idx,
+            };
+          }
+          return {
+            category: exp.category,
+            amount: toMoney(exp.amount),
+            sort_order: exp.sort_order ?? idx,
+          };
+        });
+        await API.updateFinancialReportExpenses(originalReport.id, nextOrigExpenses);
+        await API.updateFinancialReport(originalReport.id, { notes: updatedOrigNotes });
+
+        // B. Add to new target report
+        const updatedTargetNotes = appendNoteLine(targetReport.notes, newLine);
+        const targetExpenseMap = new Map(
+          (targetReport.expenses || []).map((exp) => [String(exp.category || '').trim().toLowerCase(), exp])
+        );
+        const nextTargetExpenses = (targetReport.expenses || []).map((exp, idx) => {
+          if (String(exp.category || '').trim().toLowerCase() === newCategory) {
+            return {
+              category: exp.category,
+              amount: toMoney(exp.amount) + amount,
+              sort_order: exp.sort_order ?? idx,
+            };
+          }
+          return {
+            category: exp.category,
+            amount: toMoney(exp.amount),
+            sort_order: exp.sort_order ?? idx,
+          };
+        });
+        if (!targetExpenseMap.has(newCategory)) {
+          nextTargetExpenses.push({
+            category: editExpenseDraft.category,
+            amount,
+            sort_order: nextTargetExpenses.length,
+          });
+        }
+        await API.updateFinancialReportExpenses(targetReport.id, nextTargetExpenses);
+        await API.updateFinancialReport(targetReport.id, { notes: updatedTargetNotes });
+      }
+
+      window.showToast?.(`${typeLabel} updated successfully.`, 'success');
+      handleCloseEditExpense();
+      await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
+    } catch (err) {
+      window.showToast?.(err.message || 'Unable to update the expense.', 'error');
+    } finally {
+      setSavingEditExpense(false);
+    }
+  }
+
+  function handleOpenDeleteExpense(row) {
+    if (!row) return;
+    setDeletingExpense(row);
+  }
+
+  function handleCloseDeleteExpense() {
+    setDeletingExpense(null);
+  }
+
+  async function handleConfirmDeleteExpense() {
+    if (!deletingExpense || savingDeleteExpense || !canSaveSelectedSchoolYear) {
+      return;
+    }
+    setSavingDeleteExpense(true);
+    try {
+      const targetReport = detail?.reports?.find((r) => Number(r.id) === Number(deletingExpense.reportId));
+      if (!targetReport) {
+        throw new Error('Monthly report for this expense could not be found.');
+      }
+
+      // 1. Remove note line from notes
+      let updatedNotes = targetReport.notes || '';
+      if (deletingExpense.rawLine) {
+        const lines = updatedNotes.split(/\r?\n/);
+        let removed = false;
+        const newLines = lines.filter((line, idx) => {
+          if (!removed && (line === deletingExpense.rawLine || idx === deletingExpense.noteIndex)) {
+            removed = true;
+            return false;
+          }
+          return true;
+        });
+        updatedNotes = newLines.join('\n');
+      }
+
+      // 2. Adjust category in targetReport.expenses
+      const normalizedCategory = String(deletingExpense.category || '').trim().toLowerCase();
+      const amountToSubtract = toMoney(deletingExpense.amount);
+      const nextExpenses = (targetReport.expenses || []).map((exp, idx) => {
+        if (String(exp.category || '').trim().toLowerCase() === normalizedCategory) {
+          return {
+            category: exp.category,
+            amount: Math.max(0, toMoney(exp.amount) - amountToSubtract),
+            sort_order: exp.sort_order ?? idx,
+          };
+        }
+        return {
+          category: exp.category,
+          amount: toMoney(exp.amount),
+          sort_order: exp.sort_order ?? idx,
+        };
+      });
+
+      // 3. Save to backend
+      await API.updateFinancialReportExpenses(targetReport.id, nextExpenses);
+      await API.updateFinancialReport(targetReport.id, { notes: updatedNotes });
+
+      window.showToast?.(
+        `Expense for ${deletingExpense.category} (${formatCurrency(deletingExpense.amount)}) deleted.`,
+        'success'
+      );
+      handleCloseDeleteExpense();
+      await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
+    } catch (err) {
+      window.showToast?.(err.message || 'Unable to delete the expense.', 'error');
+    } finally {
+      setSavingDeleteExpense(false);
+    }
+  }
+
   function handlePrintGeneratedReport() {
     openPrintableWindow(buildGeneratedReportHtml(generatedReportPayload));
   }
@@ -1974,15 +2731,29 @@ export default function FinancialReports({ mode = 'financial' }) {
           }
           action={
             isAdmin ? (
-              <button
-                type="button"
-                onClick={handleCreateSchoolYear}
-                disabled={creatingSchoolYear}
-                className="primary-action-button min-h-12 text-base"
-              >
-                <PlusIcon className="h-5 w-5" />
-                {creatingSchoolYear ? 'Creating...' : `Create ${currentSchoolYearLabel}`}
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowHistoricalModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 shadow-xs transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                >
+                  <ClockIcon className="h-5 w-5 text-amber-500" />
+                  Add Historical Year
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateNextSchoolYear}
+                  disabled={creatingSchoolYear}
+                  className="primary-action-button min-h-12 text-base"
+                >
+                  <PlusIcon className="h-5 w-5" />
+                  {creatingSchoolYear
+                    ? 'Creating...'
+                    : !currentSchoolYearExists
+                    ? `Create ${currentSchoolYearLabel}`
+                    : `Create Next School Year (${nextSchoolYearLabel})`}
+                </button>
+              </div>
             ) : null
           }
         />
@@ -1996,13 +2767,13 @@ export default function FinancialReports({ mode = 'financial' }) {
         <SchoolYearSelect
           schoolYears={schoolYears}
           selectedSchoolYearId={selectedSchoolYearId}
-          onChange={(schoolYearId) => loadSchoolYearDetail(schoolYearId)}
+          onChange={handleSchoolYearChange}
         />
         {includeMonth ? (
           <MonthSelect
             reports={detail?.reports || []}
             selectedReportId={selectedReportId}
-            onChange={setSelectedReportId}
+            onChange={handleMonthChange}
             label={compact ? 'Month' : 'Current Month'}
           />
         ) : null}
@@ -2010,326 +2781,265 @@ export default function FinancialReports({ mode = 'financial' }) {
     );
   }
 
-  function renderFinancialPage() {
-    return (
-      <div className="view-shell overflow-x-hidden pr-0 space-y-5">
-        <PageHeader
-          page={PAGE_COPY.financial}
-          actions={
-            <>
-              {!isAdmin && (
+  function renderFinancialManagementPage() {
+
+    const overviewContent = (
+      <div className="space-y-5 animate-in fade-in duration-200">
+        <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_380px]">
+          <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 dark:text-white">{selectedReport?.month_label} Financial Statement</h2>
+                <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
+                  {isAdmin
+                    ? 'Auto calculations update while you edit Beginning Cash, Current Sales, and Cost of Sales.'
+                    : 'Review monthly beginning cash, sales, cost of sales, and balances in read-only mode.'}
+                </p>
+              </div>
+              {isAdmin ? (
+                <button
+                  type="button"
+                  onClick={handleSaveStatement}
+                  disabled={savingStatement || !canSaveSelectedSchoolYear}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+                >
+                  <CheckCircleIcon className="h-4 w-4 stroke-[2.5]" />
+                  {savingStatement ? 'Saving...' : 'Save Statement'}
+                </button>
+              ) : (
                 <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                   <EyeIcon className="h-4 w-4 text-slate-500" /> Read-Only View
                 </span>
               )}
-              <button
-                type="button"
-                onClick={handleExportWorkbook}
-                disabled={exportingWorkbook || !selectedSchoolYearId}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
-              >
-                <TableCellsIcon className="h-4 w-4 stroke-[2.5]" />
-                {exportingWorkbook ? 'Preparing...' : 'Export Excel'}
-              </button>
-              <button
-                type="button"
-                onClick={handleExportFinancialPdf}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-              >
-                <DocumentArrowDownIcon className="h-4 w-4 text-slate-500" />
-                Export PDF
-              </button>
-              <button
-                type="button"
-                onClick={handlePrintFinancialReport}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-              >
-                <PrinterIcon className="h-4 w-4 text-slate-500" />
-                Print Report
-              </button>
-            </>
-          }
-        />
-
-        {renderSelectors()}
-        <ValidationNotice message={selectedSchoolYearValidationMessage} />
-
-        {detailLoading ? (
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-12 text-center shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-500">Loading financial statement...</div>
-          </div>
-        ) : null}
-
-        {!detailLoading && selectedReport ? (
-          <div className="space-y-5">
-            <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
-              <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <h2 className="text-xl font-black text-slate-900 dark:text-white">{selectedReport.month_label}</h2>
-                    <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
-                      {isAdmin
-                        ? 'Auto calculations update while you edit Beginning Cash, Current Sales, and Cost of Sales.'
-                        : 'Review monthly beginning cash, sales, cost of sales, and balances in read-only mode.'}
-                    </p>
-                  </div>
-                  {isAdmin ? (
-                    <button
-                      type="button"
-                      onClick={handleSaveStatement}
-                      disabled={savingStatement || !canSaveSelectedSchoolYear}
-                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
-                    >
-                      <CheckCircleIcon className="h-4 w-4 stroke-[2.5]" />
-                      {savingStatement ? 'Saving...' : 'Save Statement'}
-                    </button>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                      <EyeIcon className="h-4 w-4 text-slate-500" /> Read-Only View
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <FormField
-                    label="Beginning Cash"
-                    value={reportDraft.beginning_cash_on_hand}
-                    onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
-                    disabled={!canSaveSelectedSchoolYear || !isAdmin}
-                    min="0"
-                    step="0.01"
-                  />
-                  <FormField
-                    label="Current Sales"
-                    value={reportDraft.current_sales}
-                    onChange={(event) => updateReportDraft('current_sales', event.target.value)}
-                    disabled={!canSaveSelectedSchoolYear || !isAdmin}
-                    min="0"
-                    step="0.01"
-                  />
-                  <FormField
-                    label="Cost of Sales"
-                    value={reportDraft.cost_of_sales}
-                    onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
-                    disabled={!canSaveSelectedSchoolYear || !isAdmin}
-                    min="0"
-                    step="0.01"
-                  />
-                </div>
-
-                <div className="mt-6 overflow-hidden rounded-xl border border-slate-200/90 divide-y divide-slate-100 bg-white dark:border-slate-800 dark:divide-slate-800 dark:bg-slate-900">
-                  {[
-                    ['Beginning Cash', statement.beginningCash, true],
-                    ['Current Sales', statement.currentSales, true],
-                    ['Cost of Sales', statement.costOfSales],
-                    ['Gross Income', statement.grossIncome],
-                    ['Operation Expenses', statement.operationExpenses],
-                    ['Current Balance', statement.currentBalance, true],
-                  ].map(([label, amount, strong]) => (
-                    <div
-                      key={label}
-                      className={`grid grid-cols-1 gap-1 px-4 py-3.5 sm:grid-cols-[1fr_auto] sm:items-center ${
-                        label === 'Current Balance'
-                          ? 'bg-emerald-50/50 dark:bg-emerald-950/40'
-                          : label === 'Gross Income'
-                          ? 'bg-slate-50/50 dark:bg-slate-800/40'
-                          : ''
-                      }`}
-                    >
-                      <div className="text-sm font-bold text-slate-700 dark:text-slate-300">{label}</div>
-                      <div className={`text-base font-mono ${strong ? 'font-black text-slate-950 dark:text-white' : 'font-bold text-slate-800 dark:text-slate-200'}`}>
-                        {formatCurrency(amount)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <aside className="min-w-0 w-full space-y-5">
-                <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-                  <h2 className="text-base font-black text-slate-900 dark:text-white">Fund Allocation Summary</h2>
-                  <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    Net income shares per fund category for {selectedReport.month_label}.
-                  </p>
-                  <div className="mt-4 space-y-2.5">
-                    {(selectedReport.allocations || []).map((allocation) => (
-                      <div key={allocation.category_key} className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/60">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0 text-xs font-black text-slate-900 dark:text-white">{allocation.label}</div>
-                          <div className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-black text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                            {formatPercent(allocation.percentage)}
-                          </div>
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-3 text-xs">
-                          <span className="font-semibold text-slate-500 dark:text-slate-400">Net Income Allocation</span>
-                          <span className="font-mono font-black text-slate-900 dark:text-white">{formatCurrency(allocation.amount)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              </aside>
             </div>
 
-            <section className="panel-card">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h2 className="text-xl font-black text-slate-900">Fund Allocation Monitoring (DepEd Form)</h2>
-                  <p className="mt-1 text-base leading-7 text-slate-500">
-                    {isAdmin
-                      ? 'Auto calculations update while you edit expenses and bank entries per fund allocation.'
-                      : 'Review fund allocations and balances per DepEd form in read-only mode.'}
-                  </p>
-                </div>
-                {isAdmin ? (
-                  <button
-                    type="button"
-                    onClick={handleSaveStatement}
-                    disabled={savingStatement || !canSaveSelectedSchoolYear}
-                    className="primary-action-button min-h-12 text-base"
-                  >
-                    <CheckCircleIcon className="h-5 w-5" />
-                    {savingStatement ? 'Saving...' : 'Save Statement'}
-                  </button>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200">
-                    <EyeIcon className="h-4 w-4 text-slate-500" /> Read-Only View
-                  </span>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <FormField
+                label="Beginning Cash"
+                value={reportDraft.beginning_cash_on_hand}
+                onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
+                disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                min="0"
+                step="0.01"
+              />
+              <div>
+                <FormField
+                  label="Current Sales"
+                  value={reportDraft.current_sales}
+                  onChange={(event) => updateReportDraft('current_sales', event.target.value)}
+                  disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                  min="0"
+                  step="0.01"
+                />
+                {monthDailySales.length > 0 && (
+                  <div className="mt-1.5 flex items-center justify-between gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    <span>
+                      Auto-summed from {monthDailySales.length} daily {monthDailySales.length === 1 ? 'sale' : 'sales'} ({formatCurrency(monthDailySalesTotal)})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleTabChange('daily-sales')}
+                      className="shrink-0 font-bold underline hover:text-emerald-700 dark:hover:text-emerald-300"
+                    >
+                      View &rarr;
+                    </button>
+                  </div>
                 )}
               </div>
+              <FormField
+                label="Cost of Sales"
+                value={reportDraft.cost_of_sales}
+                onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
+                disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                min="0"
+                step="0.01"
+              />
+            </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-                {(selectedReport.allocations || []).map((allocation) => {
-                  const key = allocation.category_key;
-                  const draft = fundMonitoringDraft[key] || {};
-                  const prevBal = toMoney(allocation.opening_balance);
-                  const netInc = toMoney(allocation.amount);
-                  const interestVal = toMoney(draft.interest);
-                  const expensesVal = toMoney(draft.expenses);
-                  const othersVal = toMoney(draft.others);
-                  const totalExpVal = expensesVal + othersVal;
-                  const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
-
-                  return (
-                    <div key={key} className="rounded-2xl border border-slate-200/90 bg-white p-5 space-y-5 shadow-2xs transition hover:shadow-md">
-                      <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
-                        <div className="text-lg font-black text-slate-900">{allocation.label}</div>
-                        <span className="inline-flex items-center rounded-lg bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700 border border-emerald-200/60">
-                          {formatPercent(allocation.percentage)}
-                        </span>
+            <div className="overflow-hidden rounded-xl border border-slate-200/90 divide-y divide-slate-100 bg-white dark:border-slate-800 dark:divide-slate-800 dark:bg-slate-900">
+              {[
+                ['Beginning Cash', statement.beginningCash, true],
+                ['Current Sales', statement.currentSales, true],
+                ['Cost of Sales', statement.costOfSales],
+                ['Gross Income', statement.grossIncome],
+                ['Operation Expenses', statement.operationExpenses],
+                ['Current Balance', statement.currentBalance, true],
+              ].map(([label, amount, strong]) => (
+                <div
+                  key={label}
+                  className={`grid grid-cols-1 gap-1 px-4 py-3.5 sm:grid-cols-[1fr_auto] sm:items-center ${
+                    label === 'Current Balance'
+                      ? 'bg-emerald-50/50 dark:bg-emerald-950/40'
+                      : label === 'Gross Income'
+                      ? 'bg-slate-50/50 dark:bg-slate-800/40'
+                      : ''
+                  }`}
+                >
+                  <div className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                    {label === 'Current Sales' ? (
+                      <div className="flex items-center gap-2">
+                        <span>{label}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleTabChange('daily-sales')}
+                          className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
+                        >
+                          Daily Sales &rarr;
+                        </button>
                       </div>
-
-                      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
-                            Expenses for the Month
-                          </label>
-                          <input
-                            type="text"
-                            value={draft.expenses ?? ''}
-                            onChange={(e) => updateFundMonitoringDraft(key, 'expenses', e.target.value)}
-                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                            readOnly={!isAdmin}
-                            placeholder="0.00"
-                            className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
-                              !isAdmin
-                                ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 focus:outline-none focus:ring-0'
-                                : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500'
-                            }`}
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
-                            Interest on Bank
-                          </label>
-                          <input
-                            type="text"
-                            value={draft.interest ?? ''}
-                            onChange={(e) => updateFundMonitoringDraft(key, 'interest', e.target.value)}
-                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                            readOnly={!isAdmin}
-                            placeholder="0.00"
-                            className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
-                              !isAdmin
-                                ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 focus:outline-none focus:ring-0'
-                                : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500'
-                            }`}
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
-                            Others
-                          </label>
-                          <input
-                            type="text"
-                            value={draft.others ?? ''}
-                            onChange={(e) => updateFundMonitoringDraft(key, 'others', e.target.value)}
-                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                            readOnly={!isAdmin}
-                            placeholder="0.00"
-                            className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
-                              !isAdmin
-                                ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 focus:outline-none focus:ring-0'
-                                : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500'
-                            }`}
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
-                            Cash on Bank
-                          </label>
-                          <input
-                            type="text"
-                            value={draft.cash_on_bank ?? ''}
-                            onChange={(e) => updateFundMonitoringDraft(key, 'cash_on_bank', e.target.value)}
-                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                            readOnly={!isAdmin}
-                            placeholder="0.00"
-                            className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
-                              !isAdmin
-                                ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 focus:outline-none focus:ring-0'
-                                : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500'
-                            }`}
-                          />
-                        </div>
+                    ) : label === 'Operation Expenses' ? (
+                      <div className="flex items-center gap-2">
+                        <span>{label}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleTabChange('expenses')}
+                          className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
+                        >
+                          Manage &rarr;
+                        </button>
                       </div>
+                    ) : (
+                      label
+                    )}
+                  </div>
+                  <div className={`text-base font-mono ${strong ? 'font-black text-slate-950 dark:text-white' : 'font-bold text-slate-800 dark:text-slate-200'}`}>
+                    {formatCurrency(amount)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
 
-                      <div className="overflow-hidden rounded-xl border border-slate-200/90 divide-y divide-slate-100 bg-white">
-                        <div className="flex items-center justify-between px-4 py-3 text-sm">
-                          <span className="font-bold text-slate-600">Prev Month Balance</span>
-                          <span className="font-black text-slate-900">{formatCurrency(prevBal)}</span>
-                        </div>
-                        <div className="flex items-center justify-between px-4 py-3 text-sm">
-                          <span className="font-bold text-slate-600">Net Income Share</span>
-                          <span className="font-black text-slate-900">{formatCurrency(netInc)}</span>
-                        </div>
-                        <div className="flex items-center justify-between px-4 py-3 text-sm">
-                          <span className="font-bold text-slate-600">Total Current Expenses</span>
-                          <span className="font-bold text-rose-600">{formatCurrency(totalExpVal)}</span>
-                        </div>
-                        <div className="flex items-center justify-between px-4 py-3.5 text-base bg-emerald-50/30">
-                          <span className="font-black text-slate-950">Current Balance</span>
-                          <span className="font-black text-emerald-600 text-lg">{formatCurrency(currentBalVal)}</span>
-                        </div>
-                      </div>
+          <aside className="min-w-0 w-full space-y-5">
+            {/* Operating Expenses Summary Card */}
+            <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-600 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-400">
+                      <ReceiptPercentIcon className="h-4 w-4" />
                     </div>
-                  );
-                })}
+                    <h2 className="text-base font-black text-slate-900 dark:text-white">Operating Expenses</h2>
+                  </div>
+                  <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Breakdown for {selectedReport?.month_label}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('expenses')}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline dark:text-rose-400 shrink-0"
+                >
+                  View Details &rarr;
+                </button>
+              </div>
+
+              {/* Total Operational Expenses Box */}
+              <div className="mt-4 rounded-xl border border-rose-100 bg-gradient-to-r from-rose-50/80 to-amber-50/40 p-4 dark:border-rose-900/40 dark:from-rose-950/30 dark:to-slate-800/30">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                    Total Operational Expenses
+                  </span>
+                  <span className="rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/70 dark:text-rose-200">
+                    {expenseSummary.length} {expenseSummary.length === 1 ? 'Category' : 'Categories'}
+                  </span>
+                </div>
+                <div className="mt-1.5 font-mono text-2xl font-black text-rose-700 dark:text-rose-400">
+                  {formatCurrency(statement.operationExpenses)}
+                </div>
+              </div>
+
+              {/* Top Expense Categories Breakdown */}
+              <div className="mt-4 space-y-2.5">
+                {expenseSummary.length > 0 ? (
+                  expenseSummary.map((item) => {
+                    const pct = statement.operationExpenses > 0
+                      ? ((item.amount / statement.operationExpenses) * 100).toFixed(1)
+                      : '0.0';
+                    const numPct = parseFloat(pct) || 0;
+                    const theme = EXPENSE_CATEGORY_THEME_MAP[item.category] || DEFAULT_EXPENSE_THEME;
+                    return (
+                      <div
+                        key={item.category}
+                        className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/60"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 text-xs font-black text-slate-900 dark:text-white truncate">
+                            {item.category}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${theme.badge}`}>
+                              {pct}%
+                            </span>
+                            <span className="font-mono text-xs font-black text-slate-900 dark:text-white">
+                              {formatCurrency(item.amount)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${theme.bar}`}
+                            style={{ width: `${Math.max(3, Math.min(100, numPct))}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                    <ReceiptPercentIcon className="mx-auto h-6 w-6 text-slate-400 mb-1.5 opacity-60" />
+                    No operating expenses recorded for this month.
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleTabChange('expenses')}
+                        className="font-bold text-rose-600 hover:underline dark:text-rose-400"
+                      >
+                        Add Expense &rarr;
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
-          </div>
-        ) : null}
+
+            <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-black text-slate-900 dark:text-white">Fund Allocation Summary</h2>
+                  <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Net income shares for {selectedReport?.month_label}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('fund-allocation')}
+                  className="text-xs font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400 shrink-0"
+                >
+                  View Details &rarr;
+                </button>
+              </div>
+              <div className="mt-4 space-y-2.5">
+                {(selectedReport?.allocations || []).map((allocation) => (
+                  <div key={allocation.category_key} className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/60">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 text-xs font-black text-slate-900 dark:text-white">{allocation.label}</div>
+                      <div className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-black text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                        {formatPercent(allocation.percentage)}
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+                      <span className="font-semibold text-slate-500 dark:text-slate-400">Net Income Allocation</span>
+                      <span className="font-mono font-black text-slate-900 dark:text-white">{formatCurrency(allocation.amount)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </aside>
+        </div>
       </div>
     );
-  }
-
-  function renderSalesPage() {
-    const monthManualSalesTotal = dailySalesRows
-      .filter((row) => Number(row.reportId) === Number(selectedReport?.id))
-      .reduce((sum, row) => sum + row.amount, 0);
 
     const salesListContent = (
       <div className="min-w-0 w-full space-y-5">
@@ -2342,7 +3052,7 @@ export default function FinancialReports({ mode = 'financial' }) {
           />
           <MetricTile
             label="Manual Entries This Month"
-            value={formatCurrency(monthManualSalesTotal)}
+            value={formatCurrency(monthDailySalesTotal)}
             tone="sky"
             icon={DocumentChartBarIcon}
           />
@@ -2414,24 +3124,12 @@ export default function FinancialReports({ mode = 'financial' }) {
       </div>
     );
 
-    return (
-      <div className="view-shell overflow-x-hidden pr-0 space-y-5">
-        <PageHeader
-          page={PAGE_COPY.sales}
-          actions={
-            !isAdmin ? (
-              <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                <EyeIcon className="h-4 w-4 text-slate-500" /> Read-Only View
-              </span>
-            ) : null
-          }
-        />
-        {renderSelectors({ compact: true })}
-        <ValidationNotice message={selectedSchoolYearValidationMessage} />
+    const dailySalesContent = (
+      <div className="space-y-5 animate-in fade-in duration-200">
 
         {isAdmin ? (
           <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[340px_minmax(0,1fr)]">
-            <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+            <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/60 dark:text-emerald-400">
                   <PlusIcon className="h-5 w-5 stroke-[2.5]" />
@@ -2486,9 +3184,371 @@ export default function FinancialReports({ mode = 'financial' }) {
         )}
       </div>
     );
-  }
 
-  function renderExpensesPage() {
+    const fundAllocationContent = (
+      <div className="space-y-5 animate-in fade-in duration-200">
+        <section className="panel-card space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-black text-slate-900 dark:text-white">Fund Allocation Monitoring (DepEd Form)</h2>
+              <p className="mt-1 text-base leading-7 text-slate-500 dark:text-slate-400">
+                {isAdmin
+                  ? 'Auto calculations update while you edit expenses and bank entries per fund allocation.'
+                  : 'Review fund allocations and balances per DepEd form in read-only mode.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <ViewToggle
+                mode={fundMonitoringViewMode}
+                onChange={handleFundMonitoringViewChange}
+                options={[
+                  { mode: 'table', icon: TableCellsIcon, label: 'Table' },
+                  { mode: 'grid', icon: Squares2X2Icon, label: 'Grid' },
+                ]}
+              />
+              {isAdmin ? (
+                <button
+                  type="button"
+                  onClick={handleSaveStatement}
+                  disabled={savingStatement || !canSaveSelectedSchoolYear}
+                  className="primary-action-button min-h-12 text-base"
+                >
+                  <CheckCircleIcon className="h-5 w-5" />
+                  {savingStatement ? 'Saving...' : 'Save Statement'}
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  <EyeIcon className="h-4 w-4 text-slate-500 dark:text-slate-400" /> Read-Only View
+                </span>
+              )}
+            </div>
+          </div>
+
+          {canEditFundOpeningBalance && (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200 flex items-start gap-3">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white font-bold text-xs">!</span>
+              <div>
+                <strong className="font-bold">Initial Setup / Starting Balances:</strong> No previous month record exists in the database. You can manually enter starting balances under <strong>Balance in previous month</strong> for all funds below. Subsequent months will automatically carry forward ending balances and lock the field.
+              </div>
+            </div>
+          )}
+
+          {fundMonitoringViewMode === 'table' ? (
+            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm border-collapse">
+                  <thead className="border-b border-slate-200 bg-slate-50/80 text-xs font-bold uppercase tracking-wider text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3.5 whitespace-nowrap min-w-[200px]">Fund Allocation</th>
+                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[170px]">
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          <span>Balance in previous month</span>
+                          {!canEditFundOpeningBalance && (
+                            <LockClosedIcon className="h-3.5 w-3.5 text-slate-400 shrink-0" title="Locked: Automatically carried forward from previous month" />
+                          )}
+                        </div>
+                      </th>
+                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[130px]">Net Income Share</th>
+                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Expenses</th>
+                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Interest</th>
+                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Others</th>
+                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Cash on Bank</th>
+                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[135px]">Total Expenses</th>
+                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[135px]">Current Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {(selectedReport?.allocations || []).map((allocation) => {
+                      const key = allocation.category_key;
+                      const draft = fundMonitoringDraft[key] || {};
+                      const prevBal = getFundPrevBalance(allocation);
+                      const netInc = toMoney(allocation.amount);
+                      const interestVal = toMoney(draft.interest);
+                      const expensesVal = toMoney(draft.expenses);
+                      const othersVal = toMoney(draft.others);
+                      const cashOnBankVal = toMoney(draft.cash_on_bank);
+                      const totalExpVal = expensesVal + othersVal;
+                      const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
+
+                      return (
+                        <tr key={key} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900 dark:text-white whitespace-nowrap">{allocation.label}</span>
+                              <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-black text-emerald-700 border border-emerald-200/60 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-300">
+                                {formatPercent(allocation.percentage)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {canEditFundOpeningBalance ? (
+                              <input
+                                type="text"
+                                value={draft.opening_balance ?? ''}
+                                onChange={(e) => updateFundMonitoringDraft(key, 'opening_balance', e.target.value)}
+                                disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                                readOnly={!isAdmin}
+                                placeholder="0.00"
+                                title="Enter manual starting balance for initial month"
+                                className={`h-10 w-full min-w-[120px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
+                                  !isAdmin
+                                    ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
+                                    : 'bg-emerald-50/20 border-emerald-300/80 hover:border-emerald-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-700 dark:bg-emerald-950/20 dark:focus:bg-slate-900 dark:text-white'
+                                }`}
+                              />
+                            ) : (
+                              <div
+                                className="flex items-center justify-end gap-1.5 px-1 py-1 font-mono font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap"
+                                title="Carried over from previous month current balance (locked)"
+                              >
+                                <LockClosedIcon className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                                <span>{formatCurrency(prevBal)}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                            {formatCurrency(netInc)}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <input
+                              type="text"
+                              value={draft.expenses ?? ''}
+                              onChange={(e) => updateFundMonitoringDraft(key, 'expenses', e.target.value)}
+                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                              readOnly={!isAdmin}
+                              placeholder="0.00"
+                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
+                                !isAdmin
+                                  ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
+                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <input
+                              type="text"
+                              value={draft.interest ?? ''}
+                              onChange={(e) => updateFundMonitoringDraft(key, 'interest', e.target.value)}
+                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                              readOnly={!isAdmin}
+                              placeholder="0.00"
+                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
+                                !isAdmin
+                                  ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
+                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <input
+                              type="text"
+                              value={draft.others ?? ''}
+                              onChange={(e) => updateFundMonitoringDraft(key, 'others', e.target.value)}
+                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                              readOnly={!isAdmin}
+                              placeholder="0.00"
+                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
+                                !isAdmin
+                                  ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
+                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <input
+                              type="text"
+                              value={draft.cash_on_bank ?? ''}
+                              onChange={(e) => updateFundMonitoringDraft(key, 'cash_on_bank', e.target.value)}
+                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                              readOnly={!isAdmin}
+                              placeholder="0.00"
+                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
+                                !isAdmin
+                                  ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
+                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                            {formatCurrency(totalExpVal)}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono font-black text-emerald-600 dark:text-emerald-400 text-base whitespace-nowrap">
+                            {formatCurrency(currentBalVal)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="border-t-2 border-slate-200 bg-slate-50/90 font-bold dark:border-slate-700 dark:bg-slate-800/80">
+                    <tr>
+                      <td className="px-4 py-3.5 text-slate-900 dark:text-white font-black uppercase text-xs">Total</td>
+                      <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.prevBal)}</td>
+                      <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.netInc)}</td>
+                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.expenses)}</td>
+                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.interest)}</td>
+                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.others)}</td>
+                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.cashOnBank)}</td>
+                      <td className="px-4 py-3.5 text-right font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">{formatCurrency(fundAllocationTotals.totalExp)}</td>
+                      <td className="px-4 py-3.5 text-right font-mono font-black text-emerald-600 dark:text-emerald-400 text-base whitespace-nowrap">{formatCurrency(fundAllocationTotals.currentBal)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+              {(selectedReport?.allocations || []).map((allocation) => {
+                const key = allocation.category_key;
+                const draft = fundMonitoringDraft[key] || {};
+                const prevBal = getFundPrevBalance(allocation);
+                const netInc = toMoney(allocation.amount);
+                const interestVal = toMoney(draft.interest);
+                const expensesVal = toMoney(draft.expenses);
+                const othersVal = toMoney(draft.others);
+                const totalExpVal = expensesVal + othersVal;
+                const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
+
+                return (
+                  <div key={key} className="rounded-2xl border border-slate-200/90 bg-white p-5 space-y-5 shadow-2xs transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3.5 dark:border-slate-800">
+                      <div className="text-lg font-black text-slate-900 dark:text-white">{allocation.label}</div>
+                      <span className="inline-flex items-center rounded-lg bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700 border border-emerald-200/60 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-300">
+                        {formatPercent(allocation.percentage)}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                      {canEditFundOpeningBalance && (
+                        <div className="flex flex-col gap-1.5 sm:col-span-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 whitespace-nowrap overflow-hidden text-ellipsis flex items-center gap-1.5">
+                            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            Balance in previous month (Starting Balance)
+                          </label>
+                          <input
+                            type="text"
+                            value={draft.opening_balance ?? ''}
+                            onChange={(e) => updateFundMonitoringDraft(key, 'opening_balance', e.target.value)}
+                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                            readOnly={!isAdmin}
+                            placeholder="0.00"
+                            className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
+                              !isAdmin
+                                ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
+                                : 'bg-emerald-50/20 border-emerald-300/80 focus:bg-white focus:border-emerald-500 dark:border-emerald-700 dark:bg-emerald-950/20 dark:focus:bg-slate-900 dark:text-white'
+                            }`}
+                          />
+                        </div>
+                      )}
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                          Expenses for the Month
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.expenses ?? ''}
+                          onChange={(e) => updateFundMonitoringDraft(key, 'expenses', e.target.value)}
+                          disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                          readOnly={!isAdmin}
+                          placeholder="0.00"
+                          className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
+                            !isAdmin
+                              ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
+                              : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:focus:bg-slate-900 dark:text-white'
+                          }`}
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                          Interest on Bank
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.interest ?? ''}
+                          onChange={(e) => updateFundMonitoringDraft(key, 'interest', e.target.value)}
+                          disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                          readOnly={!isAdmin}
+                          placeholder="0.00"
+                          className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
+                            !isAdmin
+                              ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
+                              : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:focus:bg-slate-900 dark:text-white'
+                          }`}
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                          Others
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.others ?? ''}
+                          onChange={(e) => updateFundMonitoringDraft(key, 'others', e.target.value)}
+                          disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                          readOnly={!isAdmin}
+                          placeholder="0.00"
+                          className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
+                            !isAdmin
+                              ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
+                              : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:focus:bg-slate-900 dark:text-white'
+                          }`}
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                          Cash on Bank
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.cash_on_bank ?? ''}
+                          onChange={(e) => updateFundMonitoringDraft(key, 'cash_on_bank', e.target.value)}
+                          disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                          readOnly={!isAdmin}
+                          placeholder="0.00"
+                          className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
+                            !isAdmin
+                              ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
+                              : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:focus:bg-slate-900 dark:text-white'
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="overflow-hidden rounded-xl border border-slate-200/90 divide-y divide-slate-100 bg-white dark:border-slate-800 dark:divide-slate-800 dark:bg-slate-900">
+                      <div className="flex items-center justify-between px-4 py-3 text-sm">
+                        <span className="font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                          <span>Balance in previous month</span>
+                          {!canEditFundOpeningBalance && (
+                            <LockClosedIcon className="h-3.5 w-3.5 text-slate-400 shrink-0" title="Locked: Carried over from previous month current balance" />
+                          )}
+                        </span>
+                        <span className="font-black text-slate-900 dark:text-white">{formatCurrency(prevBal)}</span>
+                      </div>
+                      <div className="flex items-center justify-between px-4 py-3 text-sm">
+                        <span className="font-bold text-slate-600 dark:text-slate-400">Net Income Share</span>
+                        <span className="font-black text-slate-900 dark:text-white">{formatCurrency(netInc)}</span>
+                      </div>
+                      <div className="flex items-center justify-between px-4 py-3 text-sm">
+                        <span className="font-bold text-slate-600 dark:text-slate-400">Total Current Expenses</span>
+                        <span className="font-bold text-rose-600 dark:text-rose-400">{formatCurrency(totalExpVal)}</span>
+                      </div>
+                      <div className="flex items-center justify-between px-4 py-3.5 text-base bg-emerald-50/30 dark:bg-emerald-950/30">
+                        <span className="font-black text-slate-950 dark:text-white">Current Balance</span>
+                        <span className="font-black text-emerald-600 dark:text-emerald-400 text-lg">{formatCurrency(currentBalVal)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+
     const expensesListContent = (
       <div className="min-w-0 w-full space-y-5">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -2563,7 +3623,7 @@ export default function FinancialReports({ mode = 'financial' }) {
                 type="month"
                 value={expenseDateFilter}
                 onChange={(event) => setExpenseDateFilter(event.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
               />
             </FormField>
           </div>
@@ -2582,6 +3642,7 @@ export default function FinancialReports({ mode = 'financial' }) {
                       <th className="px-3 py-3 hidden md:table-cell">Supplier</th>
                       <th className="px-3 py-3 hidden lg:table-cell">Description</th>
                       <th className="px-3 py-3 text-center w-24">Receipt</th>
+                      <th className="px-3 py-3 text-center w-20">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
@@ -2641,11 +3702,33 @@ export default function FinancialReports({ mode = 'financial' }) {
                               </span>
                             )}
                           </td>
+                          <td className="px-3 py-3 text-center whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1 justify-center">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditExpense(row)}
+                                disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                                className="rounded-lg p-1.5 text-slate-500 hover:bg-emerald-50 hover:text-emerald-700 transition disabled:opacity-30 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-emerald-400"
+                                title={isAdmin ? 'Edit Expense' : 'Admin only'}
+                              >
+                                <PencilSquareIcon className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenDeleteExpense(row)}
+                                disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                                className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition disabled:opacity-30 dark:text-slate-400 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
+                                title={isAdmin ? 'Delete Expense' : 'Admin only'}
+                              >
+                                <TrashIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={7} className="px-6 py-12 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+                        <td colSpan={8} className="px-6 py-12 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
                           No expenses match the current filters.
                         </td>
                       </tr>
@@ -2686,25 +3769,46 @@ export default function FinancialReports({ mode = 'financial' }) {
                         ) : null}
                       </div>
 
-                      {row.description && row.description !== '-' ? (
-                        <p className="text-xs text-slate-600 dark:text-slate-300 truncate">
-                          {row.description}
-                        </p>
-                      ) : null}
+                      <div className="text-xs text-slate-600 dark:text-slate-300 truncate">
+                        {row.description}
+                      </div>
 
-                      {row.receipt && row.receipt !== 'No receipt' && row.receipt !== '-' ? (
-                        <div className="pt-1">
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                        {row.receipt && row.receipt !== 'No receipt' && row.receipt !== '-' ? (
                           <button
                             type="button"
                             onClick={() => setActivePreviewReceipt(row)}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
                           >
                             <PhotoIcon className="h-3.5 w-3.5 text-emerald-600" />
-                            <span className="max-w-[150px] truncate font-mono">{row.receipt}</span>
+                            <span className="max-w-[120px] truncate font-mono">{row.receipt}</span>
                             <EyeIcon className="h-3.5 w-3.5 opacity-70" />
                           </button>
+                        ) : (
+                          <span className="text-xs text-slate-400">No receipt</span>
+                        )}
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditExpense(row)}
+                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                          >
+                            <PencilSquareIcon className="h-3.5 w-3.5 text-slate-500" />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDeleteExpense(row)}
+                            disabled={!isAdmin || !canSaveSelectedSchoolYear}
+                            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-40 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-300"
+                          >
+                            <TrashIcon className="h-3.5 w-3.5 text-rose-600" />
+                            Delete
+                          </button>
                         </div>
-                      ) : null}
+                      </div>
                     </div>
                   ))
                 ) : (
@@ -2769,21 +3873,8 @@ export default function FinancialReports({ mode = 'financial' }) {
       </div>
     );
 
-    return (
-      <div className="view-shell overflow-x-hidden pr-0 space-y-5">
-        <PageHeader
-          page={PAGE_COPY.expenses}
-          actions={
-            !isAdmin ? (
-              <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                <EyeIcon className="h-4 w-4 text-slate-500" /> Read-Only View
-              </span>
-            ) : null
-          }
-        />
-        {renderSelectors({ compact: true })}
-        <ValidationNotice message={selectedSchoolYearValidationMessage} />
-
+    const expensesContent = (
+      <div className="space-y-5 animate-in fade-in duration-200">
         {expenseSuccessAlert && (
           <DismissibleAlert
             resetKey={expenseSuccessAlert.id}
@@ -2921,7 +4012,6 @@ export default function FinancialReports({ mode = 'financial' }) {
                 </FormField>
                 <FormField label="Receipt Upload (Optional)">
                   <div className="space-y-2.5">
-                    {/* Hidden Native File Input */}
                     <input
                       ref={expenseFileInputRef}
                       type="file"
@@ -2931,7 +4021,6 @@ export default function FinancialReports({ mode = 'financial' }) {
                     />
 
                     {!expenseReceiptValidation ? (
-                      /* Custom Styled Choose File Button */
                       <button
                         type="button"
                         onClick={() => expenseFileInputRef.current?.click()}
@@ -2955,7 +4044,6 @@ export default function FinancialReports({ mode = 'financial' }) {
                         </span>
                       </button>
                     ) : (
-                      /* Active File Preview Card */
                       <div className="flex items-center justify-between rounded-xl border border-emerald-300/80 bg-emerald-50/80 p-3 dark:border-emerald-800/80 dark:bg-emerald-950/40">
                         <div className="flex items-center gap-2.5 overflow-hidden">
                           {expenseReceiptDataUrl && !expenseReceiptValidation.isPdf ? (
@@ -3044,6 +4132,115 @@ export default function FinancialReports({ mode = 'financial' }) {
         )}
       </div>
     );
+
+    return (
+      <div className="view-shell overflow-x-hidden pr-0 space-y-5">
+        <PageHeader
+          page={PAGE_COPY['financial-management']}
+          actions={
+            <>
+              {!isAdmin && (
+                <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  <EyeIcon className="h-4 w-4 text-slate-500" /> Read-Only View
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleExportWorkbook}
+                disabled={exportingWorkbook || !selectedSchoolYearId}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+              >
+                <TableCellsIcon className="h-4 w-4 stroke-[2.5]" />
+                {exportingWorkbook ? 'Preparing...' : 'Export Excel'}
+              </button>
+              <button
+                type="button"
+                onClick={handleExportFinancialPdf}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <DocumentArrowDownIcon className="h-4 w-4 text-slate-500" />
+                Export PDF
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintFinancialReport}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <PrinterIcon className="h-4 w-4 text-slate-500" />
+                Print Report
+              </button>
+            </>
+          }
+        />
+
+        {renderSelectors()}
+        <ValidationNotice message={selectedSchoolYearValidationMessage} />
+
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/90 bg-slate-100/90 p-1.5 dark:border-slate-800 dark:bg-slate-800/80 w-fit">
+          {[
+            { id: 'overview', label: 'Overview', icon: BanknotesIcon },
+            { id: 'daily-sales', label: 'Daily Sales', icon: DocumentChartBarIcon, badge: filteredDailySalesRows.length },
+            { id: 'expenses', label: 'Expenses', icon: ReceiptPercentIcon, badge: filteredExpenseRows.length },
+            { id: 'fund-allocation', label: 'Fund Allocation', icon: ChartPieIcon },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = currentTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => handleTabChange(tab.id)}
+                className={`flex items-center gap-2.5 rounded-xl px-5 py-2.5 text-xs sm:text-sm font-bold transition-all shadow-2xs ${
+                  isActive
+                    ? 'bg-white text-emerald-700 shadow-sm dark:bg-slate-900 dark:text-emerald-400 font-black ring-1 ring-emerald-500/20'
+                    : 'text-slate-600 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white'
+                }`}
+              >
+                <Icon className={`h-4 w-4 shrink-0 transition-colors ${isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500'}`} />
+                <span>{tab.label}</span>
+                {tab.badge !== undefined && tab.badge > 0 ? (
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+                    isActive
+                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                      : 'bg-slate-200/80 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                  }`}>
+                    {tab.badge}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+
+        {detailLoading ? (
+          <div className="rounded-2xl border border-slate-200/90 bg-white p-12 text-center shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+            <div className="text-sm font-bold text-slate-500">Loading financial details...</div>
+          </div>
+        ) : null}
+
+        {!detailLoading && selectedReport ? (
+          currentTab === 'overview'
+            ? overviewContent
+            : currentTab === 'daily-sales' || currentTab === 'sales'
+            ? dailySalesContent
+            : currentTab === 'expenses'
+            ? expensesContent
+            : fundAllocationContent
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderFinancialPage() {
+    return renderFinancialManagementPage();
+  }
+
+  function renderSalesPage() {
+    return renderFinancialManagementPage();
+  }
+
+  function renderExpensesPage() {
+    return renderFinancialManagementPage();
   }
 
   function renderReportsPage() {
@@ -3179,20 +4376,43 @@ export default function FinancialReports({ mode = 'financial' }) {
           page={PAGE_COPY.schoolYears}
           actions={
             isAdmin ? (
-              <button
-                type="button"
-                onClick={handleCreateSchoolYear}
-                disabled={creatingSchoolYear || currentSchoolYearExists}
-                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black shadow-xs transition active:scale-95 ${
-                  currentSchoolYearExists
-                    ? 'border border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
-                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                }`}
-                title={currentSchoolYearExists ? `School year ${currentSchoolYearLabel} already exists` : `Create ${currentSchoolYearLabel}`}
-              >
-                <PlusIcon className="h-4 w-4 stroke-[2.5]" />
-                {creatingSchoolYear ? 'Creating...' : currentSchoolYearExists ? 'Current Year Exists' : 'Create School Year'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowHistoricalModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-black text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-750"
+                  title="Add previous/historical school year for entering old records"
+                >
+                  <ClockIcon className="h-4 w-4 stroke-[2.2] text-amber-600 dark:text-amber-400" />
+                  Add Historical Year
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateNextSchoolYear}
+                  disabled={creatingSchoolYear || (currentSchoolYearExists && nextSchoolYearExists)}
+                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black shadow-xs transition active:scale-95 ${
+                    currentSchoolYearExists && nextSchoolYearExists
+                      ? 'border border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
+                      : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  }`}
+                  title={
+                    !currentSchoolYearExists
+                      ? `Create current school year ${currentSchoolYearLabel}`
+                      : nextSchoolYearExists
+                      ? `Next school year ${nextSchoolYearLabel} has already been created`
+                      : `Create next school year ${nextSchoolYearLabel}`
+                  }
+                >
+                  <PlusIcon className="h-4 w-4 stroke-[2.5]" />
+                  {creatingSchoolYear
+                    ? 'Creating...'
+                    : !currentSchoolYearExists
+                    ? `Create Current Year (${currentSchoolYearLabel})`
+                    : nextSchoolYearExists
+                    ? `Next Year (${nextSchoolYearLabel}) Exists`
+                    : `Create Next School Year (${nextSchoolYearLabel})`}
+                </button>
+              </div>
             ) : null
           }
         />
@@ -3244,6 +4464,7 @@ export default function FinancialReports({ mode = 'financial' }) {
                     {schoolYears.map((schoolYear) => {
                       const selectedRow = Number(schoolYear.id) === Number(selectedSchoolYearId);
                       const rowIsActive = Boolean(schoolYear.is_active);
+                      const isHistorical = Number(schoolYear.start_year) < schoolYearSuggestion.startYear;
                       return (
                         <tr key={schoolYear.id} className={`transition hover:bg-slate-50/70 dark:hover:bg-slate-800/50 ${selectedRow || rowIsActive ? 'bg-emerald-50/20 dark:bg-emerald-950/20' : ''}`}>
                           <td className="px-3 sm:px-5 py-3.5">
@@ -3257,10 +4478,12 @@ export default function FinancialReports({ mode = 'financial' }) {
                               className={`inline-flex rounded-lg px-2 py-0.5 text-xs font-bold ${
                                 schoolYear.is_active
                                   ? 'border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                  : isHistorical
+                                  ? 'border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300'
                                   : 'border border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
                               }`}
                             >
-                              {rowIsActive ? 'Active' : 'Archived'}
+                              {rowIsActive ? 'Active' : isHistorical ? 'Archived (Historical)' : 'Archived'}
                             </span>
                           </td>
                           <td className="px-2 sm:px-3 py-3.5 text-right font-mono text-xs sm:text-sm font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
@@ -3279,10 +4502,10 @@ export default function FinancialReports({ mode = 'financial' }) {
                                 <PencilSquareIcon className="h-3.5 w-3.5" />
                                 Edit
                               </button>
-                              {isAdmin ? (
+                              {isAdmin && !isHistorical ? (
                                 <button
                                   type="button"
-                                  onClick={() => handleUpdateSchoolYearStatus(schoolYear.id, false)}
+                                  onClick={() => handleUpdateSchoolYearStatus(schoolYear.id, !rowIsActive)}
                                   disabled={updatingSchoolYear || rowIsActive}
                                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                                   title={rowIsActive ? 'Activate another school year before archiving this one' : `Archive ${schoolYear.name}`}
@@ -3396,15 +4619,15 @@ export default function FinancialReports({ mode = 'financial' }) {
     return renderEmptySchoolYears();
   }
 
-  let content = renderFinancialPage();
+  let content = null;
   if (normalizedMode === 'sales') {
     content = renderSalesPage();
-  } else if (normalizedMode === 'expenses') {
-    content = renderExpensesPage();
   } else if (normalizedMode === 'reports') {
     content = renderReportsPage();
   } else if (normalizedMode === 'schoolYears') {
     content = renderSchoolYearsPage();
+  } else {
+    content = renderFinancialManagementPage();
   }
 
   return (
@@ -3421,6 +4644,491 @@ export default function FinancialReports({ mode = 'financial' }) {
             }
           }}
         />
+      )}
+      {showHistoricalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400">
+                  <ClockIcon className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">Add Historical School Year</h3>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Add a previous year for entering old records
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHistoricalModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddHistoricalYear} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Start Year
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    max={schoolYearSuggestion.startYear - 1}
+                    value={historicalForm.startYear}
+                    onChange={(e) =>
+                      setHistoricalForm((prev) => ({
+                        ...prev,
+                        startYear: e.target.value,
+                      }))
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-amber-500 focus:bg-white focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    placeholder="e.g. 2024"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    End Year
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={
+                      Number.isInteger(Number(historicalForm.startYear)) && Number(historicalForm.startYear) > 1900
+                        ? String(Number(historicalForm.startYear) + 1)
+                        : ''
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-3.5 text-sm font-semibold text-slate-500 shadow-2xs cursor-not-allowed dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Opening Beginning Cash
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={historicalForm.openingBeginningCash}
+                  onChange={(e) =>
+                    setHistoricalForm((prev) => ({
+                      ...prev,
+                      openingBeginningCash: e.target.value,
+                    }))
+                  }
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-amber-500 focus:bg-white focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  placeholder="0.00"
+                />
+                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                  Initial starting cash for the first month (June) of this school year.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-3 text-xs text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
+                <strong>Historical Record Notice:</strong> Historical years are permanently archived and cannot become the active school year. You will be able to enter and edit monthly reports, expenses, and allocations for this period.
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowHistoricalModal(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingHistoricalYear}
+                  className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-amber-700 active:scale-95 disabled:opacity-50"
+                >
+                  <PlusIcon className="h-4 w-4 stroke-[2.5]" />
+                  {creatingHistoricalYear ? 'Adding...' : 'Add Historical Year'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Expense Modal */}
+      {editingExpense && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
+                  <PencilSquareIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">Edit Expense Entry</h3>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Modify expense details, amount, category, or receipt
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseEditExpense}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveEditExpense();
+              }}
+              className="space-y-4"
+            >
+              <FormField label="Expense Type">
+                <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-slate-200/80 bg-slate-100/90 p-1 dark:border-slate-800 dark:bg-slate-800/80">
+                  {EXPENSE_TYPE_OPTIONS.map((option) => {
+                    const active = editExpenseDraft.type === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() =>
+                          setEditExpenseDraft((draft) => ({
+                            ...draft,
+                            type: option.key,
+                            month: draft.month || getReportMonthValue(selectedReport),
+                            date: draft.date || (editingExpense.type === 'daily' ? editingExpense.date : getTodayInputValue()),
+                          }))
+                        }
+                        className={`h-9 rounded-lg px-3 text-xs font-bold transition ${
+                          active
+                            ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-white font-black'
+                            : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                        }`}
+                        aria-pressed={active}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </FormField>
+
+              {editExpenseDraft.type === 'monthly' ? (
+                <FormField label="Month">
+                  <select
+                    value={editExpenseDraft.month || getReportMonthValue(selectedReport)}
+                    onChange={(event) =>
+                      setEditExpenseDraft((draft) => ({ ...draft, month: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  >
+                    {(detail?.reports || []).map((report) => (
+                      <option key={report.id} value={getReportMonthValue(report)}>
+                        {report.month_label}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+              ) : (
+                <FormField label="Date">
+                  <input
+                    type="date"
+                    value={editExpenseDraft.date}
+                    onChange={(event) =>
+                      setEditExpenseDraft((draft) => ({ ...draft, date: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </FormField>
+              )}
+
+              <FormField label="Expense Category">
+                <select
+                  value={editExpenseDraft.category}
+                  onChange={(event) =>
+                    setEditExpenseDraft((draft) => ({ ...draft, category: event.target.value }))
+                  }
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                >
+                  {EXPENSE_CATEGORY_OPTIONS.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <FormField
+                label="Amount"
+                value={editExpenseDraft.amount}
+                onChange={(event) =>
+                  setEditExpenseDraft((draft) => ({ ...draft, amount: event.target.value }))
+                }
+                min="0"
+                step="0.01"
+              />
+
+              <FormField label="Supplier">
+                <input
+                  type="text"
+                  value={editExpenseDraft.supplier}
+                  onChange={(event) =>
+                    setEditExpenseDraft((draft) => ({ ...draft, supplier: event.target.value }))
+                  }
+                  placeholder="Optional supplier"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </FormField>
+
+              <FormField label="Description">
+                <textarea
+                  value={editExpenseDraft.description}
+                  onChange={(event) =>
+                    setEditExpenseDraft((draft) => ({ ...draft, description: event.target.value }))
+                  }
+                  rows={2}
+                  placeholder="Optional description"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white resize-none"
+                />
+              </FormField>
+
+              <FormField label="Receipt">
+                <div className="space-y-2.5">
+                  <input
+                    ref={editExpenseFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                    onChange={handleEditReceiptFileChange}
+                    className="hidden"
+                  />
+
+                  {!editReceiptValidation && !editExpenseDraft.receiptName ? (
+                    <button
+                      type="button"
+                      onClick={() => editExpenseFileInputRef.current?.click()}
+                      className="group flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-3 text-left transition hover:border-emerald-500 hover:bg-emerald-50/40 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:border-emerald-500 dark:hover:bg-emerald-950/20"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition group-hover:border-emerald-300 group-hover:text-emerald-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:group-hover:text-emerald-400">
+                          <ArrowUpTrayIcon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-slate-700 dark:text-slate-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                            Attach Receipt File
+                          </div>
+                          <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                            JPG, PNG, WEBP, GIF, PDF (Max: 5 MB)
+                          </div>
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-2xs group-hover:border-emerald-300 group-hover:text-emerald-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:group-hover:border-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
+                        Browse
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center justify-between rounded-xl border border-emerald-300/80 bg-emerald-50/80 p-3 dark:border-emerald-800/80 dark:bg-emerald-950/40">
+                      <div className="flex items-center gap-2.5 overflow-hidden">
+                        {editReceiptDataUrl && !editReceiptValidation?.isPdf ? (
+                          <img
+                            src={editReceiptDataUrl}
+                            alt="Receipt preview"
+                            className="h-10 w-10 shrink-0 rounded-lg object-cover border border-emerald-300 shadow-2xs"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
+                            <PhotoIcon className="h-5 w-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="truncate text-xs font-bold text-slate-900 dark:text-white font-mono"
+                              title={editExpenseDraft.receiptName}
+                            >
+                              {editExpenseDraft.receiptName}
+                            </span>
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200">
+                              <ShieldCheckIcon className="h-3 w-3" />
+                              {editReceiptValidation ? 'New File' : 'Existing'}
+                            </span>
+                          </div>
+                          {editReceiptValidation?.sizeFormatted && (
+                            <span className="text-xs text-slate-500 dark:text-slate-400">
+                              {editReceiptValidation.sizeFormatted}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editReceiptDataUrl) {
+                              setActivePreviewReceipt({
+                                filename: editExpenseDraft.receiptName || 'Receipt',
+                                dataUrl: editReceiptDataUrl,
+                                category: editExpenseDraft.category,
+                                amount: editExpenseDraft.amount || 0,
+                                date: editExpenseDraft.type === 'monthly' ? editExpenseDraft.month : editExpenseDraft.date,
+                                supplier: editExpenseDraft.supplier,
+                                description: editExpenseDraft.description,
+                                type: editExpenseDraft.type,
+                                isPdf: editReceiptValidation?.isPdf,
+                                mimeType: editReceiptValidation?.mimeType,
+                              });
+                            } else if (editingExpense.receipt && editingExpense.receipt !== 'No receipt') {
+                              setActivePreviewReceipt(editingExpense);
+                            }
+                          }}
+                          title="Preview receipt"
+                          className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                        >
+                          <EyeIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => editExpenseFileInputRef.current?.click()}
+                          title="Change file"
+                          className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-200/60 transition dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          <ArrowPathIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearEditReceiptUpload}
+                          title="Remove receipt"
+                          className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-100 transition dark:text-rose-400 dark:hover:bg-rose-950/60"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {editReceiptError && (
+                    <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-300">
+                      <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                      <span>{editReceiptError}</span>
+                    </div>
+                  )}
+                </div>
+              </FormField>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={handleCloseEditExpense}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEditExpense || !canSaveSelectedSchoolYear}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+                >
+                  <PencilSquareIcon className="h-4 w-4 stroke-[2]" />
+                  {savingEditExpense ? 'Saving Changes...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Expense Confirmation Modal */}
+      {deletingExpense && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
+                  <TrashIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">Delete Expense Record</h3>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Are you sure you want to remove this expense?
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseDeleteExpense}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-rose-200/80 bg-rose-50/70 p-3 text-xs text-rose-800 dark:border-rose-800/50 dark:bg-rose-950/30 dark:text-rose-300">
+              <strong>Warning:</strong> This will delete this expense entry and update the category totals in the monthly report. Operating expenses and net profit on the overview tab will be automatically recalculated.
+            </div>
+
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 space-y-2 text-xs dark:border-slate-800 dark:bg-slate-800/60">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400 font-bold">Category:</span>
+                <span className="font-bold text-slate-900 dark:text-white">{deletingExpense.category}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400 font-bold">Amount:</span>
+                <span className="font-black text-rose-600 dark:text-rose-400 text-sm">
+                  {formatCurrency(deletingExpense.amount)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400 font-bold">Date / Month:</span>
+                <span className="font-medium text-slate-800 dark:text-slate-200">{deletingExpense.date}</span>
+              </div>
+              {deletingExpense.supplier && deletingExpense.supplier !== '-' && (
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 dark:text-slate-400 font-bold">Supplier:</span>
+                  <span className="font-medium text-slate-800 dark:text-slate-200">{deletingExpense.supplier}</span>
+                </div>
+              )}
+              {deletingExpense.description && deletingExpense.description !== '-' && deletingExpense.description !== 'Monthly category total' && (
+                <div className="flex justify-between items-start">
+                  <span className="text-slate-500 dark:text-slate-400 font-bold">Description:</span>
+                  <span className="font-medium text-slate-800 dark:text-slate-200 text-right max-w-[200px] truncate" title={deletingExpense.description}>
+                    {deletingExpense.description}
+                  </span>
+                </div>
+              )}
+              {deletingExpense.receipt && deletingExpense.receipt !== 'No receipt' && (
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 dark:text-slate-400 font-bold">Receipt:</span>
+                  <span className="font-mono text-slate-800 dark:text-slate-200 text-right max-w-[200px] truncate" title={deletingExpense.receipt}>
+                    {deletingExpense.receipt}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCloseDeleteExpense}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteExpense}
+                disabled={savingDeleteExpense || !canSaveSelectedSchoolYear}
+                className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-rose-700 active:scale-95 disabled:opacity-50"
+              >
+                <TrashIcon className="h-4 w-4 stroke-[2.5]" />
+                {savingDeleteExpense ? 'Deleting...' : 'Delete Expense'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

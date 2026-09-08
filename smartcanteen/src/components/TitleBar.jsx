@@ -59,9 +59,7 @@ export default function TitleBar() {
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
-    { name: 'Financial Reports', path: '/financial-reports', icon: BanknotesIcon },
-    { name: 'Daily Sales', path: '/daily-sales', icon: DocumentChartBarIcon },
-    { name: 'Expenses', path: '/expenses', icon: ReceiptPercentIcon },
+    { name: 'Financial Management', path: '/financial-management', icon: BanknotesIcon },
     { name: 'School Years', path: '/school-years', icon: CalendarDaysIcon },
     { name: 'Reports', path: '/reports', icon: ClipboardDocumentListIcon },
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
@@ -241,9 +239,8 @@ export default function TitleBar() {
     if (p.includes('/dashboard')) return 'Dashboard';
     if (p.includes('/inventory')) return 'Inventory Management';
     if (p.includes('/transactions')) return 'Transactions';
-    if (p.includes('/financial-reports')) return 'Financial Reports';
+    if (p.includes('/financial-management') || p.includes('/financial-reports') || p.includes('/expenses')) return 'Financial Management';
     if (p.includes('/daily-sales')) return 'Daily Sales';
-    if (p.includes('/expenses')) return 'Expense Tracking';
     if (p.includes('/school-years')) return 'School Years';
     if (p.includes('/reports')) return 'Reports';
     if (p.includes('/analytics')) return 'Analytics';

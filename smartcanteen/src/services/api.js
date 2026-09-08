@@ -1404,6 +1404,8 @@ export const API = {
   getAlertState: () => request('GET', '/alert-state'),
   updateAlertState: ({ alert_type, state, signatures }) =>
     request('POST', '/alert-state', { alert_type, state, signatures }),
+  deleteAlertState: ({ alert_type, state, signatures }) =>
+    request('DELETE', '/alert-state', { alert_type, state, signatures }),
   getModuleSettings: () => request('GET', '/settings/modules'),
   updateModuleSettings: async (data) => {
     const response = await request('PUT', '/settings/modules', data);

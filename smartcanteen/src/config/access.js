@@ -36,6 +36,12 @@ export const APP_ROUTE_ACCESS = [
     moduleKey: MODULE_KEYS.ANALYTICS,
   },
   {
+    key: 'financialManagement',
+    path: '/financial-management',
+    allowedRoles: ['admin'],
+    moduleKey: MODULE_KEYS.FINANCIAL_REPORTS,
+  },
+  {
     key: 'financialReports',
     path: '/financial-reports',
     allowedRoles: ['admin'],

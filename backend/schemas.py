@@ -178,7 +178,7 @@ class UserResponse(BaseModel):
 class ProductCreate(BaseModel):
     name:         str
     category:     str   = "General"
-    price:        float
+    price:        float = 0.0
     stock:        float = 0.0
     min_stock:    float = 5.0
     unit_type:    str   = "pcs"
@@ -301,6 +301,13 @@ class AlertStateUpdateRequest(BaseModel):
     signatures: List[str]
 
 
+class AlertStateDeleteRequest(BaseModel):
+    alert_type: str
+    signatures: List[str]
+    state: Optional[str] = None
+
+
+
 # Module visibility settings
 
 class ModuleSettingInput(BaseModel):
@@ -318,6 +325,7 @@ class FinancialSchoolYearCreate(BaseModel):
     start_year: int
     end_year: Optional[int] = None
     set_active: bool = True
+    opening_beginning_cash: Optional[float] = None
 
 
 class FinancialSchoolYearUpdate(BaseModel):
@@ -362,6 +370,7 @@ class FinancialAllocationsUpdate(BaseModel):
 
 class FinancialFundMonitoringInput(BaseModel):
     category_key: str
+    opening_balance: Optional[float] = None
     interest: float = 0.0
     expenses: float = 0.0
     others: float = 0.0

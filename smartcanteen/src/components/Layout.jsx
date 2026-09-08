@@ -424,15 +424,15 @@ function formatAccountNoticeTime(notice) {
 
 function getPermissionLabel(status) {
   if (status === 'granted') {
-    return 'Phone alerts enabled';
+    return 'Desktop alerts enabled';
   }
   if (status === 'denied') {
-    return 'Phone alerts blocked';
+    return 'Desktop alerts blocked';
   }
   if (status === 'unsupported') {
-    return 'Phone alerts unavailable';
+    return 'Desktop alerts unavailable';
   }
-  return 'Phone alerts not enabled';
+  return 'Desktop alerts not enabled';
 }
 
 function formatWorkspaceDate(date = new Date()) {
@@ -467,14 +467,11 @@ function getNavDescription(path) {
   if (path === '/analytics') {
     return 'Revenue trends & insights';
   }
-  if (path === '/financial-reports') {
-    return 'Monthly canteen finance & exports';
+  if (path === '/financial-management' || path === '/financial-reports' || path === '/expenses') {
+    return 'Monthly finance, expenses & fund allocation';
   }
   if (path === '/daily-sales') {
     return 'Daily sales totals & cash tracking';
-  }
-  if (path === '/expenses') {
-    return 'Operating expenses & fund costs';
   }
   if (path === '/school-years') {
     return 'School year periods & reports';
@@ -495,8 +492,9 @@ function getNavDescription(path) {
     return 'System & workspace setup';
   }
 
-  return 'Workspace module';
+  return 'SmartCanteen workspace';
 }
+
 export default function Layout({ children, onLogout }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -542,9 +540,7 @@ export default function Layout({ children, onLogout }) {
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
-    { name: 'Financial Reports', path: '/financial-reports', icon: BanknotesIcon },
-    { name: 'Daily Sales', path: '/daily-sales', icon: DocumentChartBarIcon },
-    { name: 'Expenses', path: '/expenses', icon: ReceiptPercentIcon },
+    { name: 'Financial Management', path: '/financial-management', icon: BanknotesIcon },
     { name: 'School Years', path: '/school-years', icon: CalendarDaysIcon },
     { name: 'Reports', path: '/reports', icon: ClipboardDocumentListIcon },
     { name: 'Analytics', path: '/analytics', icon: ArrowTrendingUpIcon },
@@ -562,7 +558,16 @@ export default function Layout({ children, onLogout }) {
         isRouteEnabled(route, modules)
     );
   });
-  const isActive = (path) => location.pathname === path;
+  const isActive = (path) => {
+    if (path === '/financial-management') {
+      return (
+        location.pathname === '/financial-management' ||
+        location.pathname === '/financial-reports' ||
+        location.pathname === '/expenses'
+      );
+    }
+    return location.pathname === path;
+  };
   const effectiveLowStockItems = useMemo(
     () =>
       notificationsModuleEnabled && inventoryModuleEnabled
@@ -638,7 +643,7 @@ export default function Layout({ children, onLogout }) {
       setLowStockItems([]);
       lowStockItemsRef.current = [];
       persistAlertSignature(LOW_STOCK_SIGNATURE_KEY, '');
-      return { visibleItems: [], unreadItems: [], hasFreshEntries: false };
+      return { visibleItems: [], unreadItems: [], hasFreshEntries: false, activeSignatures: new Set() };
     }
 
     try {
@@ -648,6 +653,13 @@ export default function Layout({ children, onLogout }) {
             .filter(isBelowMinimumStock)
             .sort((left, right) => (left.stock - right.stock) || left.name.localeCompare(right.name))
         : [];
+      const activeSignatures = new Set(items.map((item) => buildLowStockAlertKey(item)));
+
+      // Auto-clear resolved alerts on replenishment:
+      // Remove any stored dismissed or read keys for products that are no longer low-stock.
+      pruneStoredAlertSignatures(DISMISSED_LOW_STOCK_ALERTS_KEY, activeSignatures);
+      pruneStoredAlertSignatures(READ_LOW_STOCK_ALERTS_KEY, activeSignatures);
+
       const visibleItems = filterDismissedAlerts(
         items,
         DISMISSED_LOW_STOCK_ALERTS_KEY,
@@ -681,7 +693,7 @@ export default function Layout({ children, onLogout }) {
         }
       }
 
-      return { visibleItems, unreadItems, hasFreshEntries };
+      return { visibleItems, unreadItems, hasFreshEntries, activeSignatures };
     } catch {
       // Keep the last successful alert state if refresh fails.
       const visibleItems = lowStockItemsRef.current;
@@ -694,6 +706,7 @@ export default function Layout({ children, onLogout }) {
           buildLowStockAlertKey
         ),
         hasFreshEntries: false,
+        activeSignatures: new Set(visibleItems.map(buildLowStockAlertKey)),
       };
     }
   }, [inventoryModuleEnabled, notificationsModuleEnabled]);
@@ -703,12 +716,17 @@ export default function Layout({ children, onLogout }) {
       setHighDemandItems([]);
       highDemandItemsRef.current = [];
       persistAlertSignature(HIGH_DEMAND_SIGNATURE_KEY, '');
-      return { visibleItems: [], unreadItems: [], hasFreshEntries: false };
+      return { visibleItems: [], unreadItems: [], hasFreshEntries: false, activeSignatures: new Set() };
     }
 
     try {
       const response = await API.getPredictions();
       const items = normalizeHighDemandItems(response);
+      const activeSignatures = new Set(items.map((item) => buildHighDemandAlertKey(item)));
+
+      pruneStoredAlertSignatures(DISMISSED_HIGH_DEMAND_ALERTS_KEY, activeSignatures);
+      pruneStoredAlertSignatures(READ_HIGH_DEMAND_ALERTS_KEY, activeSignatures);
+
       const visibleItems = filterDismissedAlerts(
         items,
         DISMISSED_HIGH_DEMAND_ALERTS_KEY,
@@ -742,7 +760,7 @@ export default function Layout({ children, onLogout }) {
         }
       }
 
-      return { visibleItems, unreadItems, hasFreshEntries };
+      return { visibleItems, unreadItems, hasFreshEntries, activeSignatures };
     } catch {
       // Keep the last successful forecast alert state if refresh fails.
       const visibleItems = highDemandItemsRef.current;
@@ -755,11 +773,12 @@ export default function Layout({ children, onLogout }) {
           buildHighDemandAlertKey
         ),
         hasFreshEntries: false,
+        activeSignatures: new Set(visibleItems.map(buildHighDemandAlertKey)),
       };
     }
   }, [demandForecastModuleEnabled, notificationsModuleEnabled]);
 
-  const syncAlertStateWithServer = useCallback(async () => {
+  const syncAlertStateWithServer = useCallback(async (activeLowStockSignatures, activeHighDemandSignatures) => {
     if (!notificationsModuleEnabled) {
       return false;
     }
@@ -771,33 +790,65 @@ export default function Layout({ children, onLogout }) {
     try {
       const serverState = await API.getAlertState();
       let localStateChanged = false;
+
+      const lowStockActive = activeLowStockSignatures instanceof Set
+        ? activeLowStockSignatures
+        : new Set(lowStockItemsRef.current.map(buildLowStockAlertKey));
+      const highDemandActive = activeHighDemandSignatures instanceof Set
+        ? activeHighDemandSignatures
+        : new Set(highDemandItemsRef.current.map(buildHighDemandAlertKey));
+
       const syncTargets = [
         {
           alertType: LOW_STOCK_ALERT_TYPE,
           state: 'read',
           storageKey: READ_LOW_STOCK_ALERTS_KEY,
+          activeSet: lowStockActive,
         },
         {
           alertType: HIGH_DEMAND_ALERT_TYPE,
           state: 'read',
           storageKey: READ_HIGH_DEMAND_ALERTS_KEY,
+          activeSet: highDemandActive,
         },
         {
           alertType: LOW_STOCK_ALERT_TYPE,
           state: 'dismissed',
           storageKey: DISMISSED_LOW_STOCK_ALERTS_KEY,
+          activeSet: lowStockActive,
         },
         {
           alertType: HIGH_DEMAND_ALERT_TYPE,
           state: 'dismissed',
           storageKey: DISMISSED_HIGH_DEMAND_ALERTS_KEY,
+          activeSet: highDemandActive,
         },
       ];
 
       await Promise.allSettled(
-        syncTargets.map(async ({ alertType, state, storageKey }) => {
-          const localSignatures = readDismissedAlertSignatures(storageKey);
-          const serverSignatures = getServerAlertStateSignatures(serverState, state, alertType);
+        syncTargets.map(async ({ alertType, state, storageKey, activeSet }) => {
+          let localSignatures = readDismissedAlertSignatures(storageKey);
+          let serverSignatures = getServerAlertStateSignatures(serverState, state, alertType);
+
+          // Prune resolved signatures that are no longer active
+          if (activeSet instanceof Set) {
+            const prunedLocal = new Set([...localSignatures].filter((sig) => activeSet.has(sig)));
+            if (prunedLocal.size !== localSignatures.size) {
+              saveDismissedAlertSignatures(storageKey, prunedLocal);
+              localSignatures = prunedLocal;
+              localStateChanged = true;
+            }
+            const staleServerSignatures = serverSignatures.filter((sig) => !activeSet.has(sig));
+            if (staleServerSignatures.length > 0) {
+              API.deleteAlertState({
+                alert_type: alertType,
+                state,
+                signatures: staleServerSignatures,
+              }).catch(() => {});
+            }
+            serverSignatures = serverSignatures.filter((sig) => activeSet.has(sig));
+          }
+
           const serverSignatureSet = new Set(serverSignatures);
           const missingServerSignatures = [...localSignatures].filter(
             (signature) => !serverSignatureSet.has(signature)
@@ -875,11 +926,14 @@ export default function Layout({ children, onLogout }) {
     setAlertsLoading(true);
 
     try {
-      await syncAlertStateWithServer();
+      // Establish authoritative active alerts from product and forecast data first
       const [lowStockResult, highDemandResult] = await Promise.all([
         loadLowStockAlerts({ notifyOnChange }),
         loadHighDemandAlerts({ notifyOnChange }),
       ]);
+      // Sync alert state with server passing active signatures to prevent resurrecting resolved alerts
+      await syncAlertStateWithServer(lowStockResult.activeSignatures, highDemandResult.activeSignatures);
+
       const totalVisibleAlerts =
         lowStockResult.visibleItems.length + highDemandResult.visibleItems.length;
       const totalUnreadAlerts =
@@ -887,13 +941,7 @@ export default function Layout({ children, onLogout }) {
       const hasFreshAlerts =
         lowStockResult.hasFreshEntries || highDemandResult.hasFreshEntries;
 
-      setHasUnreadAlerts((currentValue) => {
-        if (totalVisibleAlerts === 0 || totalUnreadAlerts === 0) {
-          return false;
-        }
-
-        return notifyOnChange && hasFreshAlerts ? true : currentValue;
-      });
+      setHasUnreadAlerts(totalVisibleAlerts > 0 && totalUnreadAlerts > 0);
       setLastAlertCheck(new Date().toISOString());
     } finally {
       alertsRequestInFlightRef.current = false;
@@ -966,7 +1014,7 @@ export default function Layout({ children, onLogout }) {
       );
 
       await configureBackgroundAlertChecks();
-      window.showToast?.('Phone alerts enabled for stock and demand warnings.', 'success');
+      window.showToast?.('Desktop alerts enabled for stock and demand warnings.', 'success');
       if (unreadLowStockItems.length > 0) {
         await sendLowStockDeviceAlert(unreadLowStockItems);
       }
@@ -977,11 +1025,11 @@ export default function Layout({ children, onLogout }) {
     }
 
     if (permission === 'unsupported') {
-      window.showToast?.('Phone notifications are not available on this device.', 'warning');
+      window.showToast?.('Desktop notifications are not available on this device.', 'warning');
       return;
     }
 
-    window.showToast?.('Phone notification permission was not granted.', 'warning');
+    window.showToast?.('Desktop notification permission was not granted.', 'warning');
   }
 
   function openNotifications() {
@@ -1626,7 +1674,7 @@ export default function Layout({ children, onLogout }) {
                             onClick={handleEnableAlerts}
                             className="notification-action rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                           >
-                            Enable phone alerts
+                            Enable desktop alerts
                           </button>
                         )}
                         <button
@@ -1883,7 +1931,7 @@ export default function Layout({ children, onLogout }) {
                             onClick={handleEnableAlerts}
                             className="notification-action rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                           >
-                            Enable phone alerts
+                            Enable desktop alerts
                           </button>
                         )}
                         <button

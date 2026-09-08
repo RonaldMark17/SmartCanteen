@@ -1161,7 +1161,7 @@ export default function Dashboard() {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/financial-reports')}
+              onClick={() => navigate('/financial-management')}
               className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
             >
               <span>View statement</span>
@@ -1190,7 +1190,7 @@ export default function Dashboard() {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/expenses')}
+              onClick={() => navigate('/financial-management?tab=expenses')}
               className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
             >
               <span>View expenses</span>
@@ -1315,7 +1315,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
           <button
             type="button"
-            onClick={() => navigate('/financial-reports')}
+            onClick={() => navigate('/financial-management')}
             className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 active:scale-95"
           >
             <DocumentTextIcon className="h-4 w-4" />
@@ -1323,7 +1323,7 @@ export default function Dashboard() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/expenses')}
+            onClick={() => navigate('/financial-management?tab=expenses')}
             className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
           >
             <PlusCircleIcon className="h-4 w-4 text-emerald-600" />
@@ -1331,7 +1331,7 @@ export default function Dashboard() {
           </button>
           <button
             type="button"
-            onClick={() => navigate(posEnabled ? '/pos' : '/financial-reports')}
+            onClick={() => navigate(posEnabled ? '/pos' : '/financial-management')}
             className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
           >
             <ShoppingCartIcon className="h-4 w-4 text-sky-600" />
