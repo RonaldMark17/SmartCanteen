@@ -2,9 +2,9 @@
   "name": "meals-client",
   "productName": "MEALS",
   "description": "MEALS Desktop Client Application",
-  "author": "SmartCanteen Team",
+  "author": "LSPU-SPCC 4WAMD1",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -14,11 +14,14 @@
     "preview": "vite preview",
     "electron:start": "electron electron/main.cjs",
     "electron:build": "npm run build && electron-builder --win",
-    "build:electron": "npm run build && electron-builder --win"
+    "build:electron": "npm run build && electron-builder --win",
+    "update:meals": "powershell -ExecutionPolicy Bypass -File ../scripts/update_meals.ps1"
   },
   "build": {
     "appId": "com.meals.smartcanteen",
     "productName": "MEALS",
+    "companyName": "LSPU-SPCC 4WAMD1",
+    "copyright": "Copyright © 2026 LSPU-SPCC 4WAMD1",
     "directories": {
       "output": "dist-electron"
     },
@@ -34,6 +37,10 @@
     ],
     "win": {
       "icon": "electron/icon.png",
+      "legalCopyright": "Copyright © 2026 LSPU-SPCC 4WAMD1",
+      "publisherName": [
+        "LSPU-SPCC 4WAMD1"
+      ],
       "target": [
         {
           "target": "nsis",

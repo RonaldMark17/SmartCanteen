@@ -97,7 +97,7 @@ export default function AppSplashScreen({ onFinished }) {
 
       {/* Footer Version Tag */}
       <div className="absolute bottom-6 text-[11px] font-mono font-medium text-slate-600">
-        v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.1.0'} • Desktop Edition
+        v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.2.0'} • Desktop Edition
       </div>
     </div>
   );

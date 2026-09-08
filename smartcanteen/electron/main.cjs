@@ -255,7 +255,7 @@ function getAppVersion() {
       if (pkg.version) return pkg.version;
     }
   } catch {}
-  return app.getVersion() || '1.1.0';
+  return app.getVersion() || '1.2.0';
 }
 
 ipcMain.handle('get-system-info', () => {

@@ -575,7 +575,7 @@ export default function TitleBar() {
               </p>
 
               <div className="mt-2.5 inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-950/50 px-3 py-1 text-[11px] font-bold text-emerald-300">
-                <span>Version {systemInfo?.appVersion || (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.1.0')}</span>
+                <span>Version {systemInfo?.appVersion || (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.2.0')}</span>
                 <span className="text-emerald-600">•</span>
                 <span className="text-emerald-400/80">Desktop Edition</span>
               </div>
@@ -622,7 +622,7 @@ export default function TitleBar() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">Release Build</span>
-                  <span className="font-mono text-slate-200">v{systemInfo?.appVersion || (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.1.0')} (August 2026)</span>
+                  <span className="font-mono text-slate-200">v{systemInfo?.appVersion || (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.2.0')} (September 2026)</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">Server Synchronization</span>
@@ -636,7 +636,7 @@ export default function TitleBar() {
 
             {/* Footer */}
             <div className="flex items-center justify-between border-t border-slate-800 bg-slate-950/60 px-6 py-3.5">
-              <span className="text-[11px] text-slate-500">© 2026 MEALS System</span>
+              <span className="text-[11px] text-slate-500">© 2026 LSPU-SPCC 4WAMD1 • MEALS System</span>
               <button
                 type="button"
                 onClick={() => setAboutOpen(false)}

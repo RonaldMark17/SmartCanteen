@@ -1,7 +1,7 @@
 # 🖥️ MEALS Desktop Client Installation & Setup Guide
 
 [![Windows](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-0078D6.svg?style=flat&logo=Windows&logoColor=white)](#)
-[![Client](https://img.shields.io/badge/Client-MEALS%20v1.1.0-009688.svg?style=flat)](#)
+[![Client](https://img.shields.io/badge/Client-MEALS%20v1.2.0-009688.svg?style=flat)](#)
 
 This folder contains pre-compiled Windows executable binaries for the **MEALS Desktop Client**.
 

@@ -1,0 +1,14 @@
+uvicorn[standard]
+python-jose[cryptography]
+bcrypt
+python-multipart
+pandas
+openpyxl
+pillow
+sqlalchemy
+numpy
+scikit-learn
+fastapi
+pydantic
+psycopg[binary]
+xgboost

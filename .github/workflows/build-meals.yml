@@ -1,0 +1,58 @@
+
+name: Build & Release MEALS Package
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-package:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: smartcanteen/package-lock.json
+
+      - name: Install Frontend Dependencies
+        working-directory: smartcanteen
+        run: npm ci
+
+      - name: Run Full MEALS Package Update
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update_meals.ps1
+
+      - name: Upload Client Executables Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MEALS-Client-Binaries
+          path: |
+            MEALS/Client/MEALS Setup.exe
+            MEALS/Client/MEALS.exe
+            MEALS/version.json
+
+      - name: Upload Server Deployment Files Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MEALS-Server-Config
+          path: MEALS/Server/**
+
+      - name: Create GitHub Release (On Version Tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            MEALS/Client/MEALS Setup.exe
+            MEALS/Client/MEALS.exe
+            MEALS/version.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

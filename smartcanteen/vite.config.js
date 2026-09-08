@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
   return {
     base: './',
     define: {
-      __APP_VERSION__: JSON.stringify(packageJson.version || '1.1.0'),
+      __APP_VERSION__: JSON.stringify(packageJson.version || '1.2.0'),
     },
     plugins: [react()],
     server: {
