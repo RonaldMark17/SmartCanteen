@@ -3161,18 +3161,6 @@ export default function FinancialReports({ mode = 'financial' }) {
                               {isAdmin ? (
                                 <button
                                   type="button"
-                                  onClick={() => handleUpdateSchoolYearStatus(schoolYear.id, true)}
-                                  disabled={updatingSchoolYear || rowIsActive}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 shadow-2xs transition hover:bg-emerald-100 disabled:opacity-40 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
-                                  title={rowIsActive ? 'This school year is already active' : `Activate ${schoolYear.name}`}
-                                >
-                                  <CheckCircleIcon className="h-3.5 w-3.5" />
-                                  Activate
-                                </button>
-                              ) : null}
-                              {isAdmin ? (
-                                <button
-                                  type="button"
                                   onClick={() => handleUpdateSchoolYearStatus(schoolYear.id, false)}
                                   disabled={updatingSchoolYear || rowIsActive}
                                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
