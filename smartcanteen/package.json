@@ -64,8 +64,7 @@
     "portable": {
       "artifactName": "MEALS.exe",
       "useZip": true,
-      "unpackDirName": "MEALS-Portable",
-      "splashImage": "electron/splash.bmp"
+      "unpackDirName": "MEALS-Portable"
     }
   },
   "dependencies": {},

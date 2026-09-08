@@ -61,7 +61,40 @@ function loadAppConfig() {
 }
 
 let mainWindow = null;
+let splashWindow = null;
 let cachedConfig = null;
+
+function createSplashWindow(windowIcon) {
+  const splashFile = path.join(__dirname, 'splash.html');
+  if (!fs.existsSync(splashFile)) return;
+
+  splashWindow = new BrowserWindow({
+    width: 520,
+    height: 270,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    center: true,
+    show: false,
+    icon: windowIcon,
+    skipTaskbar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  splashWindow.loadFile(splashFile).catch((err) => {
+    console.warn('[Main] Failed to load splash.html:', err.message);
+  });
+
+  splashWindow.once('ready-to-show', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.show();
+    }
+  });
+}
 
 function createWindow() {
   cachedConfig = loadAppConfig();
@@ -69,6 +102,8 @@ function createWindow() {
   const appIconPath = path.join(__dirname, 'icon.png');
   const fallbackIconPath = path.join(__dirname, '../public/logo.png');
   const windowIcon = fs.existsSync(appIconPath) ? appIconPath : (fs.existsSync(fallbackIconPath) ? fallbackIconPath : undefined);
+
+  createSplashWindow(windowIcon);
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -80,7 +115,7 @@ function createWindow() {
     frame: false, // Frameless for custom native TitleBar
     autoHideMenuBar: true,
     backgroundColor: '#090d16',
-    show: true,
+    show: false, // Hidden while splashWindow is active
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -104,8 +139,53 @@ function createWindow() {
   mainWindow.on('enter-full-screen', () => notifyMaximizeState());
   mainWindow.on('leave-full-screen', () => notifyMaximizeState());
 
-  // Maximize window by default
-  mainWindow.maximize();
+  const splashStartTime = Date.now();
+  const MIN_SPLASH_TIME = 1900;
+  let hasShownMainWindow = false;
+
+  const showMainWindow = () => {
+    if (hasShownMainWindow) return;
+    hasShownMainWindow = true;
+
+    const elapsed = Date.now() - splashStartTime;
+    const remainingTime = Math.max(0, MIN_SPLASH_TIME - elapsed);
+
+    setTimeout(() => {
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.webContents.executeJavaScript(`
+          const c = document.getElementById('card');
+          if (c) c.classList.add('closing');
+        `).catch(() => {});
+
+        setTimeout(() => {
+          if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.close();
+            splashWindow = null;
+          }
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.maximize();
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        }, 350);
+      } else {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.maximize();
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    }, remainingTime);
+  };
+
+  mainWindow.once('ready-to-show', () => {
+    showMainWindow();
+  });
+
+  // Fallback in case ready-to-show is delayed
+  setTimeout(() => {
+    showMainWindow();
+  }, 3500);
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);

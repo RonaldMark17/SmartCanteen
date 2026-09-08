@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MEALS Launcher</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    .splash-card {
+      position: relative;
+      width: 480px;
+      height: 240px;
+      background: linear-gradient(145deg, #0b1322, #070d18);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 18px;
+      box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.8),
+                  0 0 24px rgba(16, 185, 129, 0.15),
+                  inset 0 1px 1px rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      padding: 0 32px;
+      gap: 28px;
+      opacity: 0;
+      transform: scale(0.96);
+      animation: cardEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    .splash-card.closing {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+
+    @keyframes cardEnter {
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    /* Ambient background glow */
+    .glow-bg {
+      position: absolute;
+      top: -40px;
+      right: -40px;
+      width: 160px;
+      height: 160px;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.18) 0%, transparent 70%);
+      pointer-events: none;
+      filter: blur(20px);
+    }
+
+    /* Logo Styling & Animation */
+    .logo-wrapper {
+      position: relative;
+      flex-shrink: 0;
+      width: 88px;
+      height: 88px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo-aura {
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.35) 0%, transparent 70%);
+      animation: auraPulse 2.4s ease-in-out infinite;
+    }
+
+    @keyframes auraPulse {
+      0%, 100% {
+        opacity: 0.4;
+        transform: scale(0.96);
+      }
+      50% {
+        opacity: 0.85;
+        transform: scale(1.08);
+      }
+    }
+
+    .logo-img {
+      position: relative;
+      width: 84px;
+      height: 84px;
+      object-fit: contain;
+      border-radius: 50%;
+      border: 2px solid rgba(16, 185, 129, 0.45);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 12px rgba(16, 185, 129, 0.25);
+      animation: logoFloat 3s ease-in-out infinite;
+    }
+
+    @keyframes logoFloat {
+      0%, 100% {
+        transform: translateY(0);
+      }
+      50% {
+        transform: translateY(-3px);
+      }
+    }
+
+    /* Content details */
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .title {
+      font-size: 26px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      color: #ffffff;
+      background: linear-gradient(135deg, #ffffff 40%, #a7f3d0 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .version-tag {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      letter-spacing: 0.3px;
+    }
+
+    .publisher {
+      font-size: 12px;
+      font-weight: 700;
+      color: #10b981;
+      letter-spacing: 0.6px;
+      margin-top: 3px;
+      text-transform: uppercase;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      font-weight: 500;
+      color: #64748b;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Animated Progress Bar */
+    .progress-track {
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 18px;
+      position: relative;
+    }
+
+    .progress-fill {
+      position: relative;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #10b981, #34d399, #6ee7b7);
+      border-radius: 999px;
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.7);
+      overflow: hidden;
+      animation: fillProgress 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    }
+
+    .progress-fill::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+      animation: shimmer 1.2s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+      0% {
+        transform: translateX(-100%);
+      }
+      100% {
+        transform: translateX(100%);
+      }
+    }
+
+    @keyframes fillProgress {
+      0% {
+        width: 0%;
+      }
+      35% {
+        width: 48%;
+      }
+      75% {
+        width: 82%;
+      }
+      100% {
+        width: 100%;
+      }
+    }
+
+    /* Status Text */
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 9px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+      animation: dotBlink 1.2s ease-in-out infinite;
+    }
+
+    @keyframes dotBlink {
+      0%, 100% {
+        opacity: 0.4;
+        transform: scale(0.9);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.15);
+      }
+    }
+
+    .status-text {
+      font-size: 11px;
+      font-weight: 500;
+      color: #94a3b8;
+      transition: opacity 0.2s ease;
+    }
+  </style>
+</head>
+<body>
+  <div class="splash-card" id="card">
+    <div class="glow-bg"></div>
+
+    <div class="logo-wrapper">
+      <div class="logo-aura"></div>
+      <img src="icon.png" alt="MEALS Logo" class="logo-img" onerror="this.src='../public/logo.png'">
+    </div>
+
+    <div class="content">
+      <div class="title-row">
+        <span class="title">MEALS</span>
+        <span class="version-tag">v1.2.0</span>
+      </div>
+
+      <div class="publisher">LSPU-SPCC 4WAMD1</div>
+      <div class="subtitle">Management of Expenses, Assets & Logistics</div>
+
+      <div class="progress-track">
+        <div class="progress-fill"></div>
+      </div>
+
+      <div class="status-row">
+        <div class="status-dot"></div>
+        <div class="status-text" id="statusLabel">Starting workspace...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const statusLabel = document.getElementById('statusLabel');
+    const stages = [
+      { at: 300, text: 'Initializing application runtime...' },
+      { at: 750, text: 'Connecting to database server...' },
+      { at: 1200, text: 'Loading modules & workspace...' },
+      { at: 1550, text: 'Ready!' }
+    ];
+
+    stages.forEach(stage => {
+      setTimeout(() => {
+        if (statusLabel) {
+          statusLabel.style.opacity = '0';
+          setTimeout(() => {
+            statusLabel.textContent = stage.text;
+            statusLabel.style.opacity = '1';
+          }, 150);
+        }
+      }, stage.at);
+    });
+  </script>
+</body>
+</html>
