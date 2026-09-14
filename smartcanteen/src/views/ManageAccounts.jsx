@@ -506,9 +506,7 @@ export default function ManageAccounts() {
           (currentUser?.username && editingUser.username === currentUser.username);
 
         if (isSelf) {
-          if (updatedUser?.access_token) {
-            localStorage.setItem('sc_token', updatedUser.access_token);
-          }
+          localStorage.removeItem('sc_token');
           if (updateCurrentUser) {
             updateCurrentUser(updatedUser);
           }

@@ -1811,8 +1811,15 @@ def _user_payload(db: Session, user: models.User) -> dict:
     }
 
 
-def _build_login_success(db: Session, user: models.User) -> dict[str, Any]:
+def _build_login_success(
+    db: Session,
+    user: models.User,
+    res: Optional[Response] = None,
+    req: Optional[Request] = None,
+) -> dict[str, Any]:
     token = auth.create_access_token({"sub": user.username})
+    if res is not None:
+        auth.set_auth_cookie(res, token, request=req)
     return {
         "access_token": token,
         "background_alert_token": auth.create_background_alert_token(user.username),
@@ -2403,7 +2410,7 @@ def _begin_authenticator_authentication(user: models.User):
 
 @app.post("/auth/login", include_in_schema=False)
 @app.post("/api/auth/login", tags=["Auth"])
-def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get_db)):
+def login(payload: schemas.LoginRequest, req: Request, res: Response, db: Session = Depends(get_db)):
     client_ip = _get_client_ip(req)
     device_id = req.headers.get("x-smartcanteen-device-id") or req.headers.get("x-device-id") or ""
     user = db.query(models.User).filter(models.User.username == payload.username).first()
@@ -2488,11 +2495,14 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
             )
 
     if user.authenticator_enabled and user.authenticator_secret:
-        trusted_device = _get_valid_trusted_device(db, user, payload.remember_device_token)
+        device_token = payload.remember_device_token or req.cookies.get(auth.TRUSTED_DEVICE_COOKIE_NAME)
+        trusted_device = _get_valid_trusted_device(db, user, device_token)
         if trusted_device:
             login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
             _clear_authenticator_verification_attempts(user)
-            response = _build_login_success(db, user)
+            response = _build_login_success(db, user, res=res, req=req)
+            if device_token:
+                auth.set_trusted_device_cookie(res, device_token, request=req)
             response["authenticator_mfa_verified"] = True
             response["remember_device_verified"] = True
             response["remember_device_expires_at"] = trusted_device.expires_at.isoformat() + "Z"
@@ -2514,7 +2524,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         if user.role != "admin":
             login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
             _clear_authenticator_verification_attempts(user)
-            response = _build_login_success(db, user)
+            response = _build_login_success(db, user, res=res, req=req)
             response["authenticator_mfa_enabled"] = False
             _add_audit_log(
                 db,
@@ -2579,6 +2589,7 @@ def _decode_authenticator_mfa_token(token: str) -> tuple[dict, str]:
 def authenticator_authentication_verify(
     data: schemas.AuthenticatorAuthenticationFinishRequest,
     req: Request,
+    res: Response,
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
@@ -2744,6 +2755,7 @@ def authenticator_authentication_verify(
     remember_device_expires_at = None
     if data.remember_device:
         remember_device_token, remember_device_expires_at = _create_trusted_device(db, user)
+        auth.set_trusted_device_cookie(res, remember_device_token, request=req)
 
     _add_audit_log(
         db,
@@ -2754,7 +2766,7 @@ def authenticator_authentication_verify(
     )
     db.commit()
 
-    response = _build_login_success(db, user)
+    response = _build_login_success(db, user, res=res, req=req)
     response["authenticator_mfa_verified"] = True
     response["user"]["authenticator_mfa_enabled"] = True
     response["recovery_codes_remaining"] = _count_recovery_codes(db, user)
@@ -3225,6 +3237,33 @@ def me(
     current: models.User = Depends(auth.get_current_user),
 ):
     return _user_payload(db, current)
+
+
+@app.post("/auth/logout", include_in_schema=False)
+@app.post("/api/auth/logout", tags=["Auth"])
+def logout(
+    res: Response,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    auth.clear_auth_cookies(res)
+    token = req.cookies.get(auth.AUTH_COOKIE_NAME)
+    if not token:
+        auth_header = req.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+    if token:
+        user = auth.get_user_from_token(token, db)
+        if user:
+            _add_audit_log(
+                db,
+                user_id=user.id,
+                action="LOGOUT",
+                details=f"User {user.username} logged out",
+                request=req,
+            )
+            db.commit()
+    return {"message": "Logged out successfully"}
 
 
 @app.get("/account/notices", include_in_schema=False)
@@ -3776,6 +3815,7 @@ def admin_update_user(
     user_id: int,
     data: schemas.UserUpdate,
     req: Request,
+    res: Response,
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
@@ -3834,7 +3874,9 @@ def admin_update_user(
     db.refresh(user)
     serialized = _serialize_admin_user(db, user)
     if user.id == current.id:
-        serialized["access_token"] = auth.create_access_token(data={"sub": user.username, "uid": user.id})
+        new_token = auth.create_access_token(data={"sub": user.username, "uid": user.id})
+        auth.set_auth_cookie(res, new_token, request=req)
+        serialized["access_token"] = new_token
     return serialized
 
 

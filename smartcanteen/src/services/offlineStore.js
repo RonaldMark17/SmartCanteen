@@ -6,6 +6,15 @@ const OFFLINE_FINANCIAL_MUTATIONS_STORAGE_KEY = 'sc_offline_financial_mutations_
 const OFFLINE_LOGIN_STORAGE_KEY = 'sc_offline_login_v1';
 export const OFFLINE_QUEUE_EVENT = 'sc-offline-queue-changed';
 
+// Security: Purge any legacy saved credentials/password hashes from client storage
+if (typeof window !== 'undefined' && window.localStorage) {
+  try {
+    window.localStorage.removeItem(OFFLINE_LOGIN_STORAGE_KEY);
+  } catch {
+    // Ignore storage access errors
+  }
+}
+
 const MAX_API_CACHE_ENTRIES = 40;
 const MAX_API_CACHE_TOTAL_CHARS = 1_200_000;
 const MAX_API_CACHE_ENTRY_CHARS = 280_000;
@@ -91,25 +100,6 @@ function normalizeUsername(username) {
   return String(username || '').trim().toLowerCase();
 }
 
-async function hashOfflineCredentials(username, password) {
-  if (
-    typeof globalThis === 'undefined' ||
-    !globalThis.crypto ||
-    !globalThis.crypto.subtle ||
-    typeof TextEncoder === 'undefined'
-  ) {
-    return null;
-  }
-
-  const normalizedUsername = normalizeUsername(username);
-  const encoder = new TextEncoder();
-  const source = encoder.encode(`${normalizedUsername}::${String(password || '')}`);
-  const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', source);
-
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((value) => value.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 export function buildApiCacheKeys({ method = 'GET', path }) {
   const namespace = getCurrentUserNamespace();
@@ -297,54 +287,4 @@ export function countPendingOfflineChanges() {
   return countOfflineTransactions() + countOfflineFinancialMutations();
 }
 
-export async function saveOfflineLoginProfile({ user, password }) {
-  const username = normalizeUsername(user?.username);
-  if (!username || !password) {
-    return false;
-  }
 
-  const passwordHash = await hashOfflineCredentials(username, password);
-  if (!passwordHash) {
-    return false;
-  }
-
-  const profiles = readJson(OFFLINE_LOGIN_STORAGE_KEY, []);
-  const nextProfiles = [
-    {
-      username,
-      passwordHash,
-      user: {
-        id: user?.id ?? username,
-        username: user?.username || username,
-        full_name: user?.full_name || user?.username || 'Offline User',
-        role: user?.role || 'cashier',
-        authenticator_mfa_enabled: Boolean(user?.authenticator_mfa_enabled),
-        mobile_password_fallback: Boolean(user?.mobile_password_fallback),
-      },
-      savedAt: new Date().toISOString(),
-    },
-    ...profiles.filter((entry) => entry.username !== username),
-  ].slice(0, 10);
-
-  writeJson(OFFLINE_LOGIN_STORAGE_KEY, nextProfiles);
-  return true;
-}
-
-export async function getOfflineLoginProfile(username, password) {
-  const normalizedUsername = normalizeUsername(username);
-  if (!normalizedUsername || !password) {
-    return null;
-  }
-
-  const passwordHash = await hashOfflineCredentials(normalizedUsername, password);
-  if (!passwordHash) {
-    return null;
-  }
-
-  const profiles = readJson(OFFLINE_LOGIN_STORAGE_KEY, []);
-  const match = profiles.find(
-    (entry) => entry.username === normalizedUsername && entry.passwordHash === passwordHash
-  );
-
-  return match?.user || null;
-}

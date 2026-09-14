@@ -395,16 +395,13 @@ function persistAuthenticatedSession(accessToken, user) {
   const quotaMessage =
     'This device is out of browser storage. MEALS cleared temporary cache, but there is still not enough space to save your session. Clear site data for this app and try again.';
 
-  safeLocalStorageSetItem('sc_token', accessToken, { quotaMessage });
+  // Session JWT is stored strictly in server-side HttpOnly cookie
+  localStorage.removeItem('sc_token');
 
-  try {
+  if (user) {
     safeLocalStorageSetJson('sc_user', user, {
-      protectedKeys: ['sc_token'],
       quotaMessage,
     });
-  } catch (error) {
-    localStorage.removeItem('sc_token');
-    throw error;
   }
 }
 

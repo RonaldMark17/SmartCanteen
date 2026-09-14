@@ -11,9 +11,18 @@ import {
   removeOfflineTransactions,
   saveApiCacheEntry,
   saveOfflineFinancialMutation,
-  saveOfflineLoginProfile,
 } from './offlineStore';
 import { safeLocalStorageSetItem, safeLocalStorageSetJson } from './storage';
+
+// Purge legacy sensitive tokens from client storage
+if (typeof window !== 'undefined' && window.localStorage) {
+  try {
+    localStorage.removeItem('sc_token');
+    localStorage.removeItem('sc_trusted_authenticator_devices');
+    localStorage.removeItem('sc_trusted_authenticator_device');
+    localStorage.removeItem('sc_offline_login_v1');
+  } catch {}
+}
 
 const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
@@ -113,75 +122,26 @@ function normalizeTrustedDeviceUsername(value) {
 }
 
 function readTrustedDeviceMap() {
+  return {};
+}
+
+function writeTrustedDeviceMap() {
+  // Server handles trusted device bypass strictly via HttpOnly cookie
+}
+
+function clearTrustedDeviceToken() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(TRUSTED_DEVICE_STORAGE_KEY) || '{}');
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return {};
-    }
-
-    return parsed;
-  } catch {
-    return {};
-  }
+    localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
+  } catch {}
 }
 
-function writeTrustedDeviceMap(devices) {
-  try {
-    safeLocalStorageSetJson(TRUSTED_DEVICE_STORAGE_KEY, devices);
-  } catch {
-    // Remembered device storage is optional; keep login usable if storage is tight.
-  }
+function getTrustedDeviceToken() {
+  // Server-side validation via sc_trusted_device HttpOnly cookie
+  return '';
 }
 
-function clearTrustedDeviceToken(username) {
-  const normalizedUsername = normalizeTrustedDeviceUsername(username);
-  if (!normalizedUsername) {
-    return;
-  }
-
-  const devices = readTrustedDeviceMap();
-  if (devices[normalizedUsername]) {
-    delete devices[normalizedUsername];
-    writeTrustedDeviceMap(devices);
-  }
-}
-
-function getTrustedDeviceToken(username) {
-  const normalizedUsername = normalizeTrustedDeviceUsername(username);
-  if (!normalizedUsername) {
-    return '';
-  }
-
-  const devices = readTrustedDeviceMap();
-  const record = devices[normalizedUsername];
-  if (!record?.token) {
-    return '';
-  }
-
-  const expiresAt = Date.parse(record.expiresAt || '');
-  if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
-    delete devices[normalizedUsername];
-    writeTrustedDeviceMap(devices);
-    return '';
-  }
-
-  return record.token;
-}
-
-function saveTrustedDeviceToken(username, response) {
-  const normalizedUsername = normalizeTrustedDeviceUsername(username || response?.user?.username);
-  const token = String(response?.remember_device_token || '').trim();
-  if (!normalizedUsername || !token) {
-    return;
-  }
-
-  const devices = readTrustedDeviceMap();
-  devices[normalizedUsername] = {
-    token,
-    expiresAt: response?.remember_device_expires_at || '',
-    savedAt: new Date().toISOString(),
-  };
-  writeTrustedDeviceMap(devices);
+function saveTrustedDeviceToken() {
+  // Server sets sc_trusted_device HttpOnly cookie automatically; client never stores device token
 }
 
 function isLoopbackHostname(hostname) {
@@ -472,6 +432,9 @@ function clearSession() {
   localStorage.removeItem('sc_user');
   localStorage.removeItem(BACKGROUND_ALERT_STORAGE_KEY);
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
+  localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
+  localStorage.removeItem('sc_trusted_authenticator_device');
+  localStorage.removeItem('sc_offline_login_v1');
 }
 
 function assertMfaWasCompleted(response) {
@@ -1191,16 +1154,7 @@ async function completeAuthenticatedLoginResponse(response, password, { remember
     }
   }
 
-  if (rememberDevice) {
-    saveTrustedDeviceToken(username, response);
-  } else {
-    clearTrustedDeviceToken(username || response?.user?.username);
-  }
-
-  if (password && response?.user) {
-    await saveOfflineLoginProfile({ user: response.user, password });
-  }
-
+  clearTrustedDeviceToken(username || response?.user?.username);
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
   return response;
 }
@@ -1291,9 +1245,6 @@ export async function verifyAuthenticatorSetup({
     }
   );
 
-  if (response?.access_token) {
-    safeLocalStorageSetItem('sc_token', response.access_token);
-  }
   if (response?.user) {
     safeLocalStorageSetJson('sc_user', response.user);
   }
@@ -1305,6 +1256,14 @@ export const API = {
   login,
   verifyAuthenticatorLogin,
   verifyAuthenticatorSetup,
+  logout: async () => {
+    try {
+      await performRequest('POST', '/auth/logout');
+    } catch {
+      // Ignore network errors during logout
+    }
+    clearSession();
+  },
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
   requestPasswordReset: (usernameOrEmail) => request('POST', '/auth/password-reset/request', { usernameOrEmail }),
