@@ -633,7 +633,7 @@ export default function TitleBar() {
 
             {/* Footer */}
             <div className="flex items-center justify-between border-t border-slate-800 bg-slate-950/60 px-6 py-3.5">
-              <span className="text-[11px] text-slate-500">© 2026 LSPU-SPCC 4WAMD1 • MEALS System</span>
+              <span className="text-[11px] text-slate-500">© 2026 LSPU-SPCC 4WMAD1 • MEALS System</span>
               <button
                 type="button"
                 onClick={() => setAboutOpen(false)}

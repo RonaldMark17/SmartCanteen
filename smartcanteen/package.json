@@ -2,7 +2,7 @@
   "name": "meals-client",
   "productName": "MEALS",
   "description": "MEALS Desktop Client Application",
-  "author": "LSPU-SPCC 4WAMD1",
+  "author": "LSPU-SPCC 4WMAD1",
   "private": true,
   "version": "1.2.0",
   "type": "module",
@@ -20,7 +20,7 @@
   "build": {
     "appId": "com.meals.smartcanteen",
     "productName": "MEALS",
-    "copyright": "Copyright © 2026 LSPU-SPCC 4WAMD1",
+    "copyright": "Copyright © 2026 LSPU-SPCC 4WMAD1",
     "asar": true,
     "npmRebuild": false,
     "nodeGypRebuild": false,
@@ -40,7 +40,7 @@
     "win": {
       "icon": "electron/icon.png",
       "publisherName": [
-        "LSPU-SPCC 4WAMD1"
+        "LSPU-SPCC 4WMAD1"
       ],
       "target": [
         {
