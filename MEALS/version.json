@@ -1,5 +1,5 @@
 ﻿{
-    "updated_at":  "2026-09-15 04:27:10",
+    "updated_at":  "2026-09-15 04:30:03",
     "server":  {
                    "init_db":  true,
                    "service":  true,
@@ -8,7 +8,7 @@
                },
     "version":  "1.2.0",
     "client":  {
-                   "installer":  84350493,
-                   "portable":  119693018
+                   "installer":  84350486,
+                   "portable":  119693009
                }
 }
