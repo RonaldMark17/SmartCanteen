@@ -169,6 +169,7 @@ class UserResponse(BaseModel):
     recovery_codes_remaining: int = 0
     remembered_devices_active: int = 0
     created_at: datetime
+    access_token: Optional[str] = None
     class Config:
         from_attributes = True
 

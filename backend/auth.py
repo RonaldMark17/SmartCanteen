@@ -110,12 +110,18 @@ def get_current_user(
         if payload.get("purpose") == "background_alert":
             raise exc
         username = payload.get("sub")
-        if not username:
+        uid = payload.get("uid")
+        if not username and not uid:
             raise exc
     except JWTError:
         raise exc
 
-    user = db.query(models.User).filter(models.User.username == username).first()
+    user = None
+    if username:
+        user = db.query(models.User).filter(models.User.username == username).first()
+    if not user and uid:
+        user = db.query(models.User).filter(models.User.id == uid).first()
+
     if not user or not user.is_active:
         raise exc
     return user
@@ -143,9 +149,14 @@ def get_user_from_token(token: str, db: Session) -> Optional[models.User]:
         if payload.get("purpose") == "background_alert":
             return None
         username = payload.get("sub")
-        if not username:
+        uid = payload.get("uid")
+        if not username and not uid:
             return None
-        user = db.query(models.User).filter(models.User.username == username).first()
+        user = None
+        if username:
+            user = db.query(models.User).filter(models.User.username == username).first()
+        if not user and uid:
+            user = db.query(models.User).filter(models.User.id == uid).first()
         if not user or not user.is_active:
             return None
         return user

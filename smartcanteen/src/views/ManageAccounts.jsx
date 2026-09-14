@@ -264,7 +264,7 @@ function SectionPagination({
 }
 
 export default function ManageAccounts() {
-  const { user: currentUser = {} } = useAuth();
+  const { user: currentUser = {}, refreshUser, updateCurrentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -354,6 +354,41 @@ export default function ManageAccounts() {
     loadUsers({ showLoading: true });
     loadPasswordResetRequests({ showLoading: true });
     loadAuthenticatorRecoveryRequests({ showLoading: true });
+  }, [loadAuthenticatorRecoveryRequests, loadPasswordResetRequests, loadUsers]);
+
+  // Real-time synchronization across workstations and sessions
+  useEffect(() => {
+    const handleFocus = () => {
+      loadUsers();
+      loadPasswordResetRequests();
+      loadAuthenticatorRecoveryRequests();
+    };
+
+    const handleExternalUserUpdate = (event) => {
+      const updated = event?.detail;
+      if (updated && updated.id) {
+        setUsers((prev) =>
+          prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item))
+        );
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('meals-user-updated', handleExternalUserUpdate);
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') {
+        loadUsers();
+        loadPasswordResetRequests();
+        loadAuthenticatorRecoveryRequests();
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('meals-user-updated', handleExternalUserUpdate);
+      window.clearInterval(intervalId);
+    };
   }, [loadAuthenticatorRecoveryRequests, loadPasswordResetRequests, loadUsers]);
 
   const activeUsers = users.filter((user) => user.is_active);
@@ -463,12 +498,46 @@ export default function ManageAccounts() {
         if (formData.password.trim()) {
           payload.password = formData.password;
         }
-        await API.updateAdminUser(editingUser.id, payload);
+        const updatedUser = await API.updateAdminUser(editingUser.id, payload);
         window.showToast?.(`Account updated for ${username}.`, 'success');
+
+        const isSelf =
+          editingUser.id === currentUser?.id ||
+          (currentUser?.username && editingUser.username === currentUser.username);
+
+        if (isSelf) {
+          if (updatedUser?.access_token) {
+            localStorage.setItem('sc_token', updatedUser.access_token);
+          }
+          if (updateCurrentUser) {
+            updateCurrentUser(updatedUser);
+          }
+          if (refreshUser) {
+            await refreshUser();
+          }
+        }
+
+        // Broadcast real-time update event so all components/contexts update immediately
+        window.dispatchEvent(
+          new CustomEvent('meals-user-updated', {
+            detail: { ...editingUser, ...payload, ...(updatedUser || {}) },
+          })
+        );
+
+        setUsers((prev) =>
+          prev.map((item) =>
+            item.id === editingUser.id
+              ? { ...item, ...payload, ...(updatedUser || {}) }
+              : item
+          )
+        );
       } else {
         payload.password = formData.password;
-        await API.createAdminUser(payload);
+        const createdUser = await API.createAdminUser(payload);
         window.showToast?.(`Account created for ${username}.`, 'success');
+        if (createdUser) {
+          setUsers((prev) => [createdUser, ...prev.filter((item) => item.id !== createdUser.id)]);
+        }
       }
 
       await loadUsers();
@@ -495,8 +564,29 @@ export default function ManageAccounts() {
     setBusyUserId(user.id);
     setError('');
     try {
-      await API.updateAdminUser(user.id, { is_active: nextActive });
+      const updatedUser = await API.updateAdminUser(user.id, { is_active: nextActive });
       window.showToast?.(`${formatRole(user.role)} account ${action}d.`, 'success');
+
+      const isSelf =
+        user.id === currentUser?.id ||
+        (currentUser?.username && user.username === currentUser.username);
+      if (isSelf && refreshUser) {
+        await refreshUser();
+      }
+
+      window.dispatchEvent(
+        new CustomEvent('meals-user-updated', {
+          detail: { ...user, is_active: nextActive, ...(updatedUser || {}) },
+        })
+      );
+
+      setUsers((prev) =>
+        prev.map((item) =>
+          item.id === user.id
+            ? { ...item, is_active: nextActive, ...(updatedUser || {}) }
+            : item
+        )
+      );
       await loadUsers();
     } catch (err) {
       setError(err.message || `Account could not be ${action}d.`);
@@ -518,6 +608,25 @@ export default function ManageAccounts() {
     try {
       await API.deleteAdminUser(user.id);
       window.showToast?.(`Account disabled for ${user.username}.`, 'success');
+
+      const isSelf =
+        user.id === currentUser?.id ||
+        (currentUser?.username && user.username === currentUser.username);
+      if (isSelf && refreshUser) {
+        await refreshUser();
+      }
+
+      window.dispatchEvent(
+        new CustomEvent('meals-user-updated', {
+          detail: { ...user, is_active: false },
+        })
+      );
+
+      setUsers((prev) =>
+        prev.map((item) =>
+          item.id === user.id ? { ...item, is_active: false } : item
+        )
+      );
       await loadUsers();
     } catch (err) {
       setError(err.message || 'Account could not be disabled.');

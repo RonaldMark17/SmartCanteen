@@ -6,6 +6,17 @@ process.on('uncaughtException', (error) => {
   console.error('[Main UncaughtException]', error);
 });
 
+// Single instance lock to prevent concurrent instances colliding during portable extraction/launch
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+  process.exit(0);
+}
+
+// Prevent Windows DWM from pausing painting on frameless windows behind splash screen
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
 const isDev = !app.isPackaged && process.env.NODE_ENV === 'development';
 
 function getConfigFilePath() {
@@ -69,8 +80,8 @@ function createSplashWindow(windowIcon) {
   if (!fs.existsSync(splashFile)) return;
 
   splashWindow = new BrowserWindow({
-    width: 520,
-    height: 270,
+    width: 560,
+    height: 300,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -163,55 +174,82 @@ function createWindow() {
             splashWindow = null;
           }
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.maximize();
             mainWindow.show();
+            mainWindow.maximize();
             mainWindow.focus();
           }
         }, 350);
       } else {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.maximize();
           mainWindow.show();
+          mainWindow.maximize();
           mainWindow.focus();
         }
       }
     }, remainingTime);
   };
 
+  // Primary trigger: Chromium painted the first frame and is genuinely ready to show
   mainWindow.once('ready-to-show', () => {
     showMainWindow();
   });
 
-  // Fallback in case ready-to-show is delayed
+  // Secondary trigger: Page finished loading in case ready-to-show was delayed
+  mainWindow.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      if (!hasShownMainWindow) {
+        showMainWindow();
+      }
+    }, 400);
+  });
+
+  // Handle load errors during cold portable extraction (e.g. temporary disk contention)
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.warn(`[Main] did-fail-load (${errorCode}): ${errorDescription}`);
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !hasShownMainWindow) {
+        loadAppIndex(mainWindow);
+      }
+    }, 600);
+  });
+
+  // Safety fallback only (12s) to prevent permanent hang if system is extremely constrained
   setTimeout(() => {
-    showMainWindow();
-  }, 3500);
+    if (!hasShownMainWindow) {
+      console.warn('[Main] Safety timeout reached; revealing main window.');
+      showMainWindow();
+    }
+  }, 12000);
 
-  if (isDev && process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else {
-    const possibleIndexPaths = [
-      path.join(app.getAppPath(), 'dist', 'index.html'),
-      path.join(__dirname, '../dist/index.html'),
-      path.join(__dirname, 'dist/index.html'),
-    ];
+  function loadAppIndex(win) {
+    if (isDev && process.env.VITE_DEV_SERVER_URL) {
+      win.loadURL(process.env.VITE_DEV_SERVER_URL);
+    } else {
+      const possibleIndexPaths = [
+        path.join(app.getAppPath(), 'dist', 'index.html'),
+        path.join(__dirname, '../dist/index.html'),
+        path.join(__dirname, 'dist/index.html'),
+      ];
 
-    let loaded = false;
-    for (const indexPath of possibleIndexPaths) {
-      if (fs.existsSync(indexPath)) {
-        console.log(`[Main] Loading index.html from: ${indexPath}`);
-        mainWindow.loadFile(indexPath).catch((err) => {
-          console.error('[Main] Failed to load index:', err);
-        });
-        loaded = true;
-        break;
+      let loaded = false;
+      for (const indexPath of possibleIndexPaths) {
+        if (fs.existsSync(indexPath)) {
+          console.log(`[Main] Loading index.html from: ${indexPath}`);
+          win.loadFile(indexPath).catch((err) => {
+            console.error('[Main] Failed to load index:', err);
+          });
+          loaded = true;
+          break;
+        }
+      }
+
+      if (!loaded) {
+        console.error('[Main] Could not find dist/index.html in any expected location.');
       }
     }
-
-    if (!loaded) {
-      console.error('[Main] Could not find dist/index.html in any expected location.');
-    }
   }
+
+  loadAppIndex(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -349,6 +387,17 @@ ipcMain.handle('get-system-info', () => {
     arch: process.arch,
     apiBaseUrl: cachedConfig?.apiBaseUrl || 'http://3.91.7.109/api',
   };
+});
+
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+      mainWindow.maximize();
+    }
+    mainWindow.focus();
+  }
 });
 
 app.whenReady().then(createWindow);

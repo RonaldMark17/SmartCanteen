@@ -7,6 +7,7 @@ const AuthContext = createContext({
   isAuthenticated: false,
   loading: true,
   refreshUser: async () => {},
+  updateCurrentUser: () => {},
   logout: () => {},
 });
 
@@ -23,6 +24,20 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
+  const updateCurrentUser = useCallback((nextDetails) => {
+    if (!nextDetails || typeof nextDetails !== 'object') return;
+    setUser((prev) => {
+      if (!prev) return nextDetails;
+      const updated = { ...prev, ...nextDetails };
+      try {
+        localStorage.setItem('sc_user', JSON.stringify(updated));
+      } catch {
+        // Ignore quota error
+      }
+      return updated;
+    });
+  }, []);
+
   const refreshUser = useCallback(async () => {
     const token = localStorage.getItem('sc_token');
     if (!token) {
@@ -35,7 +50,7 @@ export function AuthProvider({ children }) {
       const dbUser = await API.getCurrentUser();
       if (dbUser && dbUser.role) {
         setUser(dbUser);
-        // Store as UI display cache only - server remain source of truth
+        // Store as UI display cache only - server remains source of truth
         try {
           localStorage.setItem('sc_user', JSON.stringify(dbUser));
         } catch {
@@ -60,12 +75,69 @@ export function AuthProvider({ children }) {
     refreshUser();
   }, [refreshUser]);
 
+  // Real-time synchronization: custom event, window focus, storage events, and 30s background sync
+  useEffect(() => {
+    const handleUserUpdatedEvent = (event) => {
+      const updated = event?.detail;
+      if (!updated) return;
+      setUser((current) => {
+        if (!current) return current;
+        if (updated.id && current.id && updated.id !== current.id) {
+          return current;
+        }
+        const merged = { ...current, ...updated };
+        try {
+          localStorage.setItem('sc_user', JSON.stringify(merged));
+        } catch {}
+        return merged;
+      });
+    };
+
+    const handleStorageEvent = (event) => {
+      if (event.key === 'sc_user' && event.newValue) {
+        try {
+          const parsed = JSON.parse(event.newValue);
+          if (parsed && parsed.role) {
+            setUser(parsed);
+          }
+        } catch {}
+      } else if (event.key === 'sc_token' && !event.newValue) {
+        logout();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (localStorage.getItem('sc_token')) {
+        refreshUser();
+      }
+    };
+
+    window.addEventListener('meals-user-updated', handleUserUpdatedEvent);
+    window.addEventListener('storage', handleStorageEvent);
+    window.addEventListener('focus', handleWindowFocus);
+
+    // Periodic sync every 30 seconds for active sessions
+    const intervalId = window.setInterval(() => {
+      if (localStorage.getItem('sc_token') && document.visibilityState !== 'hidden') {
+        refreshUser();
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('meals-user-updated', handleUserUpdatedEvent);
+      window.removeEventListener('storage', handleStorageEvent);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.clearInterval(intervalId);
+    };
+  }, [logout, refreshUser]);
+
   const value = {
     user,
     role: user?.role || null,
     isAuthenticated: Boolean(user && user.role),
     loading,
     refreshUser,
+    updateCurrentUser,
     logout,
   };
 

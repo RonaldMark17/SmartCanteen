@@ -3829,7 +3829,10 @@ def admin_update_user(
 
     db.commit()
     db.refresh(user)
-    return _serialize_admin_user(db, user)
+    serialized = _serialize_admin_user(db, user)
+    if user.id == current.id:
+        serialized["access_token"] = auth.create_access_token(data={"sub": user.username, "uid": user.id})
+    return serialized
 
 
 @app.delete("/api/admin/users/{user_id}", response_model=schemas.UserResponse, tags=["Admin"])

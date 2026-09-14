@@ -1646,17 +1646,17 @@ export default function Layout({ children, onLogout }) {
                               : 'No notifications right now'}
                           </div>
                         </div>
-                        <div
-                          className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${
-                            alertPermission === 'granted'
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : alertPermission === 'unsupported'
+                        {alertPermission !== 'granted' && (
+                          <div
+                            className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${
+                              alertPermission === 'unsupported'
                                 ? 'bg-slate-100 text-slate-600'
                                 : 'bg-amber-50 text-amber-700'
-                          }`}
-                        >
-                          {getPermissionLabel(alertPermission)}
-                        </div>
+                            }`}
+                          >
+                            {getPermissionLabel(alertPermission)}
+                          </div>
+                        )}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {unreadNotificationCount > 0 && (
@@ -1903,17 +1903,17 @@ export default function Layout({ children, onLogout }) {
                               : 'No high demand reminders right now'}
                           </div>
                         </div>
-                        <div
-                          className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${
-                            alertPermission === 'granted'
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : alertPermission === 'unsupported'
+                        {alertPermission !== 'granted' && (
+                          <div
+                            className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${
+                              alertPermission === 'unsupported'
                                 ? 'bg-slate-100 text-slate-600'
                                 : 'bg-amber-50 text-amber-700'
-                          }`}
-                        >
-                          {getPermissionLabel(alertPermission)}
-                        </div>
+                            }`}
+                          >
+                            {getPermissionLabel(alertPermission)}
+                          </div>
+                        )}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {unreadHighDemandReminderCount > 0 && (
@@ -2074,116 +2074,120 @@ export default function Layout({ children, onLogout }) {
                   setRemindersOpen(false);
                   setProfileOpen((value) => !value);
                 }}
-                className={`flex h-11 max-w-[16rem] items-center gap-2 rounded-2xl border px-2 shadow-sm transition hover:shadow-md sm:px-2.5 ${darkMode ? 'border-slate-700 bg-slate-800 hover:border-emerald-700/40' : 'border-slate-200 bg-white hover:border-primary/30'}`}
+                className={`group flex h-10 items-center gap-2.5 rounded-xl border px-2.5 shadow-2xs transition-all ${
+                  darkMode
+                    ? 'border-slate-800 bg-slate-900/90 text-slate-100 hover:border-slate-700 hover:bg-slate-800/80'
+                    : 'border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50'
+                }`}
                 aria-label="Open profile menu"
                 aria-expanded={profileOpen}
                 aria-haspopup="menu"
               >
-                <div className="hidden min-w-0 flex-col items-end md:flex">
-                  <span className={`max-w-[10rem] truncate leading-none text-sm font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-xs font-black text-white shadow-xs dark:bg-emerald-500 dark:text-slate-950">
+                  {userInitials}
+                </div>
+                <div className="hidden min-w-0 flex-col items-start text-left md:flex">
+                  <span className="max-w-[8.5rem] truncate text-xs font-bold leading-tight text-slate-900 dark:text-slate-100">
                     {displayName}
                   </span>
-                  <span className="mt-1 text-[10px] font-bold uppercase tracking-widest text-primary">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
                     {user.role || 'staff'}
                   </span>
                 </div>
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-white shadow-sm">
-                  {userInitials}
-                </div>
                 <ChevronDownIcon
-                  className={`hidden h-4 w-4 shrink-0 text-slate-400 transition-transform sm:block ${
+                  className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform duration-200 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300 ${
                     profileOpen ? 'rotate-180' : ''
                   }`}
                 />
               </button>
+
+              {profileOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Close profile menu"
+                    onClick={() => setProfileOpen(false)}
+                    className="notification-dismiss-layer fixed inset-0 z-40 cursor-default bg-transparent"
+                  />
+                  <div
+                    className="profile-popover absolute right-0 top-full z-50 mt-2 w-72 origin-top-right overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xl transition-all dark:border-slate-800 dark:bg-[#0c1427] dark:shadow-black/60"
+                    role="menu"
+                  >
+                    <div className="flex items-center gap-3 border-b border-slate-100 pb-3.5 dark:border-slate-800/80">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-sm font-black text-white shadow-xs dark:bg-emerald-500 dark:text-slate-950">
+                        {userInitials}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                          {displayName}
+                        </div>
+                        <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                          {user.role || 'staff'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileOpen(false);
+                          navigate(defaultRoute);
+                        }}
+                        className="flex w-full items-center gap-3 rounded-xl border border-slate-200/80 bg-transparent px-3.5 py-2.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 dark:border-slate-800/90 dark:text-slate-200 dark:hover:border-slate-700 dark:hover:bg-slate-800/50 dark:hover:text-white"
+                      >
+                        <HomeIcon className="h-4.5 w-4.5 shrink-0 text-slate-400 dark:text-slate-400" />
+                        Home workspace
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={openRecoveryCodes}
+                        className="flex w-full items-center gap-3 rounded-xl border border-slate-200/80 bg-transparent px-3.5 py-2.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 dark:border-slate-800/90 dark:text-slate-200 dark:hover:border-slate-700 dark:hover:bg-slate-800/50 dark:hover:text-white"
+                      >
+                        <ShieldCheckIcon className="h-4.5 w-4.5 shrink-0 text-slate-400 dark:text-slate-400" />
+                        Recovery codes
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setDarkMode((value) => !value)}
+                        className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-transparent px-3.5 py-2.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 dark:border-slate-800/90 dark:text-slate-200 dark:hover:border-slate-700 dark:hover:bg-slate-800/50 dark:hover:text-white"
+                      >
+                        <span className="inline-flex items-center gap-3">
+                          <MoonIcon className="h-4.5 w-4.5 shrink-0 text-slate-400 dark:text-slate-400" />
+                          Dark Mode
+                        </span>
+                        <span
+                          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                            darkMode ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
+                          }`}
+                        >
+                          <span
+                            className={`block h-4 w-4 rounded-full bg-white shadow-xs transition-transform ${
+                              darkMode ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </span>
+                      </button>
+
+                      <div className="border-t border-slate-100 pt-2 dark:border-slate-800/80">
+                        <button
+                          type="button"
+                          onClick={requestLogout}
+                          className="flex w-full items-center gap-3 rounded-xl border border-rose-200/80 bg-transparent px-3.5 py-2.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700 dark:border-rose-950/70 dark:text-rose-400 dark:hover:border-rose-900/60 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
+                        >
+                          <ArrowRightOnRectangleIcon className="h-4.5 w-4.5 shrink-0" />
+                          Logout
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </header>
-
-        {profileOpen && (
-          <>
-            <button
-              type="button"
-              aria-label="Close profile menu"
-              onClick={() => setProfileOpen(false)}
-              className="notification-dismiss-layer profile-dismiss-layer fixed inset-0 z-[40] cursor-default bg-transparent"
-            />
-            <div
-              className="profile-dropdown profile-popover fixed right-3 top-[calc(env(safe-area-inset-top)+4.5rem)] z-[45] max-h-[calc(100dvh-5.25rem)] w-[calc(100vw-1.5rem)] max-w-sm overflow-y-auto rounded-xl border border-slate-200 bg-white text-slate-900 sm:right-6 sm:top-16 sm:w-80"
-              role="menu"
-            >
-              <div className="profile-popover-head notification-panel-head border-b border-slate-100 px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <div className="profile-menu-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
-                    {userInitials}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-slate-900">
-                      {displayName}
-                    </div>
-                    <div className="mt-1 text-xs font-medium capitalize text-slate-500">
-                      {user.role || 'staff'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2 p-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProfileOpen(false);
-                    navigate(defaultRoute);
-                  }}
-                  className="profile-action profile-menu-item flex w-full items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  <HomeIcon className="h-4 w-4 text-slate-400" />
-                  Home workspace
-                </button>
-                <button
-                  type="button"
-                  onClick={openRecoveryCodes}
-                  className="profile-action profile-menu-item flex w-full items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  <ShieldCheckIcon className="h-4 w-4 text-slate-400" />
-                  Recovery codes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDarkMode((value) => !value)}
-                  className="profile-action profile-menu-item flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  <span className="inline-flex items-center gap-3">
-                    <MoonIcon className="h-4 w-4 text-slate-400" />
-                    Dark Mode
-                  </span>
-                  <span
-                    className={`profile-toggle-track h-5 w-9 shrink-0 rounded-full p-0.5 transition ${
-                      darkMode ? 'bg-primary' : 'bg-slate-200'
-                    }`}
-                  >
-                    <span
-                      className={`block h-4 w-4 rounded-full bg-white shadow-sm transition ${
-                        darkMode ? 'translate-x-4' : ''
-                      }`}
-                    />
-                  </span>
-                </button>
-              </div>
-
-              <div className="profile-menu-divider border-t border-slate-100 p-3 pt-2">
-                <button
-                  type="button"
-                  onClick={requestLogout}
-                  className="profile-action profile-menu-item profile-menu-item-danger flex w-full items-center gap-3 rounded-lg border border-red-100 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
-                >
-                  <ArrowRightOnRectangleIcon className="h-4 w-4" />
-                  Logout
-                </button>
-              </div>
-            </div>
-          </>
-        )}
 
         {recoveryCodesOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">

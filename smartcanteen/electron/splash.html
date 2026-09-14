@@ -28,11 +28,11 @@
       position: relative;
       width: 480px;
       height: 240px;
+      overflow: hidden;
       background: linear-gradient(145deg, #0b1322, #070d18);
       border: 1px solid rgba(16, 185, 129, 0.35);
       border-radius: 18px;
-      box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.8),
-                  0 0 24px rgba(16, 185, 129, 0.15),
+      box-shadow: 0 16px 36px -10px rgba(0, 0, 0, 0.75),
                   inset 0 1px 1px rgba(255, 255, 255, 0.1);
       display: flex;
       align-items: center;
@@ -56,16 +56,15 @@
       }
     }
 
-    /* Ambient background glow */
+    /* Ambient background glow inside the card */
     .glow-bg {
       position: absolute;
-      top: -40px;
-      right: -40px;
-      width: 160px;
-      height: 160px;
-      background: radial-gradient(circle, rgba(16, 185, 129, 0.18) 0%, transparent 70%);
+      top: 0;
+      right: 0;
+      width: 220px;
+      height: 220px;
+      background: radial-gradient(circle at top right, rgba(16, 185, 129, 0.22) 0%, rgba(16, 185, 129, 0.05) 50%, transparent 75%);
       pointer-events: none;
-      filter: blur(20px);
     }
 
     /* Logo Styling & Animation */
