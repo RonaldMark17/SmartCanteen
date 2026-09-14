@@ -965,6 +965,9 @@ app = FastAPI(
     title="SmartCanteen",
     description="Predictive Inventory & Sales System",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 cors_options = {
@@ -1218,7 +1221,7 @@ def _frontend_index_response():
     index_file = _resolve_frontend_file("index.html")
     if index_file:
         return _frontend_file_response(index_file)
-    return {"message": "MEALS API is running", "docs": "/docs"}
+    return {"message": "MEALS API is running"}
 
 
 FRONTEND_DIR = _get_frontend_dir()

@@ -996,6 +996,9 @@ app = FastAPI(
     title="MEALS",
     description="Predictive Inventory & Sales System",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 cors_options = {
@@ -1077,7 +1080,7 @@ def _frontend_index_response():
     index_file = _resolve_frontend_file("index.html")
     if index_file:
         return FileResponse(index_file)
-    return {"message": "MEALS API is running. Visit /docs for Swagger UI."}
+    return {"message": "MEALS API is running."}
 
 
 if FRONTEND_DIR:

@@ -1,3 +1,5 @@
+import './secureStorage.js';
+
 const NONESSENTIAL_STORAGE_KEYS = [
   'sc_api_cache_v1',
   'sc_low_stock_signature_v2',
