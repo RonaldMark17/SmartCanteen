@@ -4693,9 +4693,9 @@ def list_transactions(
     # Apply Date Filtering if dates are provided
     if start_date and end_date:
         try:
-            start, end = build_ph_date_range_bounds(start_date, end_date)
+            start, end = build_ph_date_range_bounds(str(start_date).strip(), str(end_date).strip())
             query = query.filter(models.Transaction.created_at.between(start, end))
-        except ValueError:
+        except Exception:
             pass # Ignore invalid date formats
 
     return (

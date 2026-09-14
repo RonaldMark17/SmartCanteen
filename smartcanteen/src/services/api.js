@@ -1069,14 +1069,18 @@ async function primeOfflineData({ role } = {}) {
 
   if (role === 'admin' || role === 'staff') {
     jobs.push(async () => {
-      const schoolYears = await request('GET', '/financial-reports/school-years');
-      const availableSchoolYears = Array.isArray(schoolYears) ? schoolYears : [];
-      await Promise.all(
-        availableSchoolYears.map((schoolYear) =>
-          request('GET', `/financial-reports/school-years/${schoolYear.id}`)
-        )
-      );
-      return availableSchoolYears.length;
+      try {
+        const schoolYears = await request('GET', '/financial-reports/school-years');
+        const availableSchoolYears = Array.isArray(schoolYears) ? schoolYears : [];
+        await Promise.all(
+          availableSchoolYears.map((schoolYear) =>
+            request('GET', `/financial-reports/school-years/${schoolYear.id}`).catch(() => null)
+          )
+        );
+        return availableSchoolYears.length;
+      } catch {
+        return 0;
+      }
     });
   }
 

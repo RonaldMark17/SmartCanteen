@@ -268,20 +268,20 @@ class TransactionCreate(BaseModel):
     notes:        Optional[str] = None
 
 class TransactionItemResponse(BaseModel):
-    product_id: int
-    quantity:   float
+    product_id:    Optional[int] = None
+    quantity:      float = 0.0
     sale_quantity: Optional[float] = None
-    sale_unit: Optional[str] = None
-    unit_price: float
-    product:    Optional[ProductResponse] = None
+    sale_unit:     Optional[str] = None
+    unit_price:    float = 0.0
+    product:       Optional[ProductResponse] = None
     class Config:
         from_attributes = True
 
 class TransactionResponse(BaseModel):
     id:           int
     total:        float
-    discount:     float
-    payment_type: str
+    discount:     float = 0.0
+    payment_type: str = "cash"
     created_at:   datetime
     items:        List[TransactionItemResponse] = []
     class Config:
