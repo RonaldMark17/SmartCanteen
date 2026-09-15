@@ -524,9 +524,33 @@ function parseExpenseNotes(report) {
 }
 
 function buildDailySaleRows(detail) {
-  return (detail?.reports || [])
-    .flatMap(parseDailySaleNotes)
-    .sort((left, right) => right.date.localeCompare(left.date));
+  const noteRows = (detail?.reports || []).flatMap(parseDailySaleNotes);
+  const fallbackRows = (detail?.reports || []).flatMap((report) => {
+    const parsed = parseDailySaleNotes(report);
+    const parsedTotal = parsed.reduce((sum, s) => sum + s.amount, 0);
+    const reportSales = toMoney(report.current_sales);
+    const diff = reportSales - parsedTotal;
+    if (diff > 0.005) {
+      const monthVal = getReportMonthValue(report);
+      return [
+        {
+          id: `sale-monthly-overview-${report.id}`,
+          date: monthVal,
+          amount: diff,
+          remarks: 'Monthly sale',
+          monthLabel: report.month_label,
+          reportId: report.id,
+          type: 'monthly',
+          typeLabel: 'Monthly Sale',
+          rawLine: null,
+          noteIndex: -1,
+          isOverviewFallback: true,
+        },
+      ];
+    }
+    return [];
+  });
+  return [...noteRows, ...fallbackRows].sort((left, right) => right.date.localeCompare(left.date));
 }
 
 function buildExpenseHistoryRows(detail) {
@@ -2119,6 +2143,67 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
   async function executeSaveStatement(nextBeginningCash, nextCurrentSales, nextCostOfSales) {
     setSavingStatement(true);
     try {
+      const periodValue = getReportMonthValue(selectedReport);
+      const existingSales = parseDailySaleNotes(selectedReport);
+      const dailySales = existingSales.filter((s) => s.type !== 'monthly');
+      const dailyTotal = dailySales.reduce((sum, s) => sum + s.amount, 0);
+
+      let updatedNotes = selectedReport.notes || '';
+
+      if (nextCurrentSales > 0) {
+        const monthlyAmount = Math.max(0, nextCurrentSales - dailyTotal);
+        const existingMonthly = existingSales.find((s) => s.type === 'monthly' && s.date === periodValue);
+
+        if (monthlyAmount > 0) {
+          const newLine = `[Monthly Sale] ${periodValue} | ${formatCurrency(monthlyAmount)} | Monthly sale`;
+          if (existingMonthly && existingMonthly.rawLine) {
+            const lines = String(updatedNotes).split(/\r?\n/);
+            let replaced = false;
+            updatedNotes = lines
+              .map((line, idx) => {
+                if (!replaced && (line === existingMonthly.rawLine || idx === existingMonthly.noteIndex)) {
+                  replaced = true;
+                  return newLine;
+                }
+                return line;
+              })
+              .join('\n');
+            if (!replaced) {
+              updatedNotes = appendNoteLine(updatedNotes, newLine);
+            }
+          } else {
+            updatedNotes = appendNoteLine(updatedNotes, newLine);
+          }
+        } else if (existingMonthly && existingMonthly.rawLine) {
+          const lines = String(updatedNotes).split(/\r?\n/);
+          let removed = false;
+          updatedNotes = lines
+            .filter((line, idx) => {
+              if (!removed && (line === existingMonthly.rawLine || idx === existingMonthly.noteIndex)) {
+                removed = true;
+                return false;
+              }
+              return true;
+            })
+            .join('\n');
+        }
+      } else {
+        const existingMonthly = existingSales.find((s) => s.type === 'monthly' && s.date === periodValue);
+        if (existingMonthly && existingMonthly.rawLine) {
+          const lines = String(updatedNotes).split(/\r?\n/);
+          let removed = false;
+          updatedNotes = lines
+            .filter((line, idx) => {
+              if (!removed && (line === existingMonthly.rawLine || idx === existingMonthly.noteIndex)) {
+                removed = true;
+                return false;
+              }
+              return true;
+            })
+            .join('\n');
+        }
+      }
+
       await API.updateFinancialReport(selectedReport.id, {
         beginning_cash_on_hand: nextBeginningCash,
         beginning_cash_manual_override: true,
@@ -2127,6 +2212,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         purchases: 0,
         inventory_used: 0,
         product_cost: nextCostOfSales,
+        notes: updatedNotes,
       });
 
       const fundEntries = (selectedReport.allocations || []).map((alloc) => {
@@ -2195,6 +2281,9 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         { label: 'Month', value: selectedReport.month_label },
         { label: 'Beginning Cash', value: formatCurrency(nextBeginningCash) },
         { label: 'Current Sales', value: formatCurrency(nextCurrentSales), highlight: true },
+        ...(nextCurrentSales > 0
+          ? [{ label: 'Sales Remark', value: 'Monthly sale (recorded in Sales tab)' }]
+          : []),
         { label: 'Cost of Sales', value: formatCurrency(nextCostOfSales) },
       ],
       onConfirm: async () => {
