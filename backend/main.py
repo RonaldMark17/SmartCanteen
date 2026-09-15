@@ -2500,9 +2500,22 @@ def login(payload: schemas.LoginRequest, req: Request, res: Response, db: Sessio
         if trusted_device:
             login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
             _clear_authenticator_verification_attempts(user)
-            response = _build_login_success(db, user, res=res, req=req)
+            token = auth.create_access_token(
+                {"sub": user.username},
+                expires_delta=timedelta(days=TRUSTED_DEVICE_DAYS),
+            )
+            response = {
+                "access_token": token,
+                "background_alert_token": auth.create_background_alert_token(user.username),
+                "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
+                "token_type": "bearer",
+                "user": _user_payload(db, user),
+            }
+            if res is not None:
+                auth.set_auth_cookie(res, token, request=req)
             if device_token:
                 auth.set_trusted_device_cookie(res, device_token, request=req)
+                response["remember_device_token"] = device_token
             response["authenticator_mfa_verified"] = True
             response["remember_device_verified"] = True
             response["remember_device_expires_at"] = trusted_device.expires_at.isoformat() + "Z"
@@ -2760,7 +2773,22 @@ def authenticator_authentication_verify(
     )
     db.commit()
 
-    response = _build_login_success(db, user, res=res, req=req)
+    if data.remember_device:
+        token = auth.create_access_token(
+            {"sub": user.username},
+            expires_delta=timedelta(days=TRUSTED_DEVICE_DAYS),
+        )
+        response = {
+            "access_token": token,
+            "background_alert_token": auth.create_background_alert_token(user.username),
+            "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
+            "token_type": "bearer",
+            "user": _user_payload(db, user),
+        }
+        if res is not None:
+            auth.set_auth_cookie(res, token, request=req)
+    else:
+        response = _build_login_success(db, user, res=res, req=req)
     response["authenticator_mfa_verified"] = True
     response["user"]["authenticator_mfa_enabled"] = True
     response["recovery_codes_remaining"] = _count_recovery_codes(db, user)

@@ -17,8 +17,6 @@ import { safeLocalStorageSetItem, safeLocalStorageSetJson } from './storage';
 // Purge legacy sensitive tokens from client storage
 if (typeof window !== 'undefined' && window.localStorage) {
   try {
-    localStorage.removeItem('sc_trusted_authenticator_devices');
-    localStorage.removeItem('sc_trusted_authenticator_device');
     localStorage.removeItem('sc_offline_login_v1');
   } catch {}
 }
@@ -121,26 +119,79 @@ function normalizeTrustedDeviceUsername(value) {
 }
 
 function readTrustedDeviceMap() {
-  return {};
-}
-
-function writeTrustedDeviceMap() {
-  // Server handles trusted device bypass strictly via HttpOnly cookie
-}
-
-function clearTrustedDeviceToken() {
   try {
-    localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
-  } catch {}
+    const parsed = JSON.parse(localStorage.getItem(TRUSTED_DEVICE_STORAGE_KEY) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
 }
 
-function getTrustedDeviceToken() {
-  // Server-side validation via sc_trusted_device HttpOnly cookie
-  return '';
+function writeTrustedDeviceMap(devices) {
+  try {
+    safeLocalStorageSetJson(TRUSTED_DEVICE_STORAGE_KEY, devices);
+  } catch {
+    // Remembered device storage is optional; keep login usable if storage is tight.
+  }
 }
 
-function saveTrustedDeviceToken() {
-  // Server sets sc_trusted_device HttpOnly cookie automatically; client never stores device token
+function clearTrustedDeviceToken(username) {
+  const normalizedUsername = normalizeTrustedDeviceUsername(username);
+  if (!normalizedUsername) {
+    try {
+      localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
+    } catch {}
+    return;
+  }
+
+  const devices = readTrustedDeviceMap();
+  if (devices[normalizedUsername]) {
+    delete devices[normalizedUsername];
+    writeTrustedDeviceMap(devices);
+  }
+}
+
+function getTrustedDeviceToken(username) {
+  const normalizedUsername = normalizeTrustedDeviceUsername(username);
+  if (!normalizedUsername) {
+    return '';
+  }
+
+  const devices = readTrustedDeviceMap();
+  const record = devices[normalizedUsername];
+  if (!record?.token) {
+    return '';
+  }
+
+  const expiresAt = Date.parse(record.expiresAt || '');
+  if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+    delete devices[normalizedUsername];
+    writeTrustedDeviceMap(devices);
+    return '';
+  }
+
+  return record.token;
+}
+
+function saveTrustedDeviceToken(username, response) {
+  const normalizedUsername = normalizeTrustedDeviceUsername(username || response?.user?.username);
+  const token = String(response?.remember_device_token || '').trim();
+  if (!normalizedUsername) {
+    return;
+  }
+
+  const devices = readTrustedDeviceMap();
+  if (token) {
+    devices[normalizedUsername] = {
+      token,
+      expiresAt: response?.remember_device_expires_at || '',
+      savedAt: new Date().toISOString(),
+    };
+    writeTrustedDeviceMap(devices);
+  }
 }
 
 function isLoopbackHostname(hostname) {
@@ -1163,7 +1214,11 @@ async function completeAuthenticatedLoginResponse(response, password, { remember
     }
   }
 
-  clearTrustedDeviceToken(username || response?.user?.username);
+  if (rememberDevice) {
+    saveTrustedDeviceToken(username, response);
+  } else {
+    clearTrustedDeviceToken(username || response?.user?.username);
+  }
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
   return response;
 }
@@ -1259,6 +1314,9 @@ export async function verifyAuthenticatorSetup({
   }
   if (response?.user) {
     safeLocalStorageSetJson('sc_user', response.user);
+  }
+  if (rememberDevice) {
+    saveTrustedDeviceToken(username, response);
   }
 
   return response;

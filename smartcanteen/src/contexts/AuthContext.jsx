@@ -32,7 +32,8 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('sc_user');
     localStorage.removeItem('sc_background_alert_token');
     localStorage.removeItem('sc_offline_session');
-    localStorage.removeItem('sc_trusted_authenticator_devices');
+    // Preserve trusted device tokens on this device across logout.
+    // Device revocation is managed explicitly in Settings / Manage Accounts.
     localStorage.removeItem('sc_offline_login_v1');
     setUser(null);
     setLoading(false);
