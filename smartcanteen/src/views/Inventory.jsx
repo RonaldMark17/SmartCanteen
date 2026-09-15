@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import DismissibleAlert from '../components/DismissibleAlert';
+import ConfirmationModal from '../components/ConfirmationModal';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import { formatPhilippineDateTime, getPhilippineDateKey } from '../utils/dateTime';
 import {
@@ -246,6 +247,24 @@ export default function Inventory() {
   const [adjustError, setAdjustError] = useState('');
   const [savingAdjust, setSavingAdjust] = useState(false);
   const quickAdjustQueueRef = useRef({});
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Save / Edit Confirmation Dialog state
+  // ─────────────────────────────────────────────────────────────────────────
+  const [saveConfirmDialog, setSaveConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmLabel: 'Confirm',
+    tone: 'emerald',
+    isLoading: false,
+    loadingText: 'Saving...',
+    details: [],
+    onConfirm: null,
+  });
+
+  const closeSaveConfirm = () =>
+    setSaveConfirmDialog((prev) => ({ ...prev, isOpen: false, isLoading: false, onConfirm: null }));
 
   function initialProductForm() {
     return {
@@ -531,62 +550,9 @@ export default function Inventory() {
     setIsAddEditModalOpen(true);
   };
 
-  const handleSaveProduct = async (e) => {
-    e.preventDefault();
-    setProductFormError('');
+  const executeSaveProduct = async (payload) => {
     setSavingProduct(true);
-
     try {
-      const isBulk = productForm.unit_type === BULK_UNIT_TYPE;
-      const baseUnit = isBulk ? (productForm.base_unit || 'kg') : 'pcs';
-      const stock = Number(productForm.stock);
-      const minStock = Number(productForm.min_stock);
-      const rawPrice = productForm.price;
-      const price = rawPrice !== '' && rawPrice !== null && !isNaN(Number(rawPrice))
-        ? parseFloat(rawPrice)
-        : 0.0;
-
-      if (!productForm.name.trim()) {
-        setProductFormError('Product name is required.');
-        setSavingProduct(false);
-        return;
-      }
-
-      if (!Number.isFinite(price) || price < 0) {
-        setProductFormError('Price must be a valid positive number.');
-        setSavingProduct(false);
-        return;
-      }
-
-      if (!Number.isFinite(stock) || stock < 0) {
-        setProductFormError('Current stock cannot be negative.');
-        setSavingProduct(false);
-        return;
-      }
-
-      if (!Number.isFinite(minStock) || minStock < 0) {
-        setProductFormError('Minimum alert stock cannot be negative.');
-        setSavingProduct(false);
-        return;
-      }
-
-      if (!isBulk && (!Number.isInteger(stock) || !Number.isInteger(minStock))) {
-        setProductFormError('PCS items must use whole-number values for stock and reorder alert.');
-        setSavingProduct(false);
-        return;
-      }
-
-      const payload = {
-        name: productForm.name.trim(),
-        category: productForm.category,
-        price,
-        stock: isBulk ? parseFloat(stock.toFixed(4)) : Math.round(stock),
-        min_stock: isBulk ? parseFloat(minStock.toFixed(4)) : Math.round(minStock),
-        unit_type: isBulk ? BULK_UNIT_TYPE : PCS_UNIT_TYPE,
-        base_unit: baseUnit,
-        is_favorite: Boolean(productForm.is_favorite),
-      };
-
       if (productForm.id) {
         await API.updateProduct(productForm.id, payload);
         window.showToast?.('Product updated successfully!', 'success');
@@ -601,9 +567,87 @@ export default function Inventory() {
       if (activeTab === 'history') fetchHistory();
     } catch (err) {
       setProductFormError(err.message || 'Failed to save product.');
+      throw err;
     } finally {
       setSavingProduct(false);
     }
+  };
+
+  const handleSaveProduct = async (e) => {
+    e.preventDefault();
+    setProductFormError('');
+
+    const isBulk = productForm.unit_type === BULK_UNIT_TYPE;
+    const baseUnit = isBulk ? (productForm.base_unit || 'kg') : 'pcs';
+    const stock = Number(productForm.stock);
+    const minStock = Number(productForm.min_stock);
+    const rawPrice = productForm.price;
+    const price = rawPrice !== '' && rawPrice !== null && !isNaN(Number(rawPrice))
+      ? parseFloat(rawPrice)
+      : 0.0;
+
+    if (!productForm.name.trim()) {
+      setProductFormError('Product name is required.');
+      return;
+    }
+
+    if (!Number.isFinite(price) || price < 0) {
+      setProductFormError('Price must be a valid positive number.');
+      return;
+    }
+
+    if (!Number.isFinite(stock) || stock < 0) {
+      setProductFormError('Current stock cannot be negative.');
+      return;
+    }
+
+    if (!Number.isFinite(minStock) || minStock < 0) {
+      setProductFormError('Minimum alert stock cannot be negative.');
+      return;
+    }
+
+    if (!isBulk && (!Number.isInteger(stock) || !Number.isInteger(minStock))) {
+      setProductFormError('PCS items must use whole-number values for stock and reorder alert.');
+      return;
+    }
+
+    const payload = {
+      name: productForm.name.trim(),
+      category: productForm.category,
+      price,
+      stock: isBulk ? parseFloat(stock.toFixed(4)) : Math.round(stock),
+      min_stock: isBulk ? parseFloat(minStock.toFixed(4)) : Math.round(minStock),
+      unit_type: isBulk ? BULK_UNIT_TYPE : PCS_UNIT_TYPE,
+      base_unit: baseUnit,
+      is_favorite: Boolean(productForm.is_favorite),
+    };
+
+    const isEdit = Boolean(productForm.id);
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: isEdit ? 'Confirm Product Changes' : 'Confirm New Product',
+      message: `Are you sure you want to ${isEdit ? 'save changes to' : 'add'} "${productForm.name.trim()}"?`,
+      confirmLabel: isEdit ? 'Yes, Save Changes' : 'Yes, Create Product',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: isEdit ? 'Saving changes...' : 'Creating product...',
+      details: [
+        { label: 'Product Name', value: productForm.name.trim() },
+        { label: 'Category', value: productForm.category },
+        { label: 'Selling Price', value: `₱${price.toFixed(2)}`, highlight: true },
+        { label: isEdit ? 'Current Stock' : 'Initial Stock', value: `${stock} ${baseUnit}` },
+        { label: 'Reorder Alert', value: `${minStock} ${baseUnit}` },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveProduct(payload);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -620,35 +664,9 @@ export default function Inventory() {
     setIsReplenishModalOpen(true);
   };
 
-  const handleSaveReplenish = async (e) => {
-    e.preventDefault();
-    setReplenishError('');
+  const executeSaveReplenish = async (pId, qty, targetProduct) => {
     setSavingReplenish(true);
-
     try {
-      const pId = Number(replenishDraft.productId);
-      const qty = Number(replenishDraft.quantity);
-
-      if (!pId) {
-        setReplenishError('Please select a product to replenish.');
-        setSavingReplenish(false);
-        return;
-      }
-
-      if (!Number.isFinite(qty) || qty <= 0) {
-        setReplenishError('Please enter a valid quantity greater than 0.');
-        setSavingReplenish(false);
-        return;
-      }
-
-      const targetProduct = activeProducts.find((p) => p.id === pId);
-      const isBulk = getProductUnitType(targetProduct) === BULK_UNIT_TYPE;
-      if (!isBulk && !Number.isInteger(qty)) {
-        setReplenishError('PCS items must be replenished in whole numbers.');
-        setSavingReplenish(false);
-        return;
-      }
-
       await API.replenishInventory({
         product_id: pId,
         quantity: qty,
@@ -663,9 +681,62 @@ export default function Inventory() {
       if (activeTab === 'history') fetchHistory();
     } catch (err) {
       setReplenishError(err.message || 'Failed to replenish stock.');
+      throw err;
     } finally {
       setSavingReplenish(false);
     }
+  };
+
+  const handleSaveReplenish = async (e) => {
+    e.preventDefault();
+    setReplenishError('');
+
+    const pId = Number(replenishDraft.productId);
+    const qty = Number(replenishDraft.quantity);
+
+    if (!pId) {
+      setReplenishError('Please select a product to replenish.');
+      return;
+    }
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setReplenishError('Please enter a valid quantity greater than 0.');
+      return;
+    }
+
+    const targetProduct = activeProducts.find((p) => p.id === pId);
+    const isBulk = getProductUnitType(targetProduct) === BULK_UNIT_TYPE;
+    if (!isBulk && !Number.isInteger(qty)) {
+      setReplenishError('PCS items must be replenished in whole numbers.');
+      return;
+    }
+
+    const unitLabel = isBulk ? (targetProduct?.base_unit || 'kg') : 'pcs';
+
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Stock Replenishment',
+      message: `Are you sure you want to add ${qty} ${unitLabel} to stock for "${targetProduct?.name}"?`,
+      confirmLabel: 'Yes, Add Stock',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Adding stock...',
+      details: [
+        { label: 'Product', value: targetProduct?.name },
+        { label: 'Quantity to Add', value: `+${qty} ${unitLabel}`, highlight: true },
+        { label: 'Date', value: replenishDraft.date || 'Today' },
+        ...(replenishDraft.remarks ? [{ label: 'Remarks', value: replenishDraft.remarks }] : []),
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveReplenish(pId, qty, targetProduct);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -683,35 +754,9 @@ export default function Inventory() {
     setIsAdjustModalOpen(true);
   };
 
-  const handleSaveAdjust = async (e) => {
-    e.preventDefault();
-    setAdjustError('');
+  const executeSaveAdjust = async (pId, qty, targetProduct) => {
     setSavingAdjust(true);
-
     try {
-      const pId = Number(adjustDraft.productId);
-      const qty = Number(adjustDraft.quantity);
-
-      if (!pId) {
-        setAdjustError('Please select a product to adjust.');
-        setSavingAdjust(false);
-        return;
-      }
-
-      if (!Number.isFinite(qty) || qty < 0) {
-        setAdjustError('Please enter a valid non-negative adjustment quantity.');
-        setSavingAdjust(false);
-        return;
-      }
-
-      const targetProduct = activeProducts.find((p) => p.id === pId);
-      const isBulk = getProductUnitType(targetProduct) === BULK_UNIT_TYPE;
-      if (!isBulk && !Number.isInteger(qty)) {
-        setAdjustError('PCS items must use whole-number values.');
-        setSavingAdjust(false);
-        return;
-      }
-
       await API.adjustInventory({
         product_id: pId,
         adjustment_type: adjustDraft.adjustmentType,
@@ -727,9 +772,66 @@ export default function Inventory() {
       if (activeTab === 'history') fetchHistory();
     } catch (err) {
       setAdjustError(err.message || 'Failed to adjust stock.');
+      throw err;
     } finally {
       setSavingAdjust(false);
     }
+  };
+
+  const handleSaveAdjust = async (e) => {
+    e.preventDefault();
+    setAdjustError('');
+
+    const pId = Number(adjustDraft.productId);
+    const qty = Number(adjustDraft.quantity);
+
+    if (!pId) {
+      setAdjustError('Please select a product to adjust.');
+      return;
+    }
+
+    if (!Number.isFinite(qty) || qty < 0) {
+      setAdjustError('Please enter a valid non-negative adjustment quantity.');
+      return;
+    }
+
+    const targetProduct = activeProducts.find((p) => p.id === pId);
+    const isBulk = getProductUnitType(targetProduct) === BULK_UNIT_TYPE;
+    if (!isBulk && !Number.isInteger(qty)) {
+      setAdjustError('PCS items must use whole-number values.');
+      return;
+    }
+
+    const unitLabel = isBulk ? (targetProduct?.base_unit || 'kg') : 'pcs';
+    const typeLabel = adjustDraft.adjustmentType === 'deduct'
+      ? 'Deduct from Stock'
+      : (adjustDraft.adjustmentType === 'add' ? 'Add to Stock' : 'Set Exact Stock');
+
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Stock Adjustment',
+      message: `Are you sure you want to record this stock adjustment for "${targetProduct?.name}"?`,
+      confirmLabel: 'Yes, Update Stock',
+      tone: 'amber',
+      isLoading: false,
+      loadingText: 'Updating stock...',
+      details: [
+        { label: 'Product', value: targetProduct?.name },
+        { label: 'Adjustment Type', value: typeLabel },
+        { label: 'Quantity', value: `${qty} ${unitLabel}`, highlight: true },
+        { label: 'Reason', value: adjustDraft.reason },
+        ...(adjustDraft.remarks ? [{ label: 'Remarks', value: adjustDraft.remarks }] : []),
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveAdjust(pId, qty, targetProduct);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2297,6 +2399,20 @@ export default function Inventory() {
           </div>
         </div>
       )}
+
+      {/* Global Save / Edit Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={saveConfirmDialog.isOpen}
+        title={saveConfirmDialog.title}
+        message={saveConfirmDialog.message}
+        confirmLabel={saveConfirmDialog.confirmLabel}
+        tone={saveConfirmDialog.tone}
+        isLoading={saveConfirmDialog.isLoading}
+        loadingText={saveConfirmDialog.loadingText}
+        details={saveConfirmDialog.details}
+        onConfirm={saveConfirmDialog.onConfirm}
+        onCancel={closeSaveConfirm}
+      />
     </div>
   );
 }

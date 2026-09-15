@@ -41,6 +41,9 @@
   --sc-chart-tooltip-body: #e2e8f0;
   --sc-chart-tooltip-border: rgba(15, 23, 42, 0.9);
   --sc-chart-neutral: #94a3b8;
+  --sc-primary: #0f766e;
+  --sc-primary-hover: #0d5f59;
+  --sc-text: #0f172a;
 }
 
 /* 2. Your base styles */
@@ -82,6 +85,9 @@ html.dark {
   --sc-chart-tooltip-body: #f1f5f9;
   --sc-chart-tooltip-border: rgba(148, 163, 184, 0.3);
   --sc-chart-neutral: #cbd5e1;
+  --sc-primary: #10b981;
+  --sc-primary-hover: #059669;
+  --sc-text: #f8fafc;
 }
 
 html.dark body {
@@ -1434,6 +1440,15 @@ html.dark {
   background: var(--sc-primary) !important;
   background-image: none !important;
   color: #ffffff !important;
+  transition: background-color 0.15s ease, transform 0.1s ease !important;
+}
+
+.login-view button[type="submit"]:not(:disabled):hover {
+  background: var(--sc-primary-hover) !important;
+}
+
+.login-view button[type="submit"]:not(:disabled):active {
+  transform: scale(0.99);
 }
 
 .login-view input {

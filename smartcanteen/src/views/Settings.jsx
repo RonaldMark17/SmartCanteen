@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import {
+  ArrowDownTrayIcon,
   ArrowPathIcon,
   BellIcon,
   CheckCircleIcon,
@@ -28,6 +29,8 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from '../components/DismissibleAlert';
+import ConfirmationModal from '../components/ConfirmationModal';
+import { downloadRecoveryCodesFile } from '../utils/downloadRecoveryCodes';
 import { useModuleSettings } from '../contexts/useModuleSettings';
 import { useAuth } from '../contexts/AuthContext';
 import { useAccessibility } from '../contexts/AccessibilityContext';
@@ -191,6 +194,23 @@ export default function Settings() {
   const [mfaRecoveryCodesCopied, setMfaRecoveryCodesCopied] = useState(false);
   const [mfaRegeneratingCodes, setMfaRegeneratingCodes] = useState(false);
 
+  // Global Save / Edit Confirmation Dialog State
+  const [saveConfirmDialog, setSaveConfirmDialog] = useState({
+    isOpen: false,
+    title: 'Confirm Changes',
+    message: '',
+    confirmLabel: 'Yes, Save Changes',
+    tone: 'emerald',
+    isLoading: false,
+    loadingText: 'Saving...',
+    details: null,
+    onConfirm: null,
+  });
+
+  const closeSaveConfirm = () => {
+    setSaveConfirmDialog((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+  };
+
   async function handleStartMfaSetup() {
     setMfaSetupLoading(true);
     setMfaSetupError('');
@@ -323,6 +343,13 @@ export default function Settings() {
     }
   }
 
+  function handleDownloadRecoveryCodes() {
+    const success = downloadRecoveryCodesFile(mfaRecoveryCodes, currentUser?.username);
+    if (success) {
+      window.showToast?.('Recovery codes downloaded as text file.', 'success');
+    }
+  }
+
   useEffect(() => {
     setDraftModules(normalizeModuleSettings(modules));
   }, [modules]);
@@ -332,7 +359,28 @@ export default function Settings() {
   const disabledCount = SYSTEM_MODULES.length - enabledCount;
   const dirty = !areModuleSettingsEqual(draftModules, modules);
 
-  async function handleChangePassword(e) {
+  async function executeChangePassword() {
+    setChangePwLoading(true);
+    try {
+      const res = await API.changePassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setChangePwMessage(res.message || 'Password updated successfully!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      window.showToast?.('Password updated successfully!', 'success');
+    } catch (err) {
+      setChangePwError(err.message || 'Failed to update password.');
+      window.showToast?.(err.message || 'Failed to update password.', 'error');
+      throw err;
+    } finally {
+      setChangePwLoading(false);
+    }
+  }
+
+  function handleChangePassword(e) {
     e.preventDefault();
     setChangePwMessage('');
     setChangePwError('');
@@ -350,23 +398,24 @@ export default function Settings() {
       return;
     }
 
-    setChangePwLoading(true);
-    try {
-      const res = await API.changePassword({
-        current_password: currentPassword,
-        new_password: newPassword,
-      });
-      setChangePwMessage(res.message || 'Password updated successfully!');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      window.showToast?.('Password updated successfully!', 'success');
-    } catch (err) {
-      setChangePwError(err.message || 'Failed to update password.');
-      window.showToast?.(err.message || 'Failed to update password.', 'error');
-    } finally {
-      setChangePwLoading(false);
-    }
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Password Change',
+      message: 'Are you sure you want to change your account password?',
+      confirmLabel: 'Yes, Change Password',
+      tone: 'indigo',
+      isLoading: false,
+      loadingText: 'Changing password...',
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeChangePassword();
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   }
 
   async function handleRequestPasswordReset() {
@@ -417,7 +466,7 @@ export default function Settings() {
     }
   }
 
-  async function handleSave() {
+  async function executeSave() {
     setSaving(true);
     setSaveError('');
 
@@ -431,9 +480,35 @@ export default function Settings() {
     } catch (saveException) {
       setSaveError(saveException?.message || 'Module settings could not be saved.');
       window.showToast?.('Module settings could not be saved.', 'error');
+      throw saveException;
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleSave() {
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Settings Changes',
+      message: 'Are you sure you want to save changes to system and module preferences?',
+      confirmLabel: 'Yes, Save Settings',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Saving settings...',
+      details: [
+        { label: 'Active Modules', value: `${enabledCount} enabled`, highlight: true },
+        { label: 'Disabled Modules', value: `${disabledCount} disabled` },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSave();
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   }
 
   function handleResetAccessibility() {
@@ -1445,23 +1520,33 @@ export default function Settings() {
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handleCopyRecoveryCodes}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition active:scale-95"
-              >
-                {mfaRecoveryCodesCopied ? (
-                  <>
-                    <CheckIcon className="h-4 w-4 text-emerald-600" />
-                    Copied All Codes!
-                  </>
-                ) : (
-                  <>
-                    <ClipboardDocumentCheckIcon className="h-4 w-4" />
-                    Copy All Codes
-                  </>
-                )}
-              </button>
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleDownloadRecoveryCodes}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs font-bold text-sky-700 shadow-2xs hover:bg-sky-100 dark:border-sky-900/60 dark:bg-sky-950/50 dark:text-sky-300 transition active:scale-95"
+                >
+                  <ArrowDownTrayIcon className="h-4 w-4 stroke-[2.5]" />
+                  Download .txt
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyRecoveryCodes}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition active:scale-95"
+                >
+                  {mfaRecoveryCodesCopied ? (
+                    <>
+                      <CheckIcon className="h-4 w-4 text-emerald-600" />
+                      Copied All Codes!
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardDocumentCheckIcon className="h-4 w-4" />
+                      Copy All Codes
+                    </>
+                  )}
+                </button>
+              </div>
 
               <button
                 type="button"
@@ -1517,6 +1602,20 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {/* Global Save / Edit Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={saveConfirmDialog.isOpen}
+        title={saveConfirmDialog.title}
+        message={saveConfirmDialog.message}
+        confirmLabel={saveConfirmDialog.confirmLabel}
+        tone={saveConfirmDialog.tone}
+        isLoading={saveConfirmDialog.isLoading}
+        loadingText={saveConfirmDialog.loadingText}
+        details={saveConfirmDialog.details}
+        onConfirm={saveConfirmDialog.onConfirm}
+        onCancel={closeSaveConfirm}
+      />
     </div>
   );
 }

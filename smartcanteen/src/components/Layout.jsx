@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowDownTrayIcon,
   ArrowPathIcon,
   ArrowRightOnRectangleIcon,
   ArrowTrendingUpIcon,
@@ -28,6 +29,7 @@ import {
 } from '@heroicons/react/24/outline';
 import DismissibleAlert from './DismissibleAlert';
 import BrandLogo from './BrandLogo';
+import { downloadRecoveryCodesFile } from '../utils/downloadRecoveryCodes';
 import { useAuth } from '../contexts/AuthContext';
 import { API } from '../services/api';
 import {
@@ -1102,6 +1104,13 @@ export default function Layout({ children, onLogout }) {
       window.setTimeout(() => setRecoveryCodesCopied(false), 1800);
     } catch {
       setRecoveryCodesCopied(false);
+    }
+  }
+
+  function downloadRecoveryCodes() {
+    const success = downloadRecoveryCodesFile(recoveryCodes, authUser?.username);
+    if (success) {
+      window.showToast?.('Recovery codes downloaded as text file.', 'success');
     }
   }
 
@@ -2288,17 +2297,31 @@ export default function Layout({ children, onLogout }) {
                   Close
                 </button>
                 {recoveryCodes.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={copyRecoveryCodes}
-                    className={`rounded-xl border px-4 py-2.5 text-sm font-black transition ${
-                      darkMode
-                        ? 'border-emerald-500/30 text-emerald-100 hover:bg-emerald-950/30'
-                        : 'border-emerald-100 text-emerald-700 hover:bg-emerald-50'
-                    }`}
-                  >
-                    {recoveryCodesCopied ? 'Copied' : 'Copy codes'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={downloadRecoveryCodes}
+                      className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-black transition active:scale-95 ${
+                        darkMode
+                          ? 'border-sky-500/30 text-sky-200 hover:bg-sky-950/30'
+                          : 'border-sky-200 text-sky-700 hover:bg-sky-50'
+                      }`}
+                    >
+                      <ArrowDownTrayIcon className="h-4 w-4 stroke-[2.5]" />
+                      Download as TXT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyRecoveryCodes}
+                      className={`rounded-xl border px-4 py-2.5 text-sm font-black transition active:scale-95 ${
+                        darkMode
+                          ? 'border-emerald-500/30 text-emerald-100 hover:bg-emerald-950/30'
+                          : 'border-emerald-100 text-emerald-700 hover:bg-emerald-50'
+                      }`}
+                    >
+                      {recoveryCodesCopied ? 'Copied' : 'Copy codes'}
+                    </button>
+                  </>
                 )}
                 <button
                   type="button"

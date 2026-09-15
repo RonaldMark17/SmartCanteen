@@ -52,7 +52,7 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
-  const refreshUser = useCallback(async () => {
+  const refreshUser = useCallback(async (opts = {}) => {
     try {
       const dbUser = await API.getCurrentUser();
       if (dbUser && dbUser.role) {
@@ -64,12 +64,27 @@ export function AuthProvider({ children }) {
         }
         return dbUser;
       } else {
-        await logout();
+        // Server returned a non-role response; silently clear session
+        localStorage.removeItem('sc_token');
+        localStorage.removeItem('sc_user');
+        localStorage.removeItem('sc_background_alert_token');
+        localStorage.removeItem('sc_offline_session');
+        setUser(null);
         return null;
       }
     } catch (err) {
       if (err?.status === 401 || err?.status === 403) {
-        await logout();
+        // Session expired: silently clear local session data.
+        // Preserve sc_remembered_username so the login form pre-fills the username.
+        localStorage.removeItem('sc_token');
+        localStorage.removeItem('sc_user');
+        localStorage.removeItem('sc_background_alert_token');
+        localStorage.removeItem('sc_offline_session');
+        setUser(null);
+        // Only call the full logout() on explicit user action (opts.explicit === true)
+        if (opts.explicit) {
+          await logout();
+        }
       }
       return null;
     } finally {

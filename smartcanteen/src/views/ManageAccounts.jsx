@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import DismissibleAlert from '../components/DismissibleAlert';
+import ConfirmationModal from '../components/ConfirmationModal';
 import { Skeleton, SkeletonText } from '../components/Skeleton';
 import {
   ArrowPathIcon,
@@ -286,6 +287,34 @@ export default function ManageAccounts() {
   const [authRecoveryError, setAuthRecoveryError] = useState('');
   const [busyAuthRecoveryId, setBusyAuthRecoveryId] = useState(null);
 
+  // Decline Dialog State
+  const [declineDialog, setDeclineDialog] = useState({
+    open: false,
+    type: null,
+    request: null,
+    action: null,
+    note: '',
+    submitting: false,
+    error: '',
+  });
+
+  // Global Save / Edit Confirmation Dialog State
+  const [saveConfirmDialog, setSaveConfirmDialog] = useState({
+    isOpen: false,
+    title: 'Confirm Changes',
+    message: '',
+    confirmLabel: 'Yes, Save Changes',
+    tone: 'emerald',
+    isLoading: false,
+    loadingText: 'Saving...',
+    details: null,
+    onConfirm: null,
+  });
+
+  const closeSaveConfirm = () => {
+    setSaveConfirmDialog((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+  };
+
   // View Mode & Pagination States
   const [resetViewMode, setResetViewMode] = useState('list');
   const [resetPage, setResetPage] = useState(1);
@@ -480,19 +509,11 @@ export default function ManageAccounts() {
     setFormError('');
   };
 
-  const saveAccount = async (event) => {
-    event.preventDefault();
+  const executeSaveAccount = async (payload, username) => {
     setSaving(true);
     setFormError('');
 
     try {
-      const username = formData.username.trim();
-      const payload = {
-        username,
-        full_name: formData.full_name.trim(),
-        role: formData.role,
-      };
-
       if (editingUser) {
         payload.is_active = Boolean(formData.is_active);
         if (formData.password.trim()) {
@@ -542,9 +563,53 @@ export default function ManageAccounts() {
       closeModal();
     } catch (err) {
       setFormError(err.message || 'Account could not be saved.');
+      throw err;
     } finally {
       setSaving(false);
     }
+  };
+
+  const saveAccount = (event) => {
+    event.preventDefault();
+    setFormError('');
+
+    const username = formData.username.trim();
+    if (!username) {
+      setFormError('Username is required.');
+      return;
+    }
+
+    const payload = {
+      username,
+      full_name: formData.full_name.trim(),
+      role: formData.role,
+    };
+
+    const isEdit = Boolean(editingUser);
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: isEdit ? 'Confirm Account Changes' : 'Confirm New Account',
+      message: `Are you sure you want to ${isEdit ? 'save changes to' : 'create'} this account?`,
+      confirmLabel: isEdit ? 'Yes, Save Changes' : 'Yes, Create Account',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: isEdit ? 'Saving changes...' : 'Creating account...',
+      details: [
+        { label: 'Username', value: `@${username}`, highlight: true },
+        { label: 'Full Name', value: formData.full_name.trim() || '(None)' },
+        { label: 'Role', value: String(formData.role).toUpperCase() },
+        ...(isEdit ? [{ label: 'Status', value: formData.is_active ? 'Active' : 'Inactive' }] : []),
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveAccount(payload, username);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   };
 
   const toggleAccountStatus = async (user) => {
@@ -656,20 +721,89 @@ export default function ManageAccounts() {
     }
   };
 
+  const openDeclineDialog = (request, type = 'reset', action = 'deny') => {
+    setDeclineDialog({
+      open: true,
+      type,
+      request,
+      action,
+      note: '',
+      submitting: false,
+      error: '',
+    });
+  };
+
+  const closeDeclineDialog = () => {
+    if (declineDialog.submitting) return;
+    setDeclineDialog({
+      open: false,
+      type: null,
+      request: null,
+      action: null,
+      note: '',
+      submitting: false,
+      error: '',
+    });
+  };
+
+  const handleConfirmDecline = async () => {
+    if (!declineDialog.request) return;
+    const { request, type, action, note } = declineDialog;
+    const username = request.username || request.identifier;
+    setDeclineDialog((prev) => ({ ...prev, submitting: true, error: '' }));
+
+    try {
+      if (type === 'reset') {
+        setBusyResetRequestId(request.id);
+        if (action === 'deny_appeal') {
+          await API.denyPasswordResetAppeal(request.id, { note: note.trim() });
+          window.showToast?.(`Password reset appeal declined for ${username}.`, 'warning');
+        } else {
+          await API.denyPasswordResetRequest(request.id, { note: note.trim() });
+          window.showToast?.(`Password reset declined for ${username}.`, 'warning');
+        }
+        await loadPasswordResetRequests();
+      } else {
+        setBusyAuthRecoveryId(request.id);
+        if (action === 'deny_appeal') {
+          await API.denyAuthenticatorRecoveryAppeal(request.id, { note: note.trim() });
+          window.showToast?.(`Authenticator recovery appeal declined for ${username}.`, 'warning');
+        } else {
+          await API.denyAuthenticatorRecoveryRequest(request.id, { note: note.trim() });
+          window.showToast?.(`Authenticator recovery declined for ${username}.`, 'warning');
+        }
+        await loadAuthenticatorRecoveryRequests();
+        await loadUsers();
+      }
+      closeDeclineDialog();
+    } catch (err) {
+      setDeclineDialog((prev) => ({
+        ...prev,
+        submitting: false,
+        error: err.message || 'Failed to decline request. Please try again.',
+      }));
+    } finally {
+      setBusyResetRequestId(null);
+      setBusyAuthRecoveryId(null);
+    }
+  };
+
   const reviewPasswordResetRequest = async (request, action) => {
     const username = request.username || request.identifier;
     const approved = action === 'approve' || action === 'approve_appeal';
     const appealAction = action === 'approve_appeal' || action === 'deny_appeal';
+
+    if (!approved) {
+      openDeclineDialog(request, 'reset', action);
+      return;
+    }
+
     const confirmed = window.confirm(
-      `${approved ? 'Approve' : 'Decline'} ${appealAction ? 'password reset appeal' : 'password reset'} for ${username}?`
+      `Approve ${appealAction ? 'password reset appeal' : 'password reset'} for ${username}?`
     );
     if (!confirmed) {
       return;
     }
-
-    const note = approved
-      ? ''
-      : window.prompt('Optional reason to show the user:', '') || '';
 
     setBusyResetRequestId(request.id);
     setResetRequestError('');
@@ -677,15 +811,9 @@ export default function ManageAccounts() {
       if (action === 'approve') {
         await API.approvePasswordResetRequest(request.id);
         window.showToast?.(`Password reset approved for ${username}.`, 'success');
-      } else if (action === 'approve_appeal') {
+      } else {
         await API.approvePasswordResetAppeal(request.id);
         window.showToast?.(`Password reset appeal approved for ${username}.`, 'success');
-      } else if (action === 'deny_appeal') {
-        await API.denyPasswordResetAppeal(request.id, { note: note.trim() });
-        window.showToast?.(`Password reset appeal declined for ${username}.`, 'warning');
-      } else {
-        await API.denyPasswordResetRequest(request.id, { note: note.trim() });
-        window.showToast?.(`Password reset declined for ${username}.`, 'warning');
       }
       await loadPasswordResetRequests();
     } catch (err) {
@@ -699,16 +827,18 @@ export default function ManageAccounts() {
     const username = request.username || request.identifier;
     const approved = action === 'approve' || action === 'approve_appeal';
     const appealAction = action === 'approve_appeal' || action === 'deny_appeal';
+
+    if (!approved) {
+      openDeclineDialog(request, 'recovery', action);
+      return;
+    }
+
     const confirmed = window.confirm(
-      `${approved ? 'Approve' : 'Decline'} ${appealAction ? 'authenticator recovery appeal' : 'authenticator recovery'} for ${username}?`
+      `Approve ${appealAction ? 'authenticator recovery appeal' : 'authenticator recovery'} for ${username}?`
     );
     if (!confirmed) {
       return;
     }
-
-    const note = approved
-      ? ''
-      : window.prompt('Optional reason to show the user:', '') || '';
 
     setBusyAuthRecoveryId(request.id);
     setAuthRecoveryError('');
@@ -716,15 +846,9 @@ export default function ManageAccounts() {
       if (action === 'approve') {
         await API.approveAuthenticatorRecoveryRequest(request.id);
         window.showToast?.(`Authenticator recovery approved for ${username}.`, 'success');
-      } else if (action === 'approve_appeal') {
+      } else {
         await API.approveAuthenticatorRecoveryAppeal(request.id);
         window.showToast?.(`Authenticator recovery appeal approved for ${username}.`, 'success');
-      } else if (action === 'deny_appeal') {
-        await API.denyAuthenticatorRecoveryAppeal(request.id, { note: note.trim() });
-        window.showToast?.(`Authenticator recovery appeal declined for ${username}.`, 'warning');
-      } else {
-        await API.denyAuthenticatorRecoveryRequest(request.id, { note: note.trim() });
-        window.showToast?.(`Authenticator recovery declined for ${username}.`, 'warning');
       }
       await loadAuthenticatorRecoveryRequests();
       await loadUsers();
@@ -1815,6 +1939,134 @@ export default function ManageAccounts() {
           </div>
         </div>
       )}
+
+      {declineDialog.open && declineDialog.request && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-rose-200/80 bg-white shadow-2xl dark:border-rose-950/50 dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+                  <XMarkIcon className="h-6 w-6 stroke-2" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                    {declineDialog.action === 'deny_appeal'
+                      ? declineDialog.type === 'reset' ? 'Decline Reset Appeal' : 'Decline Recovery Appeal'
+                      : declineDialog.type === 'reset' ? 'Decline Password Reset' : 'Decline Authenticator Recovery'}
+                  </h3>
+                  <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Provide an optional reason or note for the user.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeDeclineDialog}
+                disabled={declineDialog.submitting}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 disabled:opacity-50"
+                aria-label="Close dialog"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              {declineDialog.error && (
+                <DismissibleAlert resetKey={declineDialog.error} tone="red" title="Decline issue" className="rounded-xl">
+                  {declineDialog.error}
+                </DismissibleAlert>
+              )}
+
+              {/* Target Account Summary */}
+              <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/60">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800 font-bold text-xs dark:bg-emerald-950 dark:text-emerald-300">
+                    {getInitials({
+                      full_name: declineDialog.request.full_name,
+                      username: declineDialog.request.username || declineDialog.request.identifier,
+                    })}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-bold text-sm text-slate-900 dark:text-white">
+                      {declineDialog.request.full_name || declineDialog.request.username || declineDialog.request.identifier}
+                    </div>
+                    <div className="flex items-center gap-2 font-mono text-xs text-slate-500 dark:text-slate-400">
+                      <span>@{declineDialog.request.username || declineDialog.request.identifier}</span>
+                      <span>•</span>
+                      <span>{formatDateTime(declineDialog.request.requested_at)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {declineDialog.request.reason && (
+                  <div className="mt-2.5 rounded-lg bg-white p-2 text-xs text-slate-600 border border-slate-200/60 dark:bg-slate-900/60 dark:border-slate-700 dark:text-slate-300">
+                    <span className="font-bold">User reason:</span> {declineDialog.request.reason}
+                  </div>
+                )}
+                {declineDialog.request.appeal_reason && (
+                  <div className="mt-2.5 rounded-lg bg-amber-50/80 p-2 text-xs text-amber-800 border border-amber-200/60 dark:bg-amber-950/60 dark:border-amber-800 dark:text-amber-300">
+                    <span className="font-bold">Appeal reason:</span> {declineDialog.request.appeal_reason}
+                  </div>
+                )}
+              </div>
+
+              {/* Reason / Note Textarea */}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="decline-reason" className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Decline Reason (Optional)
+                </label>
+                <textarea
+                  id="decline-reason"
+                  rows={3}
+                  value={declineDialog.note}
+                  onChange={(e) => setDeclineDialog((prev) => ({ ...prev, note: e.target.value }))}
+                  placeholder="e.g., Please verify your identity with the canteen supervisor in person."
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-sm font-medium text-slate-900 placeholder:text-slate-400 shadow-2xs outline-none transition focus:border-rose-500 focus:bg-white focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-500"
+                  disabled={declineDialog.submitting}
+                  autoFocus
+                />
+                <span className="text-[11px] text-slate-400">
+                  This note will be shown to the user when they view their request status.
+                </span>
+              </div>
+
+              <div className="flex flex-col-reverse gap-2.5 pt-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeDeclineDialog}
+                  disabled={declineDialog.submitting}
+                  className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDecline}
+                  disabled={declineDialog.submitting}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 text-xs font-black text-white shadow-xs transition hover:bg-rose-700 active:scale-95 disabled:opacity-50"
+                >
+                  <XMarkIcon className="h-4 w-4 stroke-[2.5]" />
+                  {declineDialog.submitting ? 'Declining...' : 'Confirm Decline'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Save / Edit Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={saveConfirmDialog.isOpen}
+        title={saveConfirmDialog.title}
+        message={saveConfirmDialog.message}
+        confirmLabel={saveConfirmDialog.confirmLabel}
+        tone={saveConfirmDialog.tone}
+        isLoading={saveConfirmDialog.isLoading}
+        loadingText={saveConfirmDialog.loadingText}
+        details={saveConfirmDialog.details}
+        onConfirm={saveConfirmDialog.onConfirm}
+        onCancel={closeSaveConfirm}
+      />
     </div>
   );
 }

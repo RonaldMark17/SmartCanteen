@@ -4,6 +4,7 @@ import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import DismissibleAlert from '../components/DismissibleAlert';
 import ReceiptPreviewModal from '../components/ReceiptPreviewModal';
+import ConfirmationModal from '../components/ConfirmationModal';
 import {
   validateReceiptFile,
   readFileAsDataUrl,
@@ -133,6 +134,11 @@ const DEFAULT_EXPENSE_THEME = {
   bar: 'bg-rose-500',
   badge: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
 };
+
+const SALE_TYPE_OPTIONS = [
+  { key: 'daily', label: 'Daily Sale' },
+  { key: 'monthly', label: 'Monthly Sale' },
+];
 
 const EXPENSE_TYPE_OPTIONS = [
   { key: 'daily', label: 'Daily Expense' },
@@ -421,18 +427,43 @@ function parseDailySaleNotes(report) {
   return String(report?.notes || '')
     .split(/\r?\n/)
     .map((line, index) => {
-      const match = line.match(/^\[Daily Sale\]\s*(\d{4}-\d{2}-\d{2})\s*\|\s*PHP\s*([0-9,.]+)\s*\|\s*(.*)$/i);
-      if (!match) {
+      const typedMatch = line.match(
+        /^\[(Daily|Monthly)\s+Sale\]\s*(\d{4}-\d{2}(?:-\d{2})?)\s*\|\s*PHP\s*([0-9,.]+)\s*\|\s*(.*)$/i
+      );
+      if (typedMatch) {
+        const type = typedMatch[1].toLowerCase();
+        return {
+          id: `sale-${report.id}-${index}`,
+          date: typedMatch[2],
+          amount: toMoney(typedMatch[3]),
+          remarks: cleanNoteValue(typedMatch[4]) || 'No remarks',
+          monthLabel: report.month_label,
+          reportId: report.id,
+          type,
+          typeLabel: type === 'monthly' ? 'Monthly Sale' : 'Daily Sale',
+          rawLine: line,
+          noteIndex: index,
+        };
+      }
+
+      const legacyMatch = line.match(
+        /^\[Sale\]\s*(\d{4}-\d{2}(?:-\d{2})?)\s*\|\s*PHP\s*([0-9,.]+)\s*\|\s*(.*)$/i
+      );
+      if (!legacyMatch) {
         return null;
       }
 
       return {
         id: `sale-${report.id}-${index}`,
-        date: match[1],
-        amount: toMoney(match[2]),
-        remarks: match[3] || 'No remarks',
+        date: legacyMatch[1],
+        amount: toMoney(legacyMatch[2]),
+        remarks: cleanNoteValue(legacyMatch[3]) || 'No remarks',
         monthLabel: report.month_label,
         reportId: report.id,
+        type: 'daily',
+        typeLabel: 'Daily Sale',
+        rawLine: line,
+        noteIndex: index,
       };
     })
     .filter(Boolean);
@@ -1333,10 +1364,23 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
   const [salesSearch, setSalesSearch] = useState('');
   const [salesDateFilter, setSalesDateFilter] = useState('');
   const [dailySaleDraft, setDailySaleDraft] = useState({
+    type: 'daily',
     date: getTodayInputValue(),
+    month: '',
     amount: '',
     notes: '',
   });
+  const [editingSale, setEditingSale] = useState(null);
+  const [editSaleDraft, setEditSaleDraft] = useState({
+    type: 'daily',
+    date: getTodayInputValue(),
+    month: '',
+    amount: '',
+    notes: '',
+  });
+  const [savingEditSale, setSavingEditSale] = useState(false);
+  const [deletingSale, setDeletingSale] = useState(null);
+  const [savingDeleteSale, setSavingDeleteSale] = useState(false);
   const [expenseSearch, setExpenseSearch] = useState('');
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('');
   const [expenseDateFilter, setExpenseDateFilter] = useState('');
@@ -1380,6 +1424,23 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
 
   const [deletingExpense, setDeletingExpense] = useState(null);
   const [savingDeleteExpense, setSavingDeleteExpense] = useState(false);
+
+  // Global Save / Edit Confirmation Dialog State
+  const [saveConfirmDialog, setSaveConfirmDialog] = useState({
+    isOpen: false,
+    title: 'Confirm Changes',
+    message: '',
+    confirmLabel: 'Yes, Save Changes',
+    tone: 'emerald',
+    isLoading: false,
+    loadingText: 'Saving...',
+    details: null,
+    onConfirm: null,
+  });
+
+  const closeSaveConfirm = useCallback(() => {
+    setSaveConfirmDialog((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+  }, []);
   const [reportType, setReportType] = useState('monthly');
   const [fundMonitoringViewMode, setFundMonitoringViewMode] = useState(() => {
     try {
@@ -1452,8 +1513,13 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       const matchesQuery =
         !query ||
         row.remarks.toLowerCase().includes(query) ||
-        row.monthLabel.toLowerCase().includes(query);
-      const matchesDate = !salesDateFilter || row.date === salesDateFilter;
+        row.monthLabel.toLowerCase().includes(query) ||
+        (row.typeLabel || '').toLowerCase().includes(query);
+      const matchesDate =
+        !salesDateFilter ||
+        row.date === salesDateFilter ||
+        row.date.startsWith(salesDateFilter) ||
+        salesDateFilter.startsWith(row.date);
       return matchesQuery && matchesDate;
     });
   }, [dailySalesRows, salesDateFilter, salesSearch]);
@@ -1928,23 +1994,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     }
   }
 
-  async function handleSaveSchoolYearForm() {
-    if (!selectedSchoolYearId || !isAdmin) {
-      return;
-    }
-
-    const startYear = Number(schoolYearForm.startYear);
-    const endYear = Number(schoolYearForm.endYear);
-    const openingBeginningCash = parseNonNegativeMoney(schoolYearForm.openingBeginningCash);
-    if (!Number.isInteger(startYear) || !Number.isInteger(endYear) || endYear <= startYear) {
-      window.showToast?.('Enter a valid school year range.', 'error');
-      return;
-    }
-    if (openingBeginningCash === null) {
-      window.showToast?.('Opening Beginning Cash must be a valid non-negative amount.', 'error');
-      return;
-    }
-
+  async function executeSaveSchoolYearForm(startYear, endYear, openingBeginningCash) {
     setUpdatingSchoolYear(true);
     try {
       await API.updateFinancialSchoolYear(selectedSchoolYearId, {
@@ -1964,9 +2014,51 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       await loadSchoolYears(selectedSchoolYearId);
     } catch (error) {
       window.showToast?.(error.message || 'Unable to save school year details.', 'error');
+      throw error;
     } finally {
       setUpdatingSchoolYear(false);
     }
+  }
+
+  function handleSaveSchoolYearForm() {
+    if (!selectedSchoolYearId || !isAdmin) {
+      return;
+    }
+
+    const startYear = Number(schoolYearForm.startYear);
+    const endYear = Number(schoolYearForm.endYear);
+    const openingBeginningCash = parseNonNegativeMoney(schoolYearForm.openingBeginningCash);
+    if (!Number.isInteger(startYear) || !Number.isInteger(endYear) || endYear <= startYear) {
+      window.showToast?.('Enter a valid school year range.', 'error');
+      return;
+    }
+    if (openingBeginningCash === null) {
+      window.showToast?.('Opening Beginning Cash must be a valid non-negative amount.', 'error');
+      return;
+    }
+
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm School Year Changes',
+      message: `Are you sure you want to save changes to school year ${startYear}-${endYear}?`,
+      confirmLabel: 'Yes, Save School Year',
+      tone: 'indigo',
+      isLoading: false,
+      loadingText: 'Saving school year...',
+      details: [
+        { label: 'School Year', value: `${startYear} - ${endYear}` },
+        { label: 'Opening Beginning Cash', value: formatCurrency(openingBeginningCash), highlight: true },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveSchoolYearForm(startYear, endYear, openingBeginningCash);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   }
 
   async function handleExportWorkbook() {
@@ -2009,31 +2101,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     window.showToast?.('Choose "Save as PDF" in the print dialog to export a PDF.', 'info');
   }
 
-  async function handleSaveStatement() {
-    if (!selectedReport?.id) {
-      return;
-    }
-    if (!canSaveSelectedSchoolYear) {
-      window.showToast?.(selectedSchoolYearValidationMessage, 'error');
-      return;
-    }
-
-    const nextBeginningCash = parseNonNegativeMoney(reportDraft.beginning_cash_on_hand);
-    const nextCurrentSales = parseNonNegativeMoney(reportDraft.current_sales);
-    const nextCostOfSales = parseNonNegativeMoney(reportDraft.cost_of_sales);
-    if (nextBeginningCash === null) {
-      window.showToast?.('Beginning Cash must be a valid non-negative amount.', 'error');
-      return;
-    }
-    if (nextCurrentSales === null) {
-      window.showToast?.('Current Sales must be a valid non-negative amount.', 'error');
-      return;
-    }
-    if (nextCostOfSales === null) {
-      window.showToast?.('Cost of Sales must be a valid non-negative amount.', 'error');
-      return;
-    }
-
+  async function executeSaveStatement(nextBeginningCash, nextCurrentSales, nextCostOfSales) {
     setSavingStatement(true);
     try {
       await API.updateFinancialReport(selectedReport.id, {
@@ -2069,12 +2137,92 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
     } catch (error) {
       window.showToast?.(error.message || 'Unable to save the financial statement.', 'error');
+      throw error;
     } finally {
       setSavingStatement(false);
     }
   }
 
-  async function handleQuickAddSale() {
+  function handleSaveStatement() {
+    if (!selectedReport?.id) {
+      return;
+    }
+    if (!canSaveSelectedSchoolYear) {
+      window.showToast?.(selectedSchoolYearValidationMessage, 'error');
+      return;
+    }
+
+    const nextBeginningCash = parseNonNegativeMoney(reportDraft.beginning_cash_on_hand);
+    const nextCurrentSales = parseNonNegativeMoney(reportDraft.current_sales);
+    const nextCostOfSales = parseNonNegativeMoney(reportDraft.cost_of_sales);
+    if (nextBeginningCash === null) {
+      window.showToast?.('Beginning Cash must be a valid non-negative amount.', 'error');
+      return;
+    }
+    if (nextCurrentSales === null) {
+      window.showToast?.('Current Sales must be a valid non-negative amount.', 'error');
+      return;
+    }
+    if (nextCostOfSales === null) {
+      window.showToast?.('Cost of Sales must be a valid non-negative amount.', 'error');
+      return;
+    }
+
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Financial Statement Save',
+      message: `Are you sure you want to save the financial statement for ${selectedReport.month_label}?`,
+      confirmLabel: 'Yes, Save Statement',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Saving statement...',
+      details: [
+        { label: 'Month', value: selectedReport.month_label },
+        { label: 'Beginning Cash', value: formatCurrency(nextBeginningCash) },
+        { label: 'Current Sales', value: formatCurrency(nextCurrentSales), highlight: true },
+        { label: 'Cost of Sales', value: formatCurrency(nextCostOfSales) },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveStatement(nextBeginningCash, nextCurrentSales, nextCostOfSales);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
+  }
+
+  async function executeQuickAddSale(amount, isMonthly, periodValue, targetReport) {
+    setSavingDailySale(true);
+    try {
+      const existingEntries = parseDailySaleNotes(targetReport);
+      const existingSum = existingEntries.reduce((sum, s) => sum + s.amount, 0);
+      const nextSalesTotal = existingSum + amount;
+      const typeLabel = isMonthly ? 'Monthly Sale' : 'Daily Sale';
+      const line = `[${typeLabel}] ${periodValue} | ${formatCurrency(amount)} | ${cleanNoteValue(dailySaleDraft.notes) || 'No remarks'}`;
+      await API.updateFinancialReport(targetReport.id, {
+        current_sales: nextSalesTotal,
+        current_sales_manual_override: true,
+        notes: appendNoteLine(targetReport.notes, line),
+      });
+      window.showToast?.(`${typeLabel} added.`, 'success');
+      setDailySaleDraft((currentDraft) => ({
+        ...currentDraft,
+        amount: '',
+        notes: '',
+      }));
+      await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to add the sale.', 'error');
+      throw error;
+    } finally {
+      setSavingDailySale(false);
+    }
+  }
+
+  function handleQuickAddSale() {
     if (!detail?.reports?.length) {
       return;
     }
@@ -2084,44 +2232,289 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     }
 
     const amount = parseNonNegativeMoney(dailySaleDraft.amount);
-    if (!dailySaleDraft.date) {
-      window.showToast?.('Choose a sales date.', 'error');
-      return;
+    const isMonthly = dailySaleDraft.type === 'monthly';
+
+    if (isMonthly) {
+      const monthVal = dailySaleDraft.month || getReportMonthValue(selectedReport);
+      if (!monthVal) {
+        window.showToast?.('Choose a sales month.', 'error');
+        return;
+      }
+    } else {
+      if (!dailySaleDraft.date) {
+        window.showToast?.('Choose a sales date.', 'error');
+        return;
+      }
     }
+
     if (amount === null || amount <= 0) {
       window.showToast?.('Enter a sales amount greater than zero.', 'error');
       return;
     }
 
-    const targetReport = findReportForDate(detail, dailySaleDraft.date);
+    let targetReport = null;
+    let periodValue = '';
+    if (isMonthly) {
+      const monthVal = dailySaleDraft.month || getReportMonthValue(selectedReport);
+      targetReport = findReportForMonth(detail, monthVal) || selectedReport;
+      periodValue = monthVal;
+    } else {
+      targetReport = findReportForDate(detail, dailySaleDraft.date);
+      periodValue = dailySaleDraft.date;
+    }
+
     if (!targetReport) {
-      window.showToast?.('The sales date is outside the selected school year.', 'error');
+      window.showToast?.(
+        isMonthly
+          ? 'The sales month was not found in the selected school year.'
+          : 'The sales date is outside the selected school year.',
+        'error'
+      );
       return;
     }
 
-    setSavingDailySale(true);
+    const typeLabel = isMonthly ? 'Monthly Sale' : 'Daily Sale';
+
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Sale Entry',
+      message: `Are you sure you want to record this ${typeLabel.toLowerCase()} of ${formatCurrency(amount)}?`,
+      confirmLabel: 'Yes, Record Sale',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Recording sale...',
+      details: [
+        { label: 'Sale Type', value: typeLabel },
+        { label: 'Date / Period', value: periodValue },
+        { label: 'Amount', value: formatCurrency(amount), highlight: true },
+        ...(dailySaleDraft.notes ? [{ label: 'Remarks', value: dailySaleDraft.notes }] : []),
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeQuickAddSale(amount, isMonthly, periodValue, targetReport);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
+  }
+
+  function handleOpenEditSale(row) {
+    if (!row) return;
+    setEditingSale(row);
+    setEditSaleDraft({
+      type: row.type || 'daily',
+      date: row.type === 'monthly' ? getTodayInputValue() : row.date,
+      month: row.type === 'monthly' ? row.date : (getReportMonthValue(selectedReport) || ''),
+      amount: toInputValue(row.amount),
+      notes: row.remarks === 'No remarks' ? '' : row.remarks,
+    });
+  }
+
+  function handleCloseEditSale() {
+    setEditingSale(null);
+    setEditSaleDraft({
+      type: 'daily',
+      date: getTodayInputValue(),
+      month: '',
+      amount: '',
+      notes: '',
+    });
+  }
+
+  async function executeSaveEditSale(amount, isMonthly, effectiveMonth, targetReport, originalReport) {
+    setSavingEditSale(true);
     try {
-      const existingEntries = parseDailySaleNotes(targetReport);
-      const existingSum = existingEntries.reduce((sum, s) => sum + s.amount, 0);
-      const baseSales = existingEntries.length > 0 ? existingSum : toMoney(targetReport.current_sales);
-      const nextSalesTotal = baseSales + amount;
-      const line = `[Daily Sale] ${dailySaleDraft.date} | ${formatCurrency(amount)} | ${cleanNoteValue(dailySaleDraft.notes) || 'No remarks'}`;
+      const periodValue = isMonthly ? effectiveMonth : editSaleDraft.date;
+      const typeLabel = isMonthly ? 'Monthly Sale' : 'Daily Sale';
+      const newLine = `[${typeLabel}] ${periodValue} | ${formatCurrency(amount)} | ${cleanNoteValue(editSaleDraft.notes) || 'No remarks'}`;
+
+      const isSameReport = Number(originalReport.id) === Number(targetReport.id);
+
+      if (isSameReport) {
+        const lines = String(targetReport.notes || '').split(/\r?\n/);
+        let replaced = false;
+        const nextLines = lines.map((line, idx) => {
+          if (!replaced && (line === editingSale.rawLine || idx === editingSale.noteIndex)) {
+            replaced = true;
+            return newLine;
+          }
+          return line;
+        });
+        if (!replaced) {
+          nextLines.push(newLine);
+        }
+        const updatedNotes = nextLines.join('\n');
+        const remainingSales = parseDailySaleNotes({ ...targetReport, notes: updatedNotes });
+        const nextSalesTotal = remainingSales.reduce((sum, s) => sum + s.amount, 0);
+
+        await API.updateFinancialReport(targetReport.id, {
+          current_sales: nextSalesTotal,
+          current_sales_manual_override: true,
+          notes: updatedNotes,
+        });
+      } else {
+        const origLines = String(originalReport.notes || '').split(/\r?\n/);
+        let removed = false;
+        const nextOrigLines = origLines.filter((line, idx) => {
+          if (!removed && (line === editingSale.rawLine || idx === editingSale.noteIndex)) {
+            removed = true;
+            return false;
+          }
+          return true;
+        });
+        const updatedOrigNotes = nextOrigLines.join('\n');
+        const origRemainingSales = parseDailySaleNotes({ ...originalReport, notes: updatedOrigNotes });
+        const origNextSalesTotal = origRemainingSales.reduce((sum, s) => sum + s.amount, 0);
+
+        await API.updateFinancialReport(originalReport.id, {
+          current_sales: origNextSalesTotal,
+          current_sales_manual_override: true,
+          notes: updatedOrigNotes,
+        });
+
+        const updatedTargetNotes = appendNoteLine(targetReport.notes, newLine);
+        const targetSales = parseDailySaleNotes({ ...targetReport, notes: updatedTargetNotes });
+        const targetNextSalesTotal = targetSales.reduce((sum, s) => sum + s.amount, 0);
+
+        await API.updateFinancialReport(targetReport.id, {
+          current_sales: targetNextSalesTotal,
+          current_sales_manual_override: true,
+          notes: updatedTargetNotes,
+        });
+      }
+
+      window.showToast?.(`${typeLabel} updated.`, 'success');
+      handleCloseEditSale();
+      await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to update the sale.', 'error');
+      throw error;
+    } finally {
+      setSavingEditSale(false);
+    }
+  }
+
+  function handleSaveEditSale() {
+    if (!editingSale || savingEditSale || !canSaveSelectedSchoolYear) {
+      return;
+    }
+    const amount = parseNonNegativeMoney(editSaleDraft.amount);
+    if (amount === null || amount <= 0) {
+      window.showToast?.('Enter a sales amount greater than zero.', 'error');
+      return;
+    }
+
+    const isMonthly = editSaleDraft.type === 'monthly';
+    const effectiveMonth = editSaleDraft.month || getReportMonthValue(selectedReport);
+    if (isMonthly && !effectiveMonth) {
+      window.showToast?.('Choose a sales month.', 'error');
+      return;
+    }
+    if (!isMonthly && !editSaleDraft.date) {
+      window.showToast?.('Choose a sales date.', 'error');
+      return;
+    }
+
+    const targetReport = isMonthly
+      ? findReportForMonth(detail, effectiveMonth) || selectedReport
+      : findReportForDate(detail, editSaleDraft.date);
+
+    if (!targetReport) {
+      window.showToast?.('The target monthly report was not found in the selected school year.', 'error');
+      return;
+    }
+
+    const originalReport = detail?.reports?.find((r) => Number(r.id) === Number(editingSale.reportId));
+    if (!originalReport) {
+      window.showToast?.('Original monthly report not found.', 'error');
+      return;
+    }
+
+    const periodValue = isMonthly ? effectiveMonth : editSaleDraft.date;
+    const typeLabel = isMonthly ? 'Monthly Sale' : 'Daily Sale';
+
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Sale Changes',
+      message: 'Are you sure you want to save these changes to the sale entry?',
+      confirmLabel: 'Yes, Save Changes',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Saving changes...',
+      details: [
+        { label: 'Type', value: typeLabel },
+        { label: 'Period / Date', value: periodValue },
+        { label: 'Amount', value: formatCurrency(amount), highlight: true },
+        ...(editSaleDraft.notes ? [{ label: 'Remarks', value: editSaleDraft.notes }] : []),
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveEditSale(amount, isMonthly, effectiveMonth, targetReport, originalReport);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
+  }
+
+  function handleOpenDeleteSale(row) {
+    if (!row) return;
+    setDeletingSale(row);
+  }
+
+  function handleCloseDeleteSale() {
+    setDeletingSale(null);
+  }
+
+  async function handleConfirmDeleteSale() {
+    if (!deletingSale || savingDeleteSale || !canSaveSelectedSchoolYear) {
+      return;
+    }
+    setSavingDeleteSale(true);
+    try {
+      const targetReport = detail?.reports?.find((r) => Number(r.id) === Number(deletingSale.reportId));
+      if (!targetReport) {
+        throw new Error('Monthly report for this sale could not be found.');
+      }
+
+      let updatedNotes = targetReport.notes || '';
+      if (deletingSale.rawLine) {
+        const lines = updatedNotes.split(/\r?\n/);
+        let removed = false;
+        const newLines = lines.filter((line, idx) => {
+          if (!removed && (line === deletingSale.rawLine || idx === deletingSale.noteIndex)) {
+            removed = true;
+            return false;
+          }
+          return true;
+        });
+        updatedNotes = newLines.join('\n');
+      }
+
+      const remainingSales = parseDailySaleNotes({ ...targetReport, notes: updatedNotes });
+      const nextSalesTotal = remainingSales.reduce((sum, s) => sum + s.amount, 0);
+
       await API.updateFinancialReport(targetReport.id, {
         current_sales: nextSalesTotal,
         current_sales_manual_override: true,
-        notes: appendNoteLine(targetReport.notes, line),
+        notes: updatedNotes,
       });
-      window.showToast?.('Daily sale added.', 'success');
-      setDailySaleDraft((currentDraft) => ({
-        ...currentDraft,
-        amount: '',
-        notes: '',
-      }));
+
+      window.showToast?.(
+        `${deletingSale.typeLabel || 'Sale'} (${formatCurrency(deletingSale.amount)}) deleted.`,
+        'success'
+      );
+      handleCloseDeleteSale();
       await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
-    } catch (error) {
-      window.showToast?.(error.message || 'Unable to add the daily sale.', 'error');
+    } catch (err) {
+      window.showToast?.(err.message || 'Unable to delete the sale.', 'error');
     } finally {
-      setSavingDailySale(false);
+      setSavingDeleteSale(false);
     }
   }
 
@@ -2194,7 +2587,100 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     });
   }
 
-  async function handleAddExpenseEntry() {
+  async function executeAddExpenseEntry(amount, expenseType, periodValue, typeLabel, targetReport, nextExpenses, sanitizedReceiptName) {
+    setSavingExpenseEntry(true);
+    try {
+      const line = [
+        `[${typeLabel}] ${periodValue}`,
+        expenseEntryDraft.category,
+        formatCurrency(amount),
+        `Supplier: ${cleanNoteValue(expenseEntryDraft.supplier) || '-'}`,
+        `Description: ${cleanNoteValue(expenseEntryDraft.description) || '-'}`,
+        `Receipt: ${cleanNoteValue(sanitizedReceiptName) || 'No receipt'}`,
+      ].join(' | ');
+
+      // Save receipt to local IndexedDB/memory storage and upload to backend
+      const dataUrlToSave = expenseReceiptDataUrl;
+      const fileToSave = expenseReceiptFile;
+      const validationToSave = expenseReceiptValidation;
+
+      if (sanitizedReceiptName && (dataUrlToSave || fileToSave)) {
+        const receiptEntry = {
+          key: sanitizedReceiptName,
+          filename: sanitizedReceiptName,
+          rawName: fileToSave?.name || expenseEntryDraft.receiptName,
+          dataUrl: dataUrlToSave,
+          mimeType: validationToSave?.mimeType || 'image/png',
+          size: validationToSave?.size || 0,
+          sizeFormatted: validationToSave?.sizeFormatted || '',
+          date: periodValue,
+          category: expenseEntryDraft.category,
+          amount,
+          supplier: expenseEntryDraft.supplier,
+          description: expenseEntryDraft.description,
+          reportId: targetReport.id,
+          type: expenseType,
+          typeLabel,
+          isPdf: validationToSave?.isPdf || false,
+        };
+        await saveReceipt(receiptEntry);
+
+        // Also save under raw name if different
+        if (fileToSave?.name && fileToSave.name !== sanitizedReceiptName) {
+          await saveReceipt({
+            ...receiptEntry,
+            key: fileToSave.name,
+            filename: fileToSave.name,
+          });
+        }
+
+        if (fileToSave) {
+          try {
+            await API.uploadFinancialReceipt(fileToSave);
+          } catch (uploadErr) {
+            console.warn('Backend receipt upload fallback:', uploadErr);
+          }
+        }
+      }
+
+      await API.updateFinancialReportExpenses(targetReport.id, nextExpenses);
+      await API.updateFinancialReport(targetReport.id, {
+        notes: appendNoteLine(targetReport.notes, line),
+      });
+
+      // Set alert banner for the recorded expense
+      setExpenseSuccessAlert({
+        id: Date.now(),
+        type: expenseType,
+        typeLabel,
+        date: periodValue,
+        category: expenseEntryDraft.category,
+        amount: formatCurrency(amount),
+        supplier: cleanNoteValue(expenseEntryDraft.supplier) || '',
+        description: cleanNoteValue(expenseEntryDraft.description) || '',
+        receiptName: sanitizedReceiptName,
+        monthLabel: targetReport.month_label,
+      });
+
+      window.showToast?.(`${typeLabel} of ${formatCurrency(amount)} added to ${targetReport.month_label}.`, 'success');
+      setExpenseEntryDraft((currentDraft) => ({
+        ...currentDraft,
+        amount: '',
+        supplier: '',
+        description: '',
+        receiptName: '',
+      }));
+      handleClearReceiptUpload();
+      await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
+    } catch (error) {
+      window.showToast?.(error.message || 'Unable to add the expense.', 'error');
+      throw error;
+    } finally {
+      setSavingExpenseEntry(false);
+    }
+  }
+
+  function handleAddExpenseEntry() {
     if (savingExpenseEntry || !canSaveSelectedSchoolYear) {
       return;
     }
@@ -2259,100 +2745,37 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       });
     }
 
-    setSavingExpenseEntry(true);
-    try {
-      const sanitizedReceiptName = expenseEntryDraft.receiptName
-        ? sanitizeReceiptFilename(expenseEntryDraft.receiptName)
-        : '';
-      const periodValue = expenseType === 'monthly' ? getReportMonthValue(targetReport) : expenseEntryDraft.date;
-      const typeLabel = expenseType === 'monthly' ? 'Monthly Expense' : 'Daily Expense';
-      const line = [
-        `[${typeLabel}] ${periodValue}`,
-        category,
-        formatCurrency(amount),
-        `Supplier: ${cleanNoteValue(expenseEntryDraft.supplier) || '-'}`,
-        `Description: ${cleanNoteValue(expenseEntryDraft.description) || '-'}`,
-        `Receipt: ${cleanNoteValue(sanitizedReceiptName) || 'No receipt'}`,
-      ].join(' | ');
+    const sanitizedReceiptName = expenseEntryDraft.receiptName
+      ? sanitizeReceiptFilename(expenseEntryDraft.receiptName)
+      : '';
+    const periodValue = expenseType === 'monthly' ? getReportMonthValue(targetReport) : expenseEntryDraft.date;
+    const typeLabel = expenseType === 'monthly' ? 'Monthly Expense' : 'Daily Expense';
 
-      // Save receipt to local IndexedDB/memory storage and upload to backend
-      const dataUrlToSave = expenseReceiptDataUrl;
-      const fileToSave = expenseReceiptFile;
-      const validationToSave = expenseReceiptValidation;
-
-      if (sanitizedReceiptName && (dataUrlToSave || fileToSave)) {
-        const receiptEntry = {
-          key: sanitizedReceiptName,
-          filename: sanitizedReceiptName,
-          rawName: fileToSave?.name || expenseEntryDraft.receiptName,
-          dataUrl: dataUrlToSave,
-          mimeType: validationToSave?.mimeType || 'image/png',
-          size: validationToSave?.size || 0,
-          sizeFormatted: validationToSave?.sizeFormatted || '',
-          date: periodValue,
-          category,
-          amount,
-          supplier: expenseEntryDraft.supplier,
-          description: expenseEntryDraft.description,
-          reportId: targetReport.id,
-          type: expenseType,
-          typeLabel,
-          isPdf: validationToSave?.isPdf || false,
-        };
-        await saveReceipt(receiptEntry);
-
-        // Also save under raw name if different
-        if (fileToSave?.name && fileToSave.name !== sanitizedReceiptName) {
-          await saveReceipt({
-            ...receiptEntry,
-            key: fileToSave.name,
-            filename: fileToSave.name,
-          });
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Expense Entry',
+      message: `Are you sure you want to record this ${typeLabel.toLowerCase()} of ${formatCurrency(amount)}?`,
+      confirmLabel: 'Yes, Record Expense',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Recording expense...',
+      details: [
+        { label: 'Type', value: typeLabel },
+        { label: 'Period / Date', value: periodValue },
+        { label: 'Category', value: category },
+        { label: 'Amount', value: formatCurrency(amount), highlight: true },
+        ...(expenseEntryDraft.description ? [{ label: 'Description', value: expenseEntryDraft.description }] : []),
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeAddExpenseEntry(amount, expenseType, periodValue, typeLabel, targetReport, nextExpenses, sanitizedReceiptName);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
         }
-
-        if (fileToSave) {
-          try {
-            await API.uploadFinancialReceipt(fileToSave);
-          } catch (uploadErr) {
-            console.warn('Backend receipt upload fallback:', uploadErr);
-          }
-        }
-      }
-
-      await API.updateFinancialReportExpenses(targetReport.id, nextExpenses);
-      await API.updateFinancialReport(targetReport.id, {
-        notes: appendNoteLine(targetReport.notes, line),
-      });
-
-      // Set alert banner for the recorded expense
-      setExpenseSuccessAlert({
-        id: Date.now(),
-        type: expenseType,
-        typeLabel,
-        date: periodValue,
-        category,
-        amount: formatCurrency(amount),
-        supplier: cleanNoteValue(expenseEntryDraft.supplier) || '',
-        description: cleanNoteValue(expenseEntryDraft.description) || '',
-        receiptName: sanitizedReceiptName,
-        monthLabel: targetReport.month_label,
-      });
-
-      window.showToast?.(`${typeLabel} of ${formatCurrency(amount)} added to ${targetReport.month_label}.`, 'success');
-      setExpenseEntryDraft((currentDraft) => ({
-        ...currentDraft,
-        amount: '',
-        supplier: '',
-        description: '',
-        receiptName: '',
-      }));
-      handleClearReceiptUpload();
-      await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
-    } catch (error) {
-      window.showToast?.(error.message || 'Unable to add the expense.', 'error');
-    } finally {
-      setSavingExpenseEntry(false);
-    }
+      },
+    });
   }
 
   function handleOpenEditExpense(row) {
@@ -2429,48 +2852,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     }
   }
 
-  async function handleSaveEditExpense() {
-    if (!editingExpense || savingEditExpense || !canSaveSelectedSchoolYear) {
-      return;
-    }
-
-    const amount = parseCurrencyInput(editExpenseDraft.amount);
-    if (!amount || amount <= 0) {
-      window.showToast?.('Please enter a valid expense amount greater than zero.', 'error');
-      return;
-    }
-
-    const expenseType = editExpenseDraft.type === 'monthly' ? 'monthly' : 'daily';
-    const effectiveMonth = editExpenseDraft.month || getReportMonthValue(selectedReport);
-    if (expenseType === 'daily' && !isValidDateString(editExpenseDraft.date)) {
-      window.showToast?.('Please provide a valid expense date.', 'error');
-      return;
-    }
-    if (expenseType === 'monthly' && !isValidMonthString(effectiveMonth)) {
-      window.showToast?.('Please provide a valid expense month.', 'error');
-      return;
-    }
-
-    const targetReport =
-      expenseType === 'monthly'
-        ? findReportForMonth(detail, effectiveMonth)
-        : findReportForDate(detail, editExpenseDraft.date);
-    if (!targetReport) {
-      window.showToast?.(
-        expenseType === 'monthly'
-          ? 'The expense month is outside the selected school year.'
-          : 'The expense date is outside the selected school year.',
-        'error'
-      );
-      return;
-    }
-
-    const originalReport = detail?.reports?.find((r) => Number(r.id) === Number(editingExpense.reportId));
-    if (!originalReport) {
-      window.showToast?.('Original monthly report not found.', 'error');
-      return;
-    }
-
+  async function executeSaveEditExpense(amount, expenseType, effectiveMonth, targetReport, originalReport) {
     setSavingEditExpense(true);
     try {
       const sanitizedReceiptName = editExpenseDraft.receiptName
@@ -2633,9 +3015,82 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       await loadSchoolYearDetail(selectedSchoolYearId, targetReport.id);
     } catch (err) {
       window.showToast?.(err.message || 'Unable to update the expense.', 'error');
+      throw err;
     } finally {
       setSavingEditExpense(false);
     }
+  }
+
+  function handleSaveEditExpense() {
+    if (!editingExpense || savingEditExpense || !canSaveSelectedSchoolYear) {
+      return;
+    }
+
+    const amount = parseCurrencyInput(editExpenseDraft.amount);
+    if (!amount || amount <= 0) {
+      window.showToast?.('Please enter a valid expense amount greater than zero.', 'error');
+      return;
+    }
+
+    const expenseType = editExpenseDraft.type === 'monthly' ? 'monthly' : 'daily';
+    const effectiveMonth = editExpenseDraft.month || getReportMonthValue(selectedReport);
+    if (expenseType === 'daily' && !isValidDateString(editExpenseDraft.date)) {
+      window.showToast?.('Please provide a valid expense date.', 'error');
+      return;
+    }
+    if (expenseType === 'monthly' && !isValidMonthString(effectiveMonth)) {
+      window.showToast?.('Please provide a valid expense month.', 'error');
+      return;
+    }
+
+    const targetReport =
+      expenseType === 'monthly'
+        ? findReportForMonth(detail, effectiveMonth)
+        : findReportForDate(detail, editExpenseDraft.date);
+    if (!targetReport) {
+      window.showToast?.(
+        expenseType === 'monthly'
+          ? 'The expense month is outside the selected school year.'
+          : 'The expense date is outside the selected school year.',
+        'error'
+      );
+      return;
+    }
+
+    const originalReport = detail?.reports?.find((r) => Number(r.id) === Number(editingExpense.reportId));
+    if (!originalReport) {
+      window.showToast?.('Original monthly report not found.', 'error');
+      return;
+    }
+
+    const periodValue = expenseType === 'monthly' ? getReportMonthValue(targetReport) : editExpenseDraft.date;
+    const typeLabel = expenseType === 'monthly' ? 'Monthly Expense' : 'Daily Expense';
+
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Expense Changes',
+      message: 'Are you sure you want to save these changes to the expense entry?',
+      confirmLabel: 'Yes, Save Changes',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Saving changes...',
+      details: [
+        { label: 'Type', value: typeLabel },
+        { label: 'Period / Date', value: periodValue },
+        { label: 'Category', value: editExpenseDraft.category },
+        { label: 'Amount', value: formatCurrency(amount), highlight: true },
+        ...(editExpenseDraft.description ? [{ label: 'Description', value: editExpenseDraft.description }] : []),
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await executeSaveEditExpense(amount, expenseType, effectiveMonth, targetReport, originalReport);
+          closeSaveConfirm();
+        } catch {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   }
 
   function handleOpenDeleteExpense(row) {
@@ -2822,30 +3277,14 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                 min="0"
                 step="0.01"
               />
-              <div>
-                <FormField
-                  label="Current Sales"
-                  value={reportDraft.current_sales}
-                  onChange={(event) => updateReportDraft('current_sales', event.target.value)}
-                  disabled={!canSaveSelectedSchoolYear || !isAdmin}
-                  min="0"
-                  step="0.01"
-                />
-                {monthDailySales.length > 0 && (
-                  <div className="mt-1.5 flex items-center justify-between gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                    <span>
-                      Auto-summed from {monthDailySales.length} daily {monthDailySales.length === 1 ? 'sale' : 'sales'} ({formatCurrency(monthDailySalesTotal)})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleTabChange('daily-sales')}
-                      className="shrink-0 font-bold underline hover:text-emerald-700 dark:hover:text-emerald-300"
-                    >
-                      View &rarr;
-                    </button>
-                  </div>
-                )}
-              </div>
+              <FormField
+                label="Current Sales"
+                value={reportDraft.current_sales}
+                onChange={(event) => updateReportDraft('current_sales', event.target.value)}
+                disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                min="0"
+                step="0.01"
+              />
               <FormField
                 label="Cost of Sales"
                 value={reportDraft.cost_of_sales}
@@ -3093,26 +3532,74 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               <table className="w-full text-left text-xs sm:text-sm">
                 <thead className="border-b border-slate-200/80 bg-slate-50/80 text-xs font-bold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-900/80 dark:text-slate-400">
                   <tr>
-                    <th className="px-3 sm:px-5 py-3.5 w-28">Date</th>
+                    <th className="px-3 sm:px-4 py-3.5 w-24">Type</th>
+                    <th className="px-3 sm:px-5 py-3.5 w-28">Date/Period</th>
                     <th className="px-3 sm:px-4 py-3.5 text-right w-28 sm:w-36">Amount</th>
                     <th className="px-3 sm:px-5 py-3.5">Notes/Remarks</th>
                     <th className="px-3 sm:px-4 py-3.5 w-24 sm:w-32 hidden sm:table-cell">Month</th>
+                    {isAdmin && <th className="px-3 sm:px-5 py-3.5 text-right w-36">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
                   {filteredDailySalesRows.length ? (
-                    filteredDailySalesRows.map((row) => (
-                      <tr key={row.id} className="transition hover:bg-slate-50/70 dark:hover:bg-slate-800/50">
-                        <td className="px-3 sm:px-5 py-3.5 font-mono text-xs sm:text-sm font-bold text-slate-900 dark:text-white whitespace-nowrap">{row.date}</td>
-                        <td className="px-3 sm:px-4 py-3.5 text-right font-mono text-xs sm:text-sm font-black text-emerald-700 dark:text-emerald-400 whitespace-nowrap">{formatCurrency(row.amount)}</td>
-                        <td className="px-3 sm:px-5 py-3.5 text-xs sm:text-sm text-slate-600 dark:text-slate-300">{row.remarks}</td>
-                        <td className="px-3 sm:px-4 py-3.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hidden sm:table-cell">{row.monthLabel}</td>
-                      </tr>
-                    ))
+                    filteredDailySalesRows.map((row) => {
+                      const isMonthly = row.type === 'monthly';
+                      return (
+                        <tr key={row.id} className="transition hover:bg-slate-50/70 dark:hover:bg-slate-800/50">
+                          <td className="px-3 sm:px-4 py-3.5 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-bold ${
+                                isMonthly
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800'
+                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
+                              }`}
+                            >
+                              {row.typeLabel || (isMonthly ? 'Monthly Sale' : 'Daily Sale')}
+                            </span>
+                          </td>
+                          <td className="px-3 sm:px-5 py-3.5 font-mono text-xs sm:text-sm font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                            {row.date}
+                          </td>
+                          <td className="px-3 sm:px-4 py-3.5 text-right font-mono text-xs sm:text-sm font-black text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
+                            {formatCurrency(row.amount)}
+                          </td>
+                          <td className="px-3 sm:px-5 py-3.5 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+                            {row.remarks}
+                          </td>
+                          <td className="px-3 sm:px-4 py-3.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hidden sm:table-cell">
+                            {row.monthLabel}
+                          </td>
+                          {isAdmin && (
+                            <td className="px-3 sm:px-5 py-3.5 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditSale(row)}
+                                  disabled={!canSaveSelectedSchoolYear}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                                >
+                                  <PencilSquareIcon className="h-3.5 w-3.5 text-slate-500" />
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDeleteSale(row)}
+                                  disabled={!canSaveSelectedSchoolYear}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-40 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-300"
+                                >
+                                  <TrashIcon className="h-3.5 w-3.5 text-rose-600" />
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
-                      <td colSpan={4} className="px-6 py-12 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
-                        No daily sales entries match the current filters.
+                      <td colSpan={isAdmin ? 6 : 5} className="px-6 py-12 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+                        No sales entries match the current filters.
                       </td>
                     </tr>
                   )}
@@ -3136,19 +3623,67 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                 </div>
                 <div>
                   <h2 className="text-base font-black text-slate-900 dark:text-white">Sales Entry Form</h2>
-                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Add one daily total.</p>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    {dailySaleDraft.type === 'monthly' ? 'Add monthly sales total.' : 'Add one daily total.'}
+                  </p>
                 </div>
               </div>
 
               <div className="mt-5 space-y-4">
-                <FormField label="Date">
-                  <input
-                    type="date"
-                    value={dailySaleDraft.date}
-                    onChange={(event) => setDailySaleDraft((draft) => ({ ...draft, date: event.target.value }))}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
+                <FormField label="Sale Type">
+                  <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-slate-200/80 bg-slate-100/90 p-1 dark:border-slate-800 dark:bg-slate-800/80">
+                    {SALE_TYPE_OPTIONS.map((option) => {
+                      const active = dailySaleDraft.type === option.key;
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() =>
+                            setDailySaleDraft((draft) => ({
+                              ...draft,
+                              type: option.key,
+                              month: draft.month || getReportMonthValue(selectedReport),
+                            }))
+                          }
+                          className={`h-9 rounded-lg px-3 text-xs font-bold transition ${
+                            active
+                              ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-white font-black'
+                              : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                          }`}
+                          aria-pressed={active}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </FormField>
+
+                {dailySaleDraft.type === 'monthly' ? (
+                  <FormField label="Month">
+                    <select
+                      value={dailySaleDraft.month || getReportMonthValue(selectedReport)}
+                      onChange={(event) => setDailySaleDraft((draft) => ({ ...draft, month: event.target.value }))}
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {(detail?.reports || []).map((report) => (
+                        <option key={report.id} value={getReportMonthValue(report)}>
+                          {report.month_label}
+                        </option>
+                      ))}
+                    </select>
+                  </FormField>
+                ) : (
+                  <FormField label="Date">
+                    <input
+                      type="date"
+                      value={dailySaleDraft.date}
+                      onChange={(event) => setDailySaleDraft((draft) => ({ ...draft, date: event.target.value }))}
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </FormField>
+                )}
+
                 <FormField
                   label="Amount"
                   value={dailySaleDraft.amount}
@@ -3172,7 +3707,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
                 >
                   <PlusIcon className="h-4 w-4 stroke-[2.5]" />
-                  {savingDailySale ? 'Adding...' : 'Quick Add Sale'}
+                  {savingDailySale ? 'Adding...' : dailySaleDraft.type === 'monthly' ? 'Add Monthly Sale' : 'Add Daily Sale'}
                 </button>
               </div>
             </section>
@@ -5130,6 +5665,224 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
           </div>
         </div>
       )}
+
+      {/* Edit Sale Modal */}
+      {editingSale && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
+                  <PencilSquareIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">Edit Sale Entry</h3>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Modify sale details, type, amount, or date/month
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseEditSale}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveEditSale();
+              }}
+              className="space-y-4"
+            >
+              <FormField label="Sale Type">
+                <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-slate-200/80 bg-slate-100/90 p-1 dark:border-slate-800 dark:bg-slate-800/80">
+                  {SALE_TYPE_OPTIONS.map((option) => {
+                    const active = editSaleDraft.type === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() =>
+                          setEditSaleDraft((draft) => ({
+                            ...draft,
+                            type: option.key,
+                            month: draft.month || getReportMonthValue(selectedReport),
+                            date: draft.date || (editingSale.type === 'daily' ? editingSale.date : getTodayInputValue()),
+                          }))
+                        }
+                        className={`h-9 rounded-lg px-3 text-xs font-bold transition ${
+                          active
+                            ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-white font-black'
+                            : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                        }`}
+                        aria-pressed={active}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </FormField>
+
+              {editSaleDraft.type === 'monthly' ? (
+                <FormField label="Month">
+                  <select
+                    value={editSaleDraft.month || getReportMonthValue(selectedReport)}
+                    onChange={(event) =>
+                      setEditSaleDraft((draft) => ({ ...draft, month: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  >
+                    {(detail?.reports || []).map((report) => (
+                      <option key={report.id} value={getReportMonthValue(report)}>
+                        {report.month_label}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+              ) : (
+                <FormField label="Date">
+                  <input
+                    type="date"
+                    value={editSaleDraft.date}
+                    onChange={(event) =>
+                      setEditSaleDraft((draft) => ({ ...draft, date: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </FormField>
+              )}
+
+              <FormField
+                label="Amount"
+                value={editSaleDraft.amount}
+                onChange={(event) =>
+                  setEditSaleDraft((draft) => ({ ...draft, amount: event.target.value }))
+                }
+                min="0"
+                step="0.01"
+              />
+
+              <FormField label="Notes/Remarks">
+                <textarea
+                  value={editSaleDraft.notes}
+                  onChange={(event) =>
+                    setEditSaleDraft((draft) => ({ ...draft, notes: event.target.value }))
+                  }
+                  rows={3}
+                  placeholder="Optional remarks"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white resize-none"
+                />
+              </FormField>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={handleCloseEditSale}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEditSale || !canSaveSelectedSchoolYear}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+                >
+                  <PencilSquareIcon className="h-4 w-4 stroke-[2]" />
+                  {savingEditSale ? 'Saving Changes...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Sale Confirmation Modal */}
+      {deletingSale && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
+                  <TrashIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">Delete Sale Entry</h3>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Are you sure you want to remove this sale entry?
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseDeleteSale}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/60 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500 dark:text-slate-400">Type:</span>
+                <span className="font-bold text-slate-900 dark:text-white">{deletingSale.typeLabel || (deletingSale.type === 'monthly' ? 'Monthly Sale' : 'Daily Sale')}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500 dark:text-slate-400">Period / Date:</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">{deletingSale.date}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500 dark:text-slate-400">Amount:</span>
+                <span className="font-mono font-black text-rose-600 dark:text-rose-400 text-sm">{formatCurrency(deletingSale.amount)}</span>
+              </div>
+              {deletingSale.remarks && (
+                <div className="flex justify-between items-start">
+                  <span className="font-bold text-slate-500 dark:text-slate-400">Remarks:</span>
+                  <span className="text-slate-700 dark:text-slate-300 truncate max-w-[200px]">{deletingSale.remarks}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCloseDeleteSale}
+                disabled={savingDeleteSale}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteSale}
+                disabled={savingDeleteSale || !canSaveSelectedSchoolYear}
+                className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-rose-700 active:scale-95 disabled:opacity-50"
+              >
+                <TrashIcon className="h-4 w-4 stroke-[2.5]" />
+                {savingDeleteSale ? 'Deleting...' : 'Delete Sale'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Save / Edit Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={saveConfirmDialog.isOpen}
+        title={saveConfirmDialog.title}
+        message={saveConfirmDialog.message}
+        confirmLabel={saveConfirmDialog.confirmLabel}
+        tone={saveConfirmDialog.tone}
+        isLoading={saveConfirmDialog.isLoading}
+        loadingText={saveConfirmDialog.loadingText}
+        details={saveConfirmDialog.details}
+        onConfirm={saveConfirmDialog.onConfirm}
+        onCancel={closeSaveConfirm}
+      />
     </>
   );
 }

@@ -5,6 +5,7 @@ import { safeLocalStorageSetItem, safeLocalStorageSetJson } from '../services/st
 import BrandLogo from '../components/BrandLogo';
 import DismissibleAlert from '../components/DismissibleAlert';
 import {
+  ArrowDownTrayIcon,
   ArrowRightIcon,
   EyeIcon,
   EyeSlashIcon,
@@ -14,6 +15,7 @@ import {
   UserIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { downloadRecoveryCodesFile } from '../utils/downloadRecoveryCodes';
 
 const LOGIN_LOCKOUT_STORAGE_KEY = 'sc_login_lockouts';
 const REMEMBERED_USERNAME_STORAGE_KEY = 'sc_remembered_username';
@@ -780,6 +782,13 @@ export default function Login({ onLogin }) {
     }
   };
 
+  const downloadRecoveryCodes = () => {
+    downloadRecoveryCodesFile(
+      pendingRecoveryCodes,
+      pendingLoginResult?.submittedUsername || identifier || 'user'
+    );
+  };
+
   const confirmRecoveryCodesSaved = () => {
     if (!pendingLoginResult) {
       return;
@@ -1130,79 +1139,44 @@ export default function Login({ onLogin }) {
   const canAppealAuthenticatorRecovery = currentAuthRecoveryStatus === 'declined';
 
   return (
-    <div className="login-view relative min-h-[100dvh] w-full overflow-y-auto overflow-x-hidden bg-slate-950 text-slate-100 flex flex-col justify-center items-center px-4 py-8 sm:px-6 lg:px-8 selection:bg-emerald-500/30 selection:text-emerald-200">
-      {/* Ambient background glowing lighting effects */}
-      <div className="absolute -top-40 -left-40 h-[500px] w-[500px] rounded-full bg-emerald-500/15 blur-[120px] pointer-events-none" />
-      <div className="absolute -bottom-40 -right-40 h-[500px] w-[500px] rounded-full bg-teal-500/15 blur-[140px] pointer-events-none" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[600px] w-[600px] rounded-full bg-emerald-600/5 blur-[160px] pointer-events-none" />
-      <div className="absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.03)_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none" />
-
+    <div className="login-view relative flex min-h-[100dvh] w-full flex-col justify-center items-center overflow-y-auto px-4 py-8 sm:px-6 lg:px-8 selection:bg-emerald-500/20 selection:text-emerald-800 dark:selection:bg-emerald-500/30 dark:selection:text-emerald-200">
       {/* Main card container */}
-      <div className="relative z-10 w-full max-w-md my-auto">
-        <div className="relative overflow-hidden rounded-3xl border border-slate-800/90 bg-slate-900/85 p-6 sm:p-9 shadow-2xl shadow-black/60 backdrop-blur-2xl transition-all duration-300">
-          {/* Subtle top card glow accent border */}
-          <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent" />
+      <div className="relative z-10 w-full max-w-[420px] my-auto">
+        <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 p-7 sm:p-9 shadow-xl shadow-slate-200/60 dark:shadow-2xl dark:shadow-black/60 backdrop-blur-md transition-all">
+          {/* Subtle top card accent line */}
+          <div className="absolute inset-x-0 top-0 h-[3px] bg-emerald-600 dark:bg-emerald-500" />
 
           {/* Brand Header */}
           <div className="flex flex-col items-center text-center">
-            <div className="relative mb-4">
-              <div className="absolute -inset-2 rounded-2xl bg-emerald-500/25 blur-lg animate-pulse" />
-              <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/30 bg-slate-900/90 p-3 shadow-xl backdrop-blur-md">
-                <BrandLogo className="h-10 w-10 drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-              </div>
+            <div className="mb-3.5 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 p-2 shadow-xs">
+              <BrandLogo className="h-full w-full object-contain" />
             </div>
-            <h1 className="text-3xl font-black tracking-tight bg-gradient-to-r from-white via-slate-100 to-emerald-400 bg-clip-text text-transparent">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
               MEALS
             </h1>
-            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-emerald-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <div className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               Operations Workspace
             </div>
-            <p className="mt-2 text-xs text-slate-400 leading-relaxed max-w-xs">
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 max-w-xs leading-relaxed">
               Sign in with your workspace credentials to access inventory, sales, and canteen intelligence.
             </p>
-          </div>
-
-          {/* Role Quick-Select Pills */}
-          <div className="mt-5 flex items-center justify-center gap-1.5">
-            {[
-              { id: 'admin', label: 'Admin', pass: 'admin123' },
-              { id: 'staff', label: 'Staff', pass: 'staff123' },
-              { id: 'cashier', label: 'Cashier', pass: 'cashier123' },
-            ].map((roleItem) => (
-              <button
-                key={roleItem.id}
-                type="button"
-                onClick={() => {
-                  setUsername(roleItem.id);
-                  setPassword(roleItem.pass);
-                  setError('');
-                }}
-                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider transition-all duration-150 ${
-                  username.toLowerCase() === roleItem.id
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs'
-                    : 'bg-slate-800/60 text-slate-400 border border-slate-700/50 hover:bg-slate-800 hover:text-slate-200'
-                }`}
-              >
-                {roleItem.label}
-              </button>
-            ))}
           </div>
 
           {/* Lockout & Alert notifications */}
           <div className="mt-5 space-y-3">
             {lockoutState.isLocked && (
-              <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs font-medium leading-relaxed text-amber-300 backdrop-blur-xs">
-                <div className="font-bold text-amber-200 flex items-center gap-1.5 text-sm">
+              <div className="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 p-4 text-xs font-medium leading-relaxed text-amber-800 dark:text-amber-300">
+                <div className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5 text-sm">
                   ⚠️ Too many failed attempts
                 </div>
                 <div className="mt-1">
-                  This account is temporarily locked. Try again in <span className="font-bold text-white">{lockoutRemainingLabel}</span>.
+                  This account is temporarily locked. Try again in <span className="font-bold">{lockoutRemainingLabel}</span>.
                 </div>
               </div>
             )}
             {error && !isAuthenticatorStep && pendingRecoveryCodes.length === 0 && (
-              <DismissibleAlert resetKey={error} tone="red" title="Sign-in issue" className="rounded-2xl">
+              <DismissibleAlert resetKey={error} tone="red" title="Sign-in issue" className="rounded-xl">
                 {error}
               </DismissibleAlert>
             )}
@@ -1211,19 +1185,18 @@ export default function Login({ onLogin }) {
           {/* Form */}
           <form onSubmit={handleSubmit} className="mt-5 space-y-4">
             <div>
-              <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-300">
-                <UserIcon className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Username</span>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Username
               </label>
-              <div className="relative mt-1.5">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
+              <div className="relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400 dark:text-slate-500">
                   <UserIcon className="h-4 w-4" />
                 </div>
                 <input
                   type="text"
                   required
                   placeholder="Enter your username"
-                  className="w-full rounded-xl border border-slate-700/80 bg-slate-950/70 pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition duration-200 focus:border-emerald-500 focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/60 pl-10 pr-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition duration-150 focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60 shadow-xs"
                   value={username}
                   onChange={handleUsernameChange}
                   disabled={loading || isAuthenticatorStep || lockoutState.isLocked}
@@ -1233,19 +1206,27 @@ export default function Login({ onLogin }) {
             </div>
 
             <div>
-              <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-300">
-                <LockClosedIcon className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Password</span>
-              </label>
-              <div className="relative mt-1.5">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Password
+                </label>
+                <button
+                  type="button"
+                  onClick={() => openPasswordReset('request')}
+                  className="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 transition"
+                >
+                  Forgot password?
+                </button>
+              </div>
+              <div className="relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400 dark:text-slate-500">
                   <LockClosedIcon className="h-4 w-4" />
                 </div>
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
                   placeholder="Enter your password"
-                  className="w-full rounded-xl border border-slate-700/80 bg-slate-950/70 pl-10 pr-10 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition duration-200 focus:border-emerald-500 focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/60 pl-10 pr-10 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition duration-150 focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60 shadow-xs"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading || isAuthenticatorStep || lockoutState.isLocked}
@@ -1254,7 +1235,7 @@ export default function Login({ onLogin }) {
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500 hover:text-slate-300 transition"
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
@@ -1262,33 +1243,23 @@ export default function Login({ onLogin }) {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2.5 pt-1 sm:flex-row sm:items-center sm:justify-between text-xs">
-              <label className="flex items-center gap-2 font-medium text-slate-400 cursor-pointer select-none hover:text-slate-300 transition">
+            <div className="flex items-center justify-between text-xs pt-0.5">
+              <label className="flex items-center gap-2 text-slate-600 dark:text-slate-400 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={rememberUsername}
                   onChange={(event) => setRememberUsername(event.target.checked)}
-                  className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-500/30 accent-emerald-500 cursor-pointer"
+                  className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-emerald-600 focus:ring-emerald-500/20 accent-emerald-600 cursor-pointer"
                 />
-                Remember me
+                <span>Remember me</span>
               </label>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => openAuthenticatorRecovery('request')}
-                  className="font-medium text-slate-400 hover:text-slate-200 transition"
-                >
-                  2FA Recovery
-                </button>
-                <span className="text-slate-700">•</span>
-                <button
-                  type="button"
-                  onClick={() => openPasswordReset('request')}
-                  className="font-semibold text-emerald-400 hover:text-emerald-300 transition"
-                >
-                  Forgot password?
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => openAuthenticatorRecovery('request')}
+                className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition"
+              >
+                2FA Recovery
+              </button>
             </div>
 
             <button
@@ -1301,14 +1272,14 @@ export default function Login({ onLogin }) {
                 isAuthenticatorVerificationLocked ||
                 (isAuthenticatorStep && !canSubmitAuthenticatorCode)
               }
-              className="group relative mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 py-3 px-4 text-sm font-bold text-white shadow-lg shadow-emerald-600/25 transition-all duration-200 hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-500/35 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+              className="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 py-2.5 px-4 text-sm font-semibold text-white shadow-sm transition-all duration-150 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {lockoutState.isLocked ? (
                 `Locked for ${lockoutRemainingLabel}`
               ) : loading ? (
                 <span className="flex items-center gap-2">
                   <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                  Authenticating...
+                  Signing in...
                 </span>
               ) : isAuthenticatorSetup ? (
                 'Set Up & Sign In'
@@ -1317,7 +1288,7 @@ export default function Login({ onLogin }) {
               ) : (
                 <>
                   <span>Sign In</span>
-                  <ArrowRightIcon className="h-4 w-4 stroke-[2.5] transition-transform group-hover:translate-x-0.5" />
+                  <ArrowRightIcon className="h-4 w-4 stroke-[2.5]" />
                 </>
               )}
             </button>
@@ -1325,26 +1296,26 @@ export default function Login({ onLogin }) {
         </div>
 
         {/* Footer info */}
-        <div className="mt-6 text-center text-[11px] text-slate-500 font-mono">
-          MEALS Desktop • LSPU-SPCC 4WMAD1
+        <div className="mt-6 text-center text-xs text-slate-400 dark:text-slate-500 font-medium">
+          MEALS Canteen Management System
         </div>
       </div>
 
       {passwordResetOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-5 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 px-4 py-5 backdrop-blur-xs animate-in fade-in duration-150">
           <div
-            className="w-full max-w-[32rem] overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl shadow-black/80"
+            className="w-full max-w-[32rem] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="password-reset-title"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-800 bg-slate-950/60 px-6 py-5">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 px-6 py-4">
               <div className="min-w-0">
-                <h3 id="password-reset-title" className="text-xl font-bold leading-7 text-white flex items-center gap-2">
-                  <KeyIcon className="h-5 w-5 text-emerald-400" />
+                <h3 id="password-reset-title" className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <KeyIcon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                   Forgot password
                 </h3>
-                <p className="mt-1 text-xs leading-5 text-slate-400">
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                   Send a request to admin, then change your password once approved.
                 </p>
               </div>
@@ -1352,7 +1323,7 @@ export default function Login({ onLogin }) {
                 type="button"
                 onClick={closePasswordReset}
                 disabled={passwordResetLoading}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Close password reset"
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -1360,7 +1331,7 @@ export default function Login({ onLogin }) {
             </div>
 
             <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-6 py-5">
-              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-800 bg-slate-950/80 p-1">
+              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950/80 p-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -1368,10 +1339,10 @@ export default function Login({ onLogin }) {
                     setPasswordResetError('');
                     setPasswordResetSuccess('');
                   }}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                     passwordResetMode === 'request'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Request
@@ -1383,10 +1354,10 @@ export default function Login({ onLogin }) {
                     setPasswordResetError('');
                     setPasswordResetSuccess('');
                   }}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                     passwordResetMode === 'status'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Status
@@ -1406,11 +1377,11 @@ export default function Login({ onLogin }) {
                     setPasswordResetSuccess('');
                   }}
                   disabled={!passwordResetCanChange}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                     passwordResetMode === 'change'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
-                  } disabled:cursor-not-allowed disabled:text-slate-600 disabled:hover:text-slate-600`}
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  } disabled:cursor-not-allowed disabled:opacity-40`}
                 >
                   Change
                 </button>
@@ -1418,7 +1389,7 @@ export default function Login({ onLogin }) {
 
               <div className="mt-4 space-y-3">
                 {passwordResetError && (
-                  <DismissibleAlert resetKey={passwordResetError} tone="red" title="Recovery issue" className="rounded-2xl">
+                  <DismissibleAlert resetKey={passwordResetError} tone="red" title="Recovery issue" className="rounded-xl">
                     {passwordResetError}
                   </DismissibleAlert>
                 )}
@@ -1427,7 +1398,7 @@ export default function Login({ onLogin }) {
                     resetKey={passwordResetSuccess}
                     tone={getPasswordResetTone(passwordResetStatus)}
                     title="Request status"
-                    className="rounded-2xl"
+                    className="rounded-xl"
                   >
                     <div
                       id={
@@ -1458,7 +1429,7 @@ export default function Login({ onLogin }) {
                       setPasswordResetError('');
                       setPasswordResetSuccess('');
                     }}
-                    className="inline-flex w-full items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20"
+                    className="inline-flex w-full items-center justify-center rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-2.5 text-xs font-semibold text-amber-800 dark:text-amber-300 transition hover:bg-amber-100 dark:hover:bg-amber-900/30"
                   >
                     Appeal Decision
                   </button>
@@ -1468,7 +1439,7 @@ export default function Login({ onLogin }) {
               {passwordResetMode === 'request' ? (
                 <form onSubmit={submitPasswordResetRequest} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1477,14 +1448,14 @@ export default function Login({ onLogin }) {
                       value={passwordResetIdentifier}
                       onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={passwordResetLoading || !passwordResetIdentifier.trim()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {passwordResetLoading ? 'Sending...' : 'Send Reset Request'}
                   </button>
@@ -1492,7 +1463,7 @@ export default function Login({ onLogin }) {
               ) : passwordResetMode === 'status' ? (
                 <form onSubmit={checkPasswordResetStatus} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1501,14 +1472,14 @@ export default function Login({ onLogin }) {
                       value={passwordResetIdentifier}
                       onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={passwordResetLoading || !passwordResetIdentifier.trim()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {passwordResetLoading ? 'Checking...' : 'Check Status'}
                   </button>
@@ -1516,7 +1487,7 @@ export default function Login({ onLogin }) {
               ) : passwordResetMode === 'appeal' ? (
                 <form onSubmit={submitPasswordResetAppeal} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1525,12 +1496,12 @@ export default function Login({ onLogin }) {
                       value={passwordResetIdentifier}
                       onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Appeal reason
                     </label>
                     <textarea
@@ -1539,31 +1510,22 @@ export default function Login({ onLogin }) {
                       rows={4}
                       value={passwordResetAppealReason}
                       onChange={(event) => setPasswordResetAppealReason(event.target.value)}
-                      placeholder="Enter your reason for appeal..."
-                      className="mt-1.5 w-full resize-none rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      placeholder="Explain why your reset request should be reconsidered..."
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                     />
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <button
                       type="button"
-                      onClick={() => {
-                        setPasswordResetMode('status');
-                        setPasswordResetError('');
-                        setPasswordResetSuccess(getPasswordResetMessage(passwordResetStatus));
-                      }}
-                      disabled={passwordResetLoading}
-                      className="flex w-full items-center justify-center rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm font-semibold text-slate-300 transition hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => setPasswordResetMode('status')}
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
                     >
-                      Back
+                      Cancel
                     </button>
                     <button
                       type="submit"
-                      disabled={
-                        passwordResetLoading ||
-                        !passwordResetIdentifier.trim() ||
-                        !passwordResetAppealReason.trim()
-                      }
-                      className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={passwordResetLoading || !passwordResetAppealReason.trim()}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {passwordResetLoading ? 'Submitting...' : 'Submit Appeal'}
                     </button>
@@ -1572,7 +1534,7 @@ export default function Login({ onLogin }) {
               ) : (
                 <form onSubmit={submitApprovedPasswordChange} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1581,17 +1543,12 @@ export default function Login({ onLogin }) {
                       value={passwordResetIdentifier}
                       onChange={(event) => updatePasswordResetIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
-                  {!passwordResetCanChange && (
-                    <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs font-semibold text-amber-300">
-                      Check your request status first. You can change your password only after admin approval.
-                    </div>
-                  )}
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       New password
                     </label>
                     <input
@@ -1600,13 +1557,13 @@ export default function Login({ onLogin }) {
                       minLength={6}
                       value={passwordResetNewPassword}
                       onChange={(event) => setPasswordResetNewPassword(event.target.value)}
-                      placeholder="At least 6 characters"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      placeholder="Enter new password (min 6 characters)"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="new-password"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Confirm password
                     </label>
                     <input
@@ -1616,7 +1573,7 @@ export default function Login({ onLogin }) {
                       value={passwordResetConfirmPassword}
                       onChange={(event) => setPasswordResetConfirmPassword(event.target.value)}
                       placeholder="Re-enter new password"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="new-password"
                     />
                   </div>
@@ -1629,7 +1586,7 @@ export default function Login({ onLogin }) {
                       !passwordResetNewPassword ||
                       !passwordResetConfirmPassword
                     }
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {passwordResetLoading ? 'Changing...' : 'Change Password'}
                   </button>
@@ -1641,20 +1598,20 @@ export default function Login({ onLogin }) {
       )}
 
       {authRecoveryOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-5 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 px-4 py-5 backdrop-blur-xs animate-in fade-in duration-150">
           <div
-            className="w-full max-w-[32rem] overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl shadow-black/80"
+            className="w-full max-w-[32rem] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="authenticator-recovery-title"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-800 bg-slate-950/60 px-6 py-5">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 px-6 py-4">
               <div className="min-w-0">
-                <h3 id="authenticator-recovery-title" className="text-xl font-bold leading-7 text-white flex items-center gap-2">
-                  <ShieldCheckIcon className="h-5 w-5 text-emerald-400" />
+                <h3 id="authenticator-recovery-title" className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <ShieldCheckIcon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                   Authenticator Recovery
                 </h3>
-                <p className="mt-1 text-xs leading-5 text-slate-400">
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                   Request admin approval to set up a new authenticator app.
                 </p>
               </div>
@@ -1662,7 +1619,7 @@ export default function Login({ onLogin }) {
                 type="button"
                 onClick={closeAuthenticatorRecovery}
                 disabled={authRecoveryLoading}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Close authenticator recovery"
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -1670,7 +1627,7 @@ export default function Login({ onLogin }) {
             </div>
 
             <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-6 py-5">
-              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-800 bg-slate-950/80 p-1">
+              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950/80 p-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -1678,10 +1635,10 @@ export default function Login({ onLogin }) {
                     setAuthRecoveryError('');
                     setAuthRecoverySuccess('');
                   }}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                     authRecoveryMode === 'request'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Request
@@ -1693,10 +1650,10 @@ export default function Login({ onLogin }) {
                     setAuthRecoveryError('');
                     setAuthRecoverySuccess('');
                   }}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                     authRecoveryMode === 'status'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Status
@@ -1716,11 +1673,11 @@ export default function Login({ onLogin }) {
                     setAuthRecoverySuccess('');
                   }}
                   disabled={!authRecoveryCanSetup}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                     authRecoveryMode === 'setup'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-200'
-                  } disabled:cursor-not-allowed disabled:text-slate-600 disabled:hover:text-slate-600`}
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs font-bold'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  } disabled:cursor-not-allowed disabled:opacity-40`}
                 >
                   Setup
                 </button>
@@ -1728,7 +1685,7 @@ export default function Login({ onLogin }) {
 
               <div className="mt-4 space-y-3">
                 {authRecoveryError && (
-                  <DismissibleAlert resetKey={authRecoveryError} tone="red" title="Recovery issue" className="rounded-2xl">
+                  <DismissibleAlert resetKey={authRecoveryError} tone="red" title="Recovery issue" className="rounded-xl">
                     {authRecoveryError}
                   </DismissibleAlert>
                 )}
@@ -1737,7 +1694,7 @@ export default function Login({ onLogin }) {
                     resetKey={authRecoverySuccess}
                     tone={getAuthenticatorRecoveryTone(authRecoveryStatus)}
                     title="Request status"
-                    className="rounded-2xl"
+                    className="rounded-xl"
                   >
                     <div>{authRecoverySuccess}</div>
                     {authRecoveryStatus?.review_note && (
@@ -1756,7 +1713,7 @@ export default function Login({ onLogin }) {
                       setAuthRecoveryError('');
                       setAuthRecoverySuccess('');
                     }}
-                    className="inline-flex w-full items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20"
+                    className="inline-flex w-full items-center justify-center rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-2.5 text-xs font-semibold text-amber-800 dark:text-amber-300 transition hover:bg-amber-100 dark:hover:bg-amber-900/30"
                   >
                     Appeal Decision
                   </button>
@@ -1766,7 +1723,7 @@ export default function Login({ onLogin }) {
               {authRecoveryMode === 'request' ? (
                 <form onSubmit={submitAuthenticatorRecoveryRequest} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1775,12 +1732,12 @@ export default function Login({ onLogin }) {
                       value={authRecoveryIdentifier}
                       onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Recovery reason
                     </label>
                     <textarea
@@ -1789,13 +1746,13 @@ export default function Login({ onLogin }) {
                       value={authRecoveryReason}
                       onChange={(event) => setAuthRecoveryReason(event.target.value)}
                       placeholder="Tell the admin why you need authenticator recovery"
-                      className="mt-1.5 w-full resize-none rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={authRecoveryLoading || !authRecoveryIdentifier.trim() || !authRecoveryReason.trim()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {authRecoveryLoading ? 'Sending...' : 'Send Recovery Request'}
                   </button>
@@ -1803,7 +1760,7 @@ export default function Login({ onLogin }) {
               ) : authRecoveryMode === 'status' ? (
                 <form onSubmit={checkAuthenticatorRecoveryStatus} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1812,14 +1769,14 @@ export default function Login({ onLogin }) {
                       value={authRecoveryIdentifier}
                       onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={authRecoveryLoading || !authRecoveryIdentifier.trim()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {authRecoveryLoading ? 'Checking...' : 'Check Status'}
                   </button>
@@ -1827,7 +1784,7 @@ export default function Login({ onLogin }) {
               ) : authRecoveryMode === 'appeal' ? (
                 <form onSubmit={submitAuthenticatorRecoveryAppeal} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1836,12 +1793,12 @@ export default function Login({ onLogin }) {
                       value={authRecoveryIdentifier}
                       onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Appeal reason
                     </label>
                     <textarea
@@ -1850,10 +1807,10 @@ export default function Login({ onLogin }) {
                       value={authRecoveryAppealReason}
                       onChange={(event) => setAuthRecoveryAppealReason(event.target.value)}
                       placeholder="Enter your reason for appeal..."
-                      className="mt-1.5 w-full resize-none rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                     />
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <button
                       type="button"
                       onClick={() => {
@@ -1862,7 +1819,7 @@ export default function Login({ onLogin }) {
                         setAuthRecoverySuccess(getAuthenticatorRecoveryMessage(authRecoveryStatus));
                       }}
                       disabled={authRecoveryLoading}
-                      className="flex w-full items-center justify-center rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm font-semibold text-slate-300 transition hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
                     >
                       Back
                     </button>
@@ -1873,7 +1830,7 @@ export default function Login({ onLogin }) {
                         !authRecoveryIdentifier.trim() ||
                         !authRecoveryAppealReason.trim()
                       }
-                      className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {authRecoveryLoading ? 'Submitting...' : 'Submit Appeal'}
                     </button>
@@ -1882,7 +1839,7 @@ export default function Login({ onLogin }) {
               ) : (
                 <form onSubmit={startApprovedAuthenticatorSetup} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
@@ -1891,19 +1848,14 @@ export default function Login({ onLogin }) {
                       value={authRecoveryIdentifier}
                       onChange={(event) => updateAuthenticatorRecoveryIdentifier(event.target.value)}
                       placeholder="Enter your username or email"
-                      className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-hidden transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950/80 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none transition focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15"
                       autoComplete="username"
                     />
                   </div>
-                  {!authRecoveryCanSetup && (
-                    <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs font-semibold text-amber-300">
-                      Check your request status first. You can set up a new authenticator only after admin approval.
-                    </div>
-                  )}
                   <button
                     type="submit"
                     disabled={authRecoveryLoading || !authRecoveryCanSetup || !authRecoveryIdentifier.trim()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {authRecoveryLoading ? 'Starting...' : 'Set Up New Authenticator'}
                   </button>
@@ -1915,21 +1867,21 @@ export default function Login({ onLogin }) {
       )}
 
       {isAuthenticatorStep && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-5 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 px-4 py-5 backdrop-blur-xs animate-in fade-in duration-150">
           <div
-            className="w-full max-w-[30rem] overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl shadow-black/80"
+            className="w-full max-w-[30rem] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="authenticator-modal-title"
           >
-            <div className="border-b border-slate-800 bg-slate-950/60 px-6 py-5">
+            <div className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 px-6 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <h3 id="authenticator-modal-title" className="text-xl font-bold leading-7 text-white flex items-center gap-2">
-                    <ShieldCheckIcon className="h-5 w-5 text-emerald-400" />
+                  <h3 id="authenticator-modal-title" className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <ShieldCheckIcon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                     {isAuthenticatorSetup ? 'Set up verification' : 'Two-Factor Verification'}
                   </h3>
-                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                     {isAuthenticatorSetup
                       ? 'Add MEALS to your authenticator app, then enter the 6-digit code.'
                       : 'Open your authenticator app and enter the current 6-digit code.'}
@@ -1944,7 +1896,7 @@ export default function Login({ onLogin }) {
                   resetKey={`${authenticatorErrorTitle}-${error}-${authenticatorCode}`}
                   tone="red"
                   title={authenticatorErrorTitle || (isAuthenticatorSetup ? 'Authenticator setup issue' : 'Verification issue')}
-                  className="mb-4 rounded-2xl"
+                  className="mb-4 rounded-xl"
                 >
                   {error}
                 </DismissibleAlert>
@@ -1953,7 +1905,7 @@ export default function Login({ onLogin }) {
               {isAuthenticatorSetup && (
                 <div className="mb-4 grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] items-center">
                   {authenticatorQrCode && (
-                    <div className="mx-auto rounded-2xl bg-white p-2.5 sm:mx-0 shadow-lg border border-slate-700">
+                    <div className="mx-auto rounded-xl bg-white p-2 sm:mx-0 shadow-sm border border-slate-200">
                       <img
                         src={authenticatorQrCode}
                         alt="Authenticator setup QR code"
@@ -1962,16 +1914,16 @@ export default function Login({ onLogin }) {
                     </div>
                   )}
                   <div className="min-w-0">
-                    <div className="text-xs leading-relaxed text-slate-400">
-                      Scan the QR code or enter this setup key in Google Authenticator, Microsoft Authenticator, or another TOTP app.
+                    <div className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                      Scan the QR code or enter this setup key in Google Authenticator or another TOTP app:
                     </div>
-                    <div className="mt-2 break-all rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs font-bold tracking-wider text-emerald-400">
+                    <div className="mt-2 break-all rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 px-3 py-2 font-mono text-xs font-bold tracking-wider text-emerald-700 dark:text-emerald-400">
                       {authenticatorChallenge?.authenticator?.secret_formatted}
                     </div>
                     <button
                       type="button"
                       onClick={copySetupKey}
-                      className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:bg-slate-700 hover:text-white"
+                      className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
                     >
                       {secretCopied ? '✓ Key Copied' : 'Copy Key'}
                     </button>
@@ -1980,7 +1932,7 @@ export default function Login({ onLogin }) {
               )}
 
               <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   6-digit code or recovery code
                 </label>
                 <input
@@ -1989,7 +1941,7 @@ export default function Login({ onLogin }) {
                   inputMode={isAuthenticatorSetup ? 'numeric' : 'text'}
                   required
                   placeholder={isAuthenticatorSetup ? '000000' : '000000 or code'}
-                  className="mt-2 w-full rounded-2xl border border-slate-700/80 bg-slate-950 px-4 py-3.5 text-center font-mono text-2xl sm:text-3xl font-bold tracking-[0.25em] text-emerald-400 outline-hidden transition placeholder:text-slate-600 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-950 px-4 py-3 text-center font-mono text-2xl sm:text-3xl font-bold tracking-[0.25em] text-emerald-700 dark:text-emerald-400 outline-none transition placeholder:text-slate-400 focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                   value={authenticatorCode}
                   onChange={(event) =>
                     setAuthenticatorCode(normalizeAuthenticatorCode(event.target.value, {
@@ -2000,12 +1952,12 @@ export default function Login({ onLogin }) {
                   autoComplete="one-time-code"
                 />
                 {!isAuthenticatorSetup && (
-                  <span className="mt-2.5 block text-xs leading-5 text-slate-400">
+                  <span className="mt-2.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">
                     Lost your authenticator app? Enter one saved recovery code here, or{' '}
                     <button
                       type="button"
                       onClick={() => openAuthenticatorRecovery('request')}
-                      className="font-semibold text-emerald-400 hover:text-emerald-300 transition"
+                      className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline transition"
                     >
                       request authenticator recovery
                     </button>
@@ -2019,14 +1971,14 @@ export default function Login({ onLogin }) {
                   type="button"
                   onClick={resetAuthenticatorStep}
                   disabled={loading}
-                  className="rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-xs font-bold text-slate-300 transition hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Use different account
                 </button>
                 <button
                   type="submit"
                   disabled={loading || isAuthenticatorVerificationLocked || !canSubmitAuthenticatorCode}
-                  className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/25 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isAuthenticatorVerificationLocked ? (
                     `Locked for ${authenticatorLockRemainingLabel}`
@@ -2048,19 +2000,19 @@ export default function Login({ onLogin }) {
       )}
 
       {pendingRecoveryCodes.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-5 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 px-4 py-5 backdrop-blur-xs animate-in fade-in duration-150">
           <div
-            className="w-full max-w-[32rem] overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl shadow-black/80"
+            className="w-full max-w-[32rem] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="recovery-codes-title"
           >
-            <div className="border-b border-slate-800 bg-slate-950/60 px-6 py-5">
-              <h3 id="recovery-codes-title" className="text-xl font-bold leading-7 text-white flex items-center gap-2">
-                <ShieldCheckIcon className="h-5 w-5 text-emerald-400" />
+            <div className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 px-6 py-4">
+              <h3 id="recovery-codes-title" className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <ShieldCheckIcon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                 Save your recovery codes
               </h3>
-              <p className="mt-1 text-xs leading-5 text-slate-400">
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                 Each code works once if your authenticator app is deleted or unavailable.
               </p>
             </div>
@@ -2070,29 +2022,39 @@ export default function Login({ onLogin }) {
                 {pendingRecoveryCodes.map((code) => (
                   <div
                     key={code}
-                    className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2.5 text-center font-mono text-sm font-bold tracking-wider text-emerald-400"
+                    className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-center font-mono text-sm font-bold tracking-wider text-emerald-700 dark:text-emerald-400"
                   >
                     {code}
                   </div>
                 ))}
               </div>
 
-              <div className="mt-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-amber-300">
+              <div className="mt-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
                 ⚠️ Store these codes in a password manager or secure location. They will not be shown again.
               </div>
 
               <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <button
-                  type="button"
-                  onClick={copyRecoveryCodes}
-                  className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-xs font-bold text-slate-300 transition hover:bg-slate-700 hover:text-white"
-                >
-                  {recoveryCodesCopied ? '✓ Copied Codes' : 'Copy All Codes'}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={downloadRecoveryCodes}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
+                  >
+                    <ArrowDownTrayIcon className="h-4 w-4 text-slate-500" />
+                    Download .txt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={copyRecoveryCodes}
+                    className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
+                  >
+                    {recoveryCodesCopied ? '✓ Copied Codes' : 'Copy All Codes'}
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={confirmRecoveryCodesSaved}
-                  className="rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99]"
+                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99]"
                 >
                   I saved these codes
                 </button>
