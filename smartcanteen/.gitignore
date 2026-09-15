@@ -46,3 +46,10 @@ builder-effective-config.yaml
 *.njsproj
 *.sln
 *.sw?
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
