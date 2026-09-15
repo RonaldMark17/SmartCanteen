@@ -1246,7 +1246,7 @@ async function login(username, password, { rememberDevice = false, rememberMe = 
     }
 
     if (response?.access_token) {
-      return completeAuthenticatedLoginResponse(response, password, { rememberDevice, username });
+      return completeAuthenticatedLoginResponse(response, password, { rememberDevice: isRemembered, username });
     }
 
     throw new Error('Authenticator app verification is required before opening the dashboard.');
