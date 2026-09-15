@@ -454,12 +454,11 @@ function assertMfaWasCompleted(response) {
     throw new Error('MFA verification did not complete. Try signing in again.');
   }
 
-  // MFA is optional for staff and other non-admin users if not enabled
-  const userRole = response?.user?.role;
+  // MFA is only enforced when explicitly enabled on the account.
+  // An admin without an authenticator set up can still log in normally.
   const isMfaEnabled = Boolean(response?.user?.authenticator_mfa_enabled);
-  const isMfaMandatory = userRole === 'admin';
 
-  if (!isMfaMandatory && !isMfaEnabled) {
+  if (!isMfaEnabled) {
     return;
   }
 

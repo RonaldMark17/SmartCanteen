@@ -1867,6 +1867,21 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       return;
     }
 
+    // Require the active school year to have at least 10 of 12 months with entries
+    if (isNext) {
+      const activeYear = schoolYears.find((sy) => sy.is_active);
+      const monthsWithEntries = activeYear?.months_with_entries || 0;
+      const totalMonths = activeYear?.report_count || 12;
+      const MIN_MONTHS_REQUIRED = 10;
+      if (monthsWithEntries < MIN_MONTHS_REQUIRED) {
+        window.showToast?.(
+          `Cannot create next school year yet. The current school year needs at least ${MIN_MONTHS_REQUIRED} of ${totalMonths} months with financial data (currently ${monthsWithEntries}).`,
+          'warning'
+        );
+        return;
+      }
+    }
+
     setCreatingSchoolYear(true);
     try {
       const response = await API.createFinancialSchoolYear({
@@ -3239,15 +3254,20 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
   function renderFinancialManagementPage() {
 
     const overviewContent = (
-      <div className="space-y-5 animate-in fade-in duration-200">
-        <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_380px]">
-          <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 className="text-xl font-black text-slate-900 dark:text-white">{selectedReport?.month_label} Financial Statement</h2>
-                <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
+      <div className="animate-in fade-in duration-200">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-12 items-start">
+
+          {/* ── LEFT COLUMN (approx 67%): Financial Statement ── */}
+          <section className="lg:col-span-8 min-w-0 rounded-2xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+            {/* Card Header */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
+              <div className="min-w-0">
+                <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white truncate">
+                  {selectedReport?.month_label} Financial Statement
+                </h2>
+                <p className="text-[11px] sm:text-xs font-medium text-slate-500 dark:text-slate-400 truncate">
                   {isAdmin
-                    ? 'Auto calculations update while you edit Beginning Cash, Current Sales, and Cost of Sales.'
+                    ? 'Edit Beginning Cash, Current Sales, and Cost of Sales then save.'
                     : 'Review monthly beginning cash, sales, cost of sales, and balances in read-only mode.'}
                 </p>
               </div>
@@ -3256,19 +3276,20 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   type="button"
                   onClick={handleSaveStatement}
                   disabled={savingStatement || !canSaveSelectedSchoolYear}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+                  className="inline-flex shrink-0 items-center gap-1.5 self-start sm:self-auto rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
                 >
-                  <CheckCircleIcon className="h-4 w-4 stroke-[2.5]" />
+                  <CheckCircleIcon className="h-3.5 w-3.5 stroke-[2.5]" />
                   {savingStatement ? 'Saving...' : 'Save Statement'}
                 </button>
               ) : (
-                <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                  <EyeIcon className="h-4 w-4 text-slate-500" /> Read-Only View
+                <span className="inline-flex shrink-0 items-center gap-1.5 self-start sm:self-auto rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  <EyeIcon className="h-3.5 w-3.5 text-slate-500" /> Read-Only View
                 </span>
               )}
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {/* Editable Inputs near top */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 px-5 py-3.5 bg-slate-50/50 dark:bg-slate-850/40 border-b border-slate-100 dark:border-slate-800">
               <FormField
                 label="Beginning Cash"
                 value={reportDraft.beginning_cash_on_hand}
@@ -3295,103 +3316,122 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               />
             </div>
 
-            <div className="overflow-hidden rounded-xl border border-slate-200/90 divide-y divide-slate-100 bg-white dark:border-slate-800 dark:divide-slate-800 dark:bg-slate-900">
+            {/* Financial Breakdown Rows */}
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {[
-                ['Beginning Cash', statement.beginningCash, true],
-                ['Current Sales', statement.currentSales, true],
-                ['Cost of Sales', statement.costOfSales],
-                ['Gross Income', statement.grossIncome],
-                ['Operation Expenses', statement.operationExpenses],
-                ['Current Balance', statement.currentBalance, true],
-              ].map(([label, amount, strong]) => (
+                { label: 'Beginning Cash', amount: statement.beginningCash, isPrimary: true },
+                {
+                  label: 'Current Sales',
+                  amount: statement.currentSales,
+                  isPrimary: true,
+                  action: () => handleTabChange('daily-sales'),
+                  actionLabel: 'Sales →',
+                },
+                { label: 'Cost of Sales', amount: statement.costOfSales },
+                { label: 'Gross Income', amount: statement.grossIncome, isGross: true },
+                {
+                  label: 'Operation Expenses',
+                  amount: statement.operationExpenses,
+                  action: () => handleTabChange('expenses'),
+                  actionLabel: 'Manage →',
+                },
+                { label: 'Current Balance', amount: statement.currentBalance, isBalance: true },
+              ].map(({ label, amount, isPrimary, isGross, isBalance, action, actionLabel }) => (
                 <div
                   key={label}
-                  className={`grid grid-cols-1 gap-1 px-4 py-3.5 sm:grid-cols-[1fr_auto] sm:items-center ${
-                    label === 'Current Balance'
-                      ? 'bg-emerald-50/50 dark:bg-emerald-950/40'
-                      : label === 'Gross Income'
-                      ? 'bg-slate-50/50 dark:bg-slate-800/40'
-                      : ''
+                  className={`flex items-center justify-between gap-3 px-5 py-2.5 transition-colors ${
+                    isBalance
+                      ? 'bg-emerald-500/10 dark:bg-emerald-950/40 border-t border-emerald-500/20 dark:border-emerald-800/40'
+                      : isGross
+                      ? 'bg-slate-50/70 dark:bg-slate-800/30'
+                      : 'hover:bg-slate-50/50 dark:hover:bg-slate-800/20'
                   }`}
                 >
-                  <div className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                    {label === 'Current Sales' ? (
-                      <div className="flex items-center gap-2">
-                        <span>{label}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleTabChange('daily-sales')}
-                          className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
-                        >
-                          Daily Sales &rarr;
-                        </button>
-                      </div>
-                    ) : label === 'Operation Expenses' ? (
-                      <div className="flex items-center gap-2">
-                        <span>{label}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleTabChange('expenses')}
-                          className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
-                        >
-                          Manage &rarr;
-                        </button>
-                      </div>
-                    ) : (
-                      label
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`text-xs ${
+                        isBalance
+                          ? 'font-black text-emerald-900 dark:text-emerald-200'
+                          : isGross
+                          ? 'font-black text-slate-900 dark:text-white'
+                          : isPrimary
+                          ? 'font-bold text-slate-800 dark:text-slate-200'
+                          : 'font-medium text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      {label}
+                    </span>
+                    {action && (
+                      <button
+                        type="button"
+                        onClick={action}
+                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
+                      >
+                        {actionLabel}
+                      </button>
                     )}
                   </div>
-                  <div className={`text-base font-mono ${strong ? 'font-black text-slate-950 dark:text-white' : 'font-bold text-slate-800 dark:text-slate-200'}`}>
+                  <span
+                    className={`font-mono shrink-0 ${
+                      isBalance
+                        ? 'text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-300'
+                        : isGross
+                        ? 'text-sm font-black text-slate-900 dark:text-white'
+                        : isPrimary
+                        ? 'text-sm font-bold text-slate-800 dark:text-slate-200'
+                        : 'text-sm font-semibold text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
                     {formatCurrency(amount)}
-                  </div>
+                  </span>
                 </div>
               ))}
             </div>
           </section>
 
-          <aside className="min-w-0 w-full space-y-5">
-            {/* Operating Expenses Summary Card */}
-            <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-600 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-400">
-                      <ReceiptPercentIcon className="h-4 w-4" />
-                    </div>
-                    <h2 className="text-base font-black text-slate-900 dark:text-white">Operating Expenses</h2>
+          {/* ── RIGHT COLUMN (approx 33%): Operating Expenses & Fund Allocation ── */}
+          <aside className="lg:col-span-4 min-w-0 flex flex-col gap-4">
+
+            {/* 1. Operating Expenses Card */}
+            <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col gap-3">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5 dark:border-slate-800">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-600 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-400">
+                    <ReceiptPercentIcon className="h-3.5 w-3.5" />
                   </div>
-                  <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    Breakdown for {selectedReport?.month_label}
-                  </p>
+                  <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
+                    Operating Expenses
+                  </h2>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleTabChange('expenses')}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline dark:text-rose-400 shrink-0"
+                  className="shrink-0 text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:underline dark:text-rose-400"
                 >
-                  View Details &rarr;
+                  View Details →
                 </button>
               </div>
 
               {/* Total Operational Expenses Box */}
-              <div className="mt-4 rounded-xl border border-rose-100 bg-gradient-to-r from-rose-50/80 to-amber-50/40 p-4 dark:border-rose-900/40 dark:from-rose-950/30 dark:to-slate-800/30">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
-                    Total Operational Expenses
+              <div className="flex items-center justify-between rounded-xl border border-rose-100 bg-gradient-to-r from-rose-50/80 to-amber-50/40 px-3 py-2 dark:border-rose-900/40 dark:from-rose-950/30 dark:to-slate-800/30">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                    Total
                   </span>
-                  <span className="rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/70 dark:text-rose-200">
-                    {expenseSummary.length} {expenseSummary.length === 1 ? 'Category' : 'Categories'}
+                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold text-rose-800 dark:bg-rose-900/70 dark:text-rose-200">
+                    {expenseSummary.length} {expenseSummary.length === 1 ? 'cat.' : 'cats.'}
                   </span>
                 </div>
-                <div className="mt-1.5 font-mono text-2xl font-black text-rose-700 dark:text-rose-400">
+                <span className="font-mono text-sm sm:text-base font-black text-rose-700 dark:text-rose-400">
                   {formatCurrency(statement.operationExpenses)}
-                </div>
+                </span>
               </div>
 
-              {/* Top Expense Categories Breakdown */}
-              <div className="mt-4 space-y-2.5">
-                {expenseSummary.length > 0 ? (
-                  expenseSummary.map((item) => {
+              {/* Category Breakdown */}
+              {expenseSummary.length > 0 ? (
+                <div className="space-y-1.5">
+                  {expenseSummary.map((item) => {
                     const pct = statement.operationExpenses > 0
                       ? ((item.amount / statement.operationExpenses) * 100).toFixed(1)
                       : '0.0';
@@ -3400,22 +3440,22 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                     return (
                       <div
                         key={item.category}
-                        className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/60"
+                        className="rounded-lg border border-slate-200/70 bg-slate-50/60 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-800/50"
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0 text-xs font-black text-slate-900 dark:text-white truncate">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-black text-slate-800 dark:text-slate-200 truncate">
                             {item.category}
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${theme.badge}`}>
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className={`rounded px-1.5 py-0.2 text-[9px] font-bold ${theme.badge}`}>
                               {pct}%
                             </span>
-                            <span className="font-mono text-xs font-black text-slate-900 dark:text-white">
+                            <span className="font-mono text-[11px] font-black text-slate-900 dark:text-white">
                               {formatCurrency(item.amount)}
                             </span>
                           </div>
                         </div>
-                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700">
+                        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700">
                           <div
                             className={`h-full rounded-full transition-all duration-300 ${theme.bar}`}
                             style={{ width: `${Math.max(3, Math.min(100, numPct))}%` }}
@@ -3423,58 +3463,78 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                         </div>
                       </div>
                     );
-                  })
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                    <ReceiptPercentIcon className="mx-auto h-6 w-6 text-slate-400 mb-1.5 opacity-60" />
-                    No operating expenses recorded for this month.
-                    <div className="mt-2">
-                      <button
-                        type="button"
-                        onClick={() => handleTabChange('expenses')}
-                        className="font-bold text-rose-600 hover:underline dark:text-rose-400"
-                      >
-                        Add Expense &rarr;
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200 py-3 text-center text-[11px] font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                  <ReceiptPercentIcon className="mx-auto h-4 w-4 text-slate-400 mb-0.5 opacity-60" />
+                  No operating expenses recorded.
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange('expenses')}
+                    className="ml-1 font-bold text-rose-600 hover:underline dark:text-rose-400"
+                  >
+                    Add →
+                  </button>
+                </div>
+              )}
             </section>
 
-            <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-black text-slate-900 dark:text-white">Fund Allocation Summary</h2>
-                  <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    Net income shares for {selectedReport?.month_label}
+            {/* 2. Fund Allocation Summary Card */}
+            <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col gap-2.5">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5 dark:border-slate-800">
+                <div className="min-w-0">
+                  <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
+                    Fund Allocation Summary
+                  </h2>
+                  <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 truncate">
+                    Net income shares · {selectedReport?.month_label}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleTabChange('fund-allocation')}
-                  className="text-xs font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400 shrink-0"
+                  className="shrink-0 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
                 >
-                  View Details &rarr;
+                  View Details →
                 </button>
               </div>
-              <div className="mt-4 space-y-2.5">
-                {(selectedReport?.allocations || []).map((allocation) => (
-                  <div key={allocation.category_key} className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/60">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0 text-xs font-black text-slate-900 dark:text-white">{allocation.label}</div>
-                      <div className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-black text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                        {formatPercent(allocation.percentage)}
+
+              {/* Allocation categories */}
+              <div className="space-y-1.5">
+                {(selectedReport?.allocations || []).length > 0 ? (
+                  (selectedReport?.allocations || []).map((allocation) => (
+                    <div
+                      key={allocation.category_key}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-slate-100/80 bg-slate-50/50 px-2.5 py-1.5 dark:border-slate-800/60 dark:bg-slate-800/40"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-black text-slate-800 dark:text-slate-200 truncate">
+                          {allocation.label}
+                        </div>
+                        <div className="text-[9px] font-medium text-slate-500 dark:text-slate-400">
+                          Net Income Allocation
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[9px] font-black text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                          {formatPercent(allocation.percentage)}
+                        </span>
+                        <span className="font-mono text-[11px] font-black text-slate-900 dark:text-white">
+                          {formatCurrency(allocation.amount)}
+                        </span>
                       </div>
                     </div>
-                    <div className="mt-2 flex items-center justify-between gap-3 text-xs">
-                      <span className="font-semibold text-slate-500 dark:text-slate-400">Net Income Allocation</span>
-                      <span className="font-mono font-black text-slate-900 dark:text-white">{formatCurrency(allocation.amount)}</span>
-                    </div>
+                  ))
+                ) : (
+                  <div className="py-3 text-center text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    No allocation data available for this month.
                   </div>
-                ))}
+                )}
               </div>
             </section>
+
           </aside>
         </div>
       </div>
@@ -4714,7 +4774,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/90 bg-slate-100/90 p-1.5 dark:border-slate-800 dark:bg-slate-800/80 w-fit">
           {[
             { id: 'overview', label: 'Overview', icon: BanknotesIcon },
-            { id: 'daily-sales', label: 'Daily Sales', icon: DocumentChartBarIcon, badge: filteredDailySalesRows.length },
+            { id: 'daily-sales', label: 'Sales', icon: DocumentChartBarIcon, badge: filteredDailySalesRows.length },
             { id: 'expenses', label: 'Expenses', icon: ReceiptPercentIcon, badge: filteredExpenseRows.length },
             { id: 'fund-allocation', label: 'Fund Allocation', icon: ChartPieIcon },
           ].map((tab) => {
@@ -4921,32 +4981,46 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   <ClockIcon className="h-4 w-4 stroke-[2.2] text-amber-600 dark:text-amber-400" />
                   Add Historical Year
                 </button>
-                <button
-                  type="button"
-                  onClick={handleCreateNextSchoolYear}
-                  disabled={creatingSchoolYear || (currentSchoolYearExists && nextSchoolYearExists)}
-                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black shadow-xs transition active:scale-95 ${
-                    currentSchoolYearExists && nextSchoolYearExists
-                      ? 'border border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
-                      : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                  }`}
-                  title={
-                    !currentSchoolYearExists
-                      ? `Create current school year ${currentSchoolYearLabel}`
-                      : nextSchoolYearExists
-                      ? `Next school year ${nextSchoolYearLabel} has already been created`
-                      : `Create next school year ${nextSchoolYearLabel}`
-                  }
-                >
-                  <PlusIcon className="h-4 w-4 stroke-[2.5]" />
-                  {creatingSchoolYear
-                    ? 'Creating...'
-                    : !currentSchoolYearExists
-                    ? `Create Current Year (${currentSchoolYearLabel})`
-                    : nextSchoolYearExists
-                    ? `Next Year (${nextSchoolYearLabel}) Exists`
-                    : `Create Next School Year (${nextSchoolYearLabel})`}
-                </button>
+                {(() => {
+                  const activeYear = schoolYears.find((sy) => sy.is_active);
+                  const monthsWithEntries = activeYear?.months_with_entries || 0;
+                  const totalMonths = activeYear?.report_count || 12;
+                  const MIN_MONTHS = 10;
+                  const notEnoughMonths = currentSchoolYearExists && !nextSchoolYearExists && monthsWithEntries < MIN_MONTHS;
+                  const isDisabled = creatingSchoolYear || (currentSchoolYearExists && nextSchoolYearExists) || notEnoughMonths;
+                  return (
+                    <button
+                      type="button"
+                      onClick={handleCreateNextSchoolYear}
+                      disabled={isDisabled}
+                      className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black shadow-xs transition active:scale-95 ${
+                        isDisabled
+                          ? 'border border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      }`}
+                      title={
+                        !currentSchoolYearExists
+                          ? `Create current school year ${currentSchoolYearLabel}`
+                          : nextSchoolYearExists
+                          ? `Next school year ${nextSchoolYearLabel} has already been created`
+                          : notEnoughMonths
+                          ? `Requires at least ${MIN_MONTHS} of ${totalMonths} months with data in the current school year (${monthsWithEntries}/${totalMonths} so far)`
+                          : `Create next school year ${nextSchoolYearLabel}`
+                      }
+                    >
+                      <PlusIcon className="h-4 w-4 stroke-[2.5]" />
+                      {creatingSchoolYear
+                        ? 'Creating...'
+                        : !currentSchoolYearExists
+                        ? `Create Current Year (${currentSchoolYearLabel})`
+                        : nextSchoolYearExists
+                        ? `Next Year (${nextSchoolYearLabel}) Exists`
+                        : notEnoughMonths
+                        ? `Locked — ${monthsWithEntries}/${totalMonths} Months`
+                        : `Create Next School Year (${nextSchoolYearLabel})`}
+                    </button>
+                  );
+                })()}
               </div>
             ) : null
           }
