@@ -17,7 +17,6 @@ import { safeLocalStorageSetItem, safeLocalStorageSetJson } from './storage';
 // Purge legacy sensitive tokens from client storage
 if (typeof window !== 'undefined' && window.localStorage) {
   try {
-    localStorage.removeItem('sc_token');
     localStorage.removeItem('sc_trusted_authenticator_devices');
     localStorage.removeItem('sc_trusted_authenticator_device');
     localStorage.removeItem('sc_offline_login_v1');
@@ -437,6 +436,19 @@ function clearSession() {
   localStorage.removeItem('sc_offline_login_v1');
 }
 
+function handleUnauthorizedSessionClear() {
+  clearSession();
+  if (typeof window !== 'undefined') {
+    if (window.location?.protocol === 'file:' || window.electronAPI?.isElectron) {
+      if (window.location.hash && window.location.hash !== '#/' && window.location.hash !== '') {
+        window.location.hash = '#/';
+      }
+    } else if (window.location.pathname !== '/') {
+      window.location.href = '/';
+    }
+  }
+}
+
 function assertMfaWasCompleted(response) {
   if (!response?.access_token) {
     throw new Error('MFA verification did not complete. Try signing in again.');
@@ -787,8 +799,7 @@ async function performRequest(method, path, body = null, options = {}) {
     }
 
     if (res.status === 401 && !isLoginFlowPath(path)) {
-      clearSession();
-      window.location.href = '/';
+      handleUnauthorizedSessionClear();
       return null;
     }
 
@@ -933,8 +944,7 @@ async function requestFile(path) {
     }
 
     if (res.status === 401) {
-      clearSession();
-      window.location.href = '/';
+      handleUnauthorizedSessionClear();
       return null;
     }
 
@@ -1245,6 +1255,9 @@ export async function verifyAuthenticatorSetup({
     }
   );
 
+  if (response?.access_token) {
+    safeLocalStorageSetItem('sc_token', response.access_token);
+  }
   if (response?.user) {
     safeLocalStorageSetJson('sc_user', response.user);
   }

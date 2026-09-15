@@ -2520,25 +2520,19 @@ def login(payload: schemas.LoginRequest, req: Request, res: Response, db: Sessio
         audit_action = "LOGIN_AUTHENTICATOR_REQUIRED"
         audit_details = "Password accepted; authenticator app MFA required"
     else:
-        # MFA is optional for staff and cashier roles (mandatory for administrators)
-        if user.role != "admin":
-            login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
-            _clear_authenticator_verification_attempts(user)
-            response = _build_login_success(db, user, res=res, req=req)
-            response["authenticator_mfa_enabled"] = False
-            _add_audit_log(
-                db,
-                user_id=user.id,
-                action="LOGIN",
-                details=f"Successful login for {user.role} (MFA optional, not enabled)",
-                request=req,
-            )
-            db.commit()
-            return response
-
-        response = _begin_authenticator_setup(user)
-        audit_action = "LOGIN_AUTHENTICATOR_SETUP_REQUIRED"
-        audit_details = "Password accepted; authenticator app setup required before login"
+        login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
+        _clear_authenticator_verification_attempts(user)
+        response = _build_login_success(db, user, res=res, req=req)
+        response["authenticator_mfa_enabled"] = False
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN",
+            details=f"Successful login for {user.role} (MFA not enabled)",
+            request=req,
+        )
+        db.commit()
+        return response
 
     _add_audit_log(
         db,

@@ -203,14 +203,27 @@ function createWindow() {
     }, 400);
   });
 
+  // Prevent renderer from navigating away from the local app bundle (e.g. accidental redirects to file:///C:/)
+  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    const isAppBundle =
+      targetUrl.includes('index.html') ||
+      targetUrl.startsWith('http://localhost') ||
+      targetUrl.startsWith('http://127.0.0.1');
+    if (!isAppBundle) {
+      event.preventDefault();
+      console.warn(`[Main] Blocked navigation away from local app bundle: ${targetUrl}`);
+    }
+  });
+
   // Handle load errors during cold portable extraction (e.g. temporary disk contention)
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.warn(`[Main] did-fail-load (${errorCode}): ${errorDescription}`);
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    if (errorCode === -3) return; // Ignore intentionally aborted navigations
+    console.warn(`[Main] did-fail-load (${errorCode}): ${errorDescription} on ${validatedURL}`);
     setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed() && !hasShownMainWindow) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
         loadAppIndex(mainWindow);
       }
-    }, 600);
+    }, 500);
   });
 
   // Safety fallback only (12s) to prevent permanent hang if system is extremely constrained
