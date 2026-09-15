@@ -1223,10 +1223,11 @@ async function completeAuthenticatedLoginResponse(response, password, { remember
   return response;
 }
 
-async function login(username, password, { rememberDevice = false } = {}) {
+async function login(username, password, { rememberDevice = false, rememberMe = false } = {}) {
   try {
-    const body = { username, password };
-    if (rememberDevice) {
+    const isRemembered = Boolean(rememberMe || rememberDevice);
+    const body = { username, password, remember_me: isRemembered };
+    if (isRemembered) {
       const rememberDeviceToken = getTrustedDeviceToken(username);
       if (rememberDeviceToken) {
         body.remember_device_token = rememberDeviceToken;

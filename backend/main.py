@@ -1816,8 +1816,9 @@ def _build_login_success(
     user: models.User,
     res: Optional[Response] = None,
     req: Optional[Request] = None,
+    expires_delta: Optional[timedelta] = None,
 ) -> dict[str, Any]:
-    token = auth.create_access_token({"sub": user.username})
+    token = auth.create_access_token({"sub": user.username}, expires_delta=expires_delta)
     if res is not None:
         auth.set_auth_cookie(res, token, request=req)
     return {
@@ -2535,7 +2536,8 @@ def login(payload: schemas.LoginRequest, req: Request, res: Response, db: Sessio
     else:
         login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
         _clear_authenticator_verification_attempts(user)
-        response = _build_login_success(db, user, res=res, req=req)
+        expires_delta = timedelta(days=TRUSTED_DEVICE_DAYS) if payload.remember_me else None
+        response = _build_login_success(db, user, res=res, req=req, expires_delta=expires_delta)
         response["authenticator_mfa_enabled"] = False
         _add_audit_log(
             db,

@@ -431,7 +431,9 @@ export default function Login({ onLogin }) {
   const [username, setUsername] = useState(getRememberedUsername);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberUsername, setRememberUsername] = useState(() => Boolean(getRememberedUsername()));
+  const [rememberUsername, setRememberUsername] = useState(() => {
+    return Boolean(getRememberedUsername()) || localStorage.getItem('sc_remember_me') === 'true';
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [authenticatorErrorTitle, setAuthenticatorErrorTitle] = useState('Verification issue');
@@ -565,13 +567,18 @@ export default function Login({ onLogin }) {
     if (rememberUsername) {
       try {
         safeLocalStorageSetItem(REMEMBERED_USERNAME_STORAGE_KEY, submittedUsername.trim());
+        safeLocalStorageSetItem('sc_remember_me', 'true');
       } catch {
         // Remembered username is optional and should not block sign-in.
       }
     } else {
       localStorage.removeItem(REMEMBERED_USERNAME_STORAGE_KEY);
+      localStorage.removeItem('sc_remember_me');
     }
     persistAuthenticatedSession(res.access_token, res.user);
+    try {
+      sessionStorage.setItem('sc_session_active', 'true');
+    } catch {}
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
     setAuthenticatorErrorTitle('Verification issue');
@@ -619,6 +626,7 @@ export default function Login({ onLogin }) {
           )
         : await API.login(submittedUsername.trim(), submittedPassword, {
             rememberDevice: rememberUsername,
+            rememberMe: rememberUsername,
           });
 
       if (res?.mfa_required && !res?.access_token) {

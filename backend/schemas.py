@@ -9,6 +9,7 @@ class LoginRequest(BaseModel):
     username: str
     password: str
     remember_device_token: Optional[str] = None
+    remember_me: bool = False
 
 
 class AuthenticatorAuthenticationFinishRequest(BaseModel):

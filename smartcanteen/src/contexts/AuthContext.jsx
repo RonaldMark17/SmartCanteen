@@ -14,6 +14,16 @@ const AuthContext = createContext({
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
+      const isSessionActive = sessionStorage.getItem('sc_session_active') === 'true';
+      const isRememberMe = localStorage.getItem('sc_remember_me') === 'true';
+
+      // On a fresh launch of the app, if "Remember me" was NOT checked, do not auto-login
+      if (!isSessionActive && !isRememberMe) {
+        localStorage.removeItem('sc_token');
+        localStorage.removeItem('sc_user');
+        return null;
+      }
+
       const cached = localStorage.getItem('sc_user');
       return cached ? JSON.parse(cached) : null;
     } catch {
@@ -32,6 +42,10 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('sc_user');
     localStorage.removeItem('sc_background_alert_token');
     localStorage.removeItem('sc_offline_session');
+    localStorage.removeItem('sc_remember_me');
+    try {
+      sessionStorage.removeItem('sc_session_active');
+    } catch {}
     // Preserve trusted device tokens on this device across logout.
     // Device revocation is managed explicitly in Settings / Manage Accounts.
     localStorage.removeItem('sc_offline_login_v1');
@@ -70,6 +84,10 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('sc_user');
         localStorage.removeItem('sc_background_alert_token');
         localStorage.removeItem('sc_offline_session');
+        localStorage.removeItem('sc_remember_me');
+        try {
+          sessionStorage.removeItem('sc_session_active');
+        } catch {}
         setUser(null);
         return null;
       }
@@ -81,6 +99,10 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('sc_user');
         localStorage.removeItem('sc_background_alert_token');
         localStorage.removeItem('sc_offline_session');
+        localStorage.removeItem('sc_remember_me');
+        try {
+          sessionStorage.removeItem('sc_session_active');
+        } catch {}
         setUser(null);
         // Only call the full logout() on explicit user action (opts.explicit === true)
         if (opts.explicit) {
@@ -94,6 +116,21 @@ export function AuthProvider({ children }) {
   }, [logout]);
 
   useEffect(() => {
+    const isSessionActive = sessionStorage.getItem('sc_session_active') === 'true';
+    const isRememberMe = localStorage.getItem('sc_remember_me') === 'true';
+
+    // On a fresh launch of the app, if "Remember me" was NOT checked, do not auto-login
+    if (!isSessionActive && !isRememberMe) {
+      localStorage.removeItem('sc_token');
+      localStorage.removeItem('sc_user');
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      sessionStorage.setItem('sc_session_active', 'true');
+    } catch {}
     refreshUser();
   }, [refreshUser]);
 

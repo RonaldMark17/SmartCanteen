@@ -17,6 +17,7 @@ const SENSITIVE_KEY_SET = new Set([
   'sc_offline_session',
   'sc_user',
   'sc_remembered_username',
+  'sc_remember_me',
   'sc_device_id',
   'sc_login_lockouts',
   'sc_offline_transactions_v1',
