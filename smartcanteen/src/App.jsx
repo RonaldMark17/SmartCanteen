@@ -140,7 +140,7 @@ function AuthenticatedWorkspace() {
 }
 
 function AppContent() {
-  const { isAuthenticated, role, loading, refreshUser } = useAuth();
+  const { isAuthenticated, role, loading, refreshUser, login } = useAuth();
   const [splashFinished, setSplashFinished] = useState(false);
 
   if (loading || !splashFinished) {
@@ -151,7 +151,14 @@ function AppContent() {
     return (
       <>
         <Toaster />
-        <Login onLogin={() => refreshUser()} />
+        <Login
+          onLogin={(user, token) => {
+            if (user) {
+              login(user, token);
+            }
+            refreshUser();
+          }}
+        />
       </>
     );
   }

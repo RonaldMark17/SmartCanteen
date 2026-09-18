@@ -27,6 +27,7 @@ import {
   ClockIcon,
   DocumentArrowDownIcon,
   DocumentChartBarIcon,
+  DocumentDuplicateIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeIcon,

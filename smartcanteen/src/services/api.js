@@ -481,6 +481,9 @@ function clearSession() {
 function handleUnauthorizedSessionClear() {
   clearSession();
   if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent('meals-session-expired'));
+    } catch {}
     if (window.location?.protocol === 'file:' || window.electronAPI?.isElectron) {
       if (window.location.hash && window.location.hash !== '#/' && window.location.hash !== '') {
         window.location.hash = '#/';
