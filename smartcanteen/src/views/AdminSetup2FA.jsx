@@ -57,7 +57,14 @@ export default function AdminSetup2FA({ initialChallenge = null, onComplete = nu
     setInitializing(true);
     setError('');
 
-    API.startMyAuthenticatorSetup()
+    const startSetup = API.startMyAuthenticatorSetup || API.startAuthenticatorSetup;
+    if (!startSetup) {
+      setError('Authenticator setup is unavailable.');
+      setInitializing(false);
+      return;
+    }
+
+    startSetup()
       .then((res) => {
         if (!active) return;
         setChallenge(res);
@@ -156,8 +163,13 @@ export default function AdminSetup2FA({ initialChallenge = null, onComplete = nu
           username: challenge?.user?.username || currentUser?.username || 'admin',
         });
       } else {
-        // Authenticating via authenticated session
-        res = await API.verifyAuthenticatorSetup({ code: cleanCode, rememberDevice: isRemembered, rememberMe: isRemembered });
+        res = await API.verifyAuthenticatorSetup({
+          mfaToken: challenge?.mfa_token,
+          code: cleanCode,
+          username: challenge?.user?.username || currentUser?.username || 'admin',
+          rememberDevice: isRemembered,
+          rememberMe: isRemembered,
+        });
       }
 
       const receivedCodes = Array.isArray(res?.recovery_codes) ? res.recovery_codes : [];

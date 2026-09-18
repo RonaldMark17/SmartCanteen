@@ -1461,7 +1461,7 @@ export async function verifyAuthenticatorSetup({
   rememberDevice = false,
 }) {
   const rememberMe = isRememberedSession();
-  const normalizedMfaToken = String(mfaToken || '').trim();
+  const normalizedMfaToken = String(mfaToken || getStoredToken() || '').trim();
   if (!normalizedMfaToken) {
     throw new Error('Verification session expired. Please start authenticator setup again.');
   }
@@ -1553,6 +1553,7 @@ export const API = {
   getCurrentUser: () => request('GET', '/auth/me'),
   getAccountNotices: () => request('GET', '/account/notices'),
   startAuthenticatorSetup: () => request('POST', '/auth/authenticator/setup'),
+  startMyAuthenticatorSetup: () => request('POST', '/auth/authenticator/setup'),
   disableAuthenticator: () => request('POST', '/auth/authenticator/disable'),
   regenerateRecoveryCodes: () => request('POST', '/auth/recovery-codes/regenerate'),
   getAdminUsers: () => request('GET', '/admin/users'),
