@@ -102,6 +102,7 @@ function AuthenticatedWorkspace() {
           if (updatedUser) login(updatedUser, token);
           refreshUser();
         }}
+        onCancel={() => logout()}
       />
     ),
     dashboard: role === 'admin' ? <Navigate to="/admin/dashboard" replace /> : <Dashboard />,
@@ -151,7 +152,7 @@ function AuthenticatedWorkspace() {
 }
 
 function AppContent() {
-  const { user, isAuthenticated, role, loading, refreshUser, login, isTwoFactorVerified } = useAuth();
+  const { user, isAuthenticated, role, loading, refreshUser, login, logout, isTwoFactorVerified } = useAuth();
   const [splashFinished, setSplashFinished] = useState(false);
   const [pending2FASetup, setPending2FASetup] = useState(() => {
     try {
@@ -192,6 +193,13 @@ function AppContent() {
               login(nextUser, token);
             }
             refreshUser();
+          }}
+          onCancel={() => {
+            setPending2FASetup(null);
+            try {
+              sessionStorage.removeItem('sc_pending_authenticator_challenge');
+            } catch {}
+            logout();
           }}
         />
       </>

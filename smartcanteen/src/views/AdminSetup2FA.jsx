@@ -17,7 +17,7 @@ import { downloadRecoveryCodesFile } from '../utils/downloadRecoveryCodes';
 
 const MFA_CHALLENGE_STORAGE_KEY = 'sc_pending_authenticator_challenge';
 
-export default function AdminSetup2FA({ initialChallenge = null, onComplete = null }) {
+export default function AdminSetup2FA({ initialChallenge = null, onComplete = null, onCancel = null }) {
   const navigate = useNavigate();
   const { login, user: currentUser, refreshUser } = useAuth();
 
@@ -207,14 +207,14 @@ export default function AdminSetup2FA({ initialChallenge = null, onComplete = nu
   };
 
   return (
-    <div className="relative flex min-h-screen w-full items-center justify-center bg-slate-950 px-4 py-10 text-slate-100 selection:bg-emerald-500 selection:text-white">
+    <div className="relative flex min-h-screen w-full flex-col items-center overflow-y-auto bg-slate-950 px-4 py-10 text-slate-100 selection:bg-emerald-500 selection:text-white">
       {/* Background ambient lighting */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -top-40 left-1/2 -translate-x-1/2 h-[32rem] w-[32rem] rounded-full bg-emerald-500/15 blur-[120px]" />
         <div className="absolute -bottom-40 left-1/2 -translate-x-1/2 h-[32rem] w-[32rem] rounded-full bg-teal-500/10 blur-[140px]" />
       </div>
 
-      <div className="relative z-10 w-full max-w-xl">
+      <div className="relative z-10 w-full max-w-xl my-auto">
         {/* Header Branding */}
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="relative mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/30 bg-slate-900/90 p-2.5 shadow-xl backdrop-blur-md">
@@ -375,20 +375,22 @@ export default function AdminSetup2FA({ initialChallenge = null, onComplete = nu
               </form>
 
               {/* Cancel / Sign In with Another Account */}
-              <div className="text-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    try {
-                      sessionStorage.removeItem(MFA_CHALLENGE_STORAGE_KEY);
-                    } catch {}
-                    navigate('/login', { replace: true });
-                  }}
-                  className="text-xs font-semibold text-slate-500 hover:text-slate-300 transition"
-                >
-                  Cancel and return to sign in
-                </button>
-              </div>
+              {typeof onCancel === 'function' && (
+                <div className="text-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        sessionStorage.removeItem(MFA_CHALLENGE_STORAGE_KEY);
+                      } catch {}
+                      onCancel();
+                    }}
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-300 transition"
+                  >
+                    Cancel and return to sign in
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
