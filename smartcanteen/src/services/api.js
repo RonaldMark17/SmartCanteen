@@ -474,8 +474,15 @@ function isLoginFlowPath(path) {
 function clearSession() {
   localStorage.removeItem('sc_token');
   localStorage.removeItem('sc_user');
+  localStorage.removeItem('sc_remember_me');
+  localStorage.removeItem('sc_two_factor_verified');
   localStorage.removeItem(BACKGROUND_ALERT_STORAGE_KEY);
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
+  try {
+    sessionStorage.removeItem('sc_session_active');
+    sessionStorage.removeItem('sc_two_factor_verified');
+    sessionStorage.removeItem('sc_pending_authenticator_challenge');
+  } catch {}
 }
 
 function handleUnauthorizedSessionClear() {
@@ -1199,6 +1206,12 @@ async function syncPendingOfflineChanges() {
 
 async function completeAuthenticatedLoginResponse(response, password, { rememberDevice = false, username = '' } = {}) {
   assertMfaWasCompleted(response);
+
+  try {
+    sessionStorage.setItem('sc_two_factor_verified', 'true');
+    safeLocalStorageSetItem('sc_two_factor_verified', 'true');
+    sessionStorage.removeItem('sc_pending_authenticator_challenge');
+  } catch {}
 
   if (response?.background_alert_token) {
     try {

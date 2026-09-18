@@ -1800,12 +1800,17 @@ def _reset_user_authenticator(db: Session, user: models.User, *, revoke_remember
 
 
 def _user_payload(db: Session, user: models.User) -> dict:
+    is_mfa_enabled = bool(getattr(user, "authenticator_enabled", False))
+    token_payload = getattr(user, "_token_payload", {}) or {}
+    two_factor_verified = (not is_mfa_enabled) or bool(token_payload.get("two_factor_verified"))
     return {
         "id": user.id,
         "username": user.username,
         "full_name": user.full_name,
         "role": user.role,
-        "authenticator_mfa_enabled": bool(getattr(user, "authenticator_enabled", False)),
+        "authenticator_mfa_enabled": is_mfa_enabled,
+        "two_factor_verified": two_factor_verified,
+        "authenticator_mfa_verified": two_factor_verified,
         "recovery_codes_remaining": _count_recovery_codes(db, user),
         "remembered_devices_active": _count_active_trusted_devices(db, user),
     }
@@ -1815,14 +1820,23 @@ def _build_login_success(
     db: Session,
     user: models.User,
     expires_delta: Optional[timedelta] = None,
+    two_factor_verified: bool = False,
 ) -> dict[str, Any]:
-    token = auth.create_access_token({"sub": user.username}, expires_delta=expires_delta)
+    token_claims = {"sub": user.username}
+    is_mfa_enabled = bool(getattr(user, "authenticator_enabled", False))
+    if two_factor_verified or not is_mfa_enabled:
+        token_claims["two_factor_verified"] = True
+    setattr(user, "_token_payload", token_claims)
+    token = auth.create_access_token(token_claims, expires_delta=expires_delta)
+    user_data = _user_payload(db, user)
     return {
         "access_token": token,
         "background_alert_token": auth.create_background_alert_token(user.username),
         "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
         "token_type": "bearer",
-        "user": _user_payload(db, user),
+        "user": user_data,
+        "two_factor_verified": token_claims.get("two_factor_verified", False),
+        "authenticator_mfa_verified": token_claims.get("two_factor_verified", False),
     }
 
 
@@ -2497,8 +2511,10 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         if trusted_device:
             login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
             _clear_authenticator_verification_attempts(user)
+            token_claims = {"sub": user.username, "two_factor_verified": True}
+            setattr(user, "_token_payload", token_claims)
             token = auth.create_access_token(
-                {"sub": user.username},
+                token_claims,
                 expires_delta=timedelta(days=TRUSTED_DEVICE_DAYS),
             )
             response = {
@@ -2511,6 +2527,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
             if device_token:
                 response["remember_device_token"] = device_token
             response["authenticator_mfa_verified"] = True
+            response["two_factor_verified"] = True
             response["remember_device_verified"] = True
             response["remember_device_expires_at"] = trusted_device.expires_at.isoformat() + "Z"
             _add_audit_log(
@@ -2766,9 +2783,11 @@ def authenticator_authentication_verify(
     )
     db.commit()
 
+    token_claims = {"sub": user.username, "two_factor_verified": True}
+    setattr(user, "_token_payload", token_claims)
     if data.remember_device:
         token = auth.create_access_token(
-            {"sub": user.username},
+            token_claims,
             expires_delta=timedelta(days=TRUSTED_DEVICE_DAYS),
         )
         response = {
@@ -2779,9 +2798,12 @@ def authenticator_authentication_verify(
             "user": _user_payload(db, user),
         }
     else:
-        response = _build_login_success(db, user)
+        response = _build_login_success(db, user, two_factor_verified=True)
     response["authenticator_mfa_verified"] = True
+    response["two_factor_verified"] = True
     response["user"]["authenticator_mfa_enabled"] = True
+    response["user"]["two_factor_verified"] = True
+    response["user"]["authenticator_mfa_verified"] = True
     response["recovery_codes_remaining"] = _count_recovery_codes(db, user)
     if recovery_codes:
         response["recovery_codes"] = recovery_codes

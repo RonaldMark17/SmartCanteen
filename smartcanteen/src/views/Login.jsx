@@ -355,8 +355,24 @@ function getRememberedUsername() {
   }
 }
 
+function isTwoFactorAlreadyVerified() {
+  try {
+    return (
+      sessionStorage.getItem('sc_two_factor_verified') === 'true' ||
+      localStorage.getItem('sc_two_factor_verified') === 'true'
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readStoredAuthenticatorChallenge(now = Date.now()) {
   try {
+    if (isTwoFactorAlreadyVerified()) {
+      clearStoredAuthenticatorChallenge();
+      return null;
+    }
+
     const parsed = JSON.parse(sessionStorage.getItem(MFA_CHALLENGE_STORAGE_KEY) || 'null');
     const savedAt = Number(parsed?.savedAt || 0);
     const challenge = parsed?.challenge;
@@ -381,7 +397,7 @@ function readStoredAuthenticatorChallenge(now = Date.now()) {
 
 function saveStoredAuthenticatorChallenge(challenge) {
   try {
-    if (!challenge?.mfa_required || !challenge?.mfa_token) {
+    if (isTwoFactorAlreadyVerified() || !challenge?.mfa_required || !challenge?.mfa_token) {
       sessionStorage.removeItem(MFA_CHALLENGE_STORAGE_KEY);
       return;
     }
@@ -437,7 +453,13 @@ export default function Login({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [authenticatorErrorTitle, setAuthenticatorErrorTitle] = useState('Verification issue');
-  const [authenticatorChallenge, setAuthenticatorChallenge] = useState(readStoredAuthenticatorChallenge);
+  const [authenticatorChallenge, setAuthenticatorChallenge] = useState(() => {
+    if (isTwoFactorAlreadyVerified()) {
+      clearStoredAuthenticatorChallenge();
+      return null;
+    }
+    return readStoredAuthenticatorChallenge();
+  });
   const [authenticatorCode, setAuthenticatorCode] = useState('');
   const [authenticatorQrCode, setAuthenticatorQrCode] = useState('');
   const [secretCopied, setSecretCopied] = useState(false);
@@ -472,7 +494,7 @@ export default function Login({ onLogin }) {
   const loginIdentifier = normalizeLoginIdentifier(username);
   const lockoutState = getLoginLockoutState(loginIdentifier, lockoutNow);
   const lockoutRemainingLabel = formatLockoutDuration(lockoutState.remainingMs);
-  const isAuthenticatorStep = Boolean(authenticatorChallenge);
+  const isAuthenticatorStep = Boolean(authenticatorChallenge) && !isTwoFactorAlreadyVerified();
   const isAuthenticatorSetup = authenticatorChallenge?.mfa_type === 'authenticator_setup';
   const authenticatorLockRemainingMs = Math.max(0, Number(authenticatorLockedUntil || 0) - lockoutNow);
   const authenticatorLockRemainingLabel = formatLockoutDuration(authenticatorLockRemainingMs);
@@ -578,7 +600,10 @@ export default function Login({ onLogin }) {
     persistAuthenticatedSession(res.access_token, res.user);
     try {
       sessionStorage.setItem('sc_session_active', 'true');
+      sessionStorage.setItem('sc_two_factor_verified', 'true');
+      safeLocalStorageSetItem('sc_two_factor_verified', 'true');
     } catch {}
+    clearStoredAuthenticatorChallenge();
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
     setAuthenticatorErrorTitle('Verification issue');
@@ -589,7 +614,7 @@ export default function Login({ onLogin }) {
     if (res.offline) {
       window.showToast?.('Signed in with offline access saved on this device.', 'warning');
     }
-    onLogin();
+    onLogin?.(res.user, res.access_token);
   };
 
   const handleSubmit = async (e) => {
@@ -739,6 +764,7 @@ export default function Login({ onLogin }) {
     setUsername(event.target.value);
     setError('');
     setAuthenticatorErrorTitle('Verification issue');
+    clearStoredAuthenticatorChallenge();
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
     setAuthenticatorLockedUntil(0);
@@ -749,6 +775,7 @@ export default function Login({ onLogin }) {
   };
 
   const resetAuthenticatorStep = () => {
+    clearStoredAuthenticatorChallenge();
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
     setAuthenticatorQrCode('');

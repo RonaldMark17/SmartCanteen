@@ -140,14 +140,14 @@ function AuthenticatedWorkspace() {
 }
 
 function AppContent() {
-  const { isAuthenticated, role, loading, refreshUser, login } = useAuth();
+  const { isAuthenticated, role, loading, refreshUser, login, isTwoFactorVerified } = useAuth();
   const [splashFinished, setSplashFinished] = useState(false);
 
   if (loading || !splashFinished) {
     return <AppSplashScreen onFinished={() => setSplashFinished(true)} />;
   }
 
-  if (!isAuthenticated || !isValidRole(role)) {
+  if (!isAuthenticated || !isValidRole(role) || !isTwoFactorVerified) {
     return (
       <>
         <Toaster />

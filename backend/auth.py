@@ -124,6 +124,7 @@ def get_current_user(
 
     if not user or not user.is_active:
         raise exc
+    setattr(user, "_token_payload", payload)
     return user
 
 

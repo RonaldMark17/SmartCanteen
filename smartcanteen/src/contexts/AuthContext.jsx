@@ -12,7 +12,7 @@ export function isTokenExpired(token) {
   }
   try {
     const parts = token.split('.');
-    if (parts.length !== 3) return false;
+    if (parts.length !== 3) return true;
     const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
     const jsonPayload = decodeURIComponent(
       atob(base64)
@@ -21,9 +21,60 @@ export function isTokenExpired(token) {
         .join('')
     );
     const payload = JSON.parse(jsonPayload);
-    if (!payload.exp) return false;
+    if (!payload || typeof payload !== 'object') return true;
+    if (!payload.exp || typeof payload.exp !== 'number') return true;
     const nowSeconds = Math.floor(Date.now() / 1000);
     return payload.exp <= nowSeconds;
+  } catch {
+    return true;
+  }
+}
+
+export function isPageRefresh() {
+  try {
+    const navEntries = typeof window !== 'undefined' && window.performance?.getEntriesByType?.('navigation');
+    if (navEntries && navEntries.length > 0) {
+      return navEntries[0].type === 'reload';
+    }
+    return typeof window !== 'undefined' && window.performance?.navigation?.type === 1;
+  } catch {
+    return false;
+  }
+}
+
+export function shouldRetainSessionOnStartup() {
+  try {
+    const token = localStorage.getItem('sc_token');
+    if (!token) return false;
+    if (isTokenExpired(token)) {
+      localStorage.removeItem('sc_token');
+      localStorage.removeItem('sc_user');
+      localStorage.removeItem('sc_remember_me');
+      try {
+        sessionStorage.removeItem('sc_session_active');
+      } catch {}
+      return false;
+    }
+
+    const isRememberMe = localStorage.getItem('sc_remember_me') === 'true';
+    if (isRememberMe) {
+      return true;
+    }
+
+    const isSessionActive = sessionStorage.getItem('sc_session_active') === 'true';
+    const isReload = isPageRefresh();
+
+    if (isSessionActive || isReload) {
+      try {
+        sessionStorage.setItem('sc_session_active', 'true');
+      } catch {}
+      return true;
+    }
+
+    // Closed and reopened without Remember Me
+    localStorage.removeItem('sc_token');
+    localStorage.removeItem('sc_user');
+    return false;
   } catch {
     return false;
   }
@@ -33,6 +84,7 @@ const AuthContext = createContext({
   user: null,
   role: null,
   isAuthenticated: false,
+  isTwoFactorVerified: false,
   loading: true,
   login: () => {},
   refreshUser: async () => {},
@@ -43,8 +95,7 @@ const AuthContext = createContext({
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
-      const token = localStorage.getItem('sc_token');
-      if (!token || isTokenExpired(token)) {
+      if (!shouldRetainSessionOnStartup()) {
         return null;
       }
       const cached = localStorage.getItem('sc_user');
@@ -56,8 +107,7 @@ export function AuthProvider({ children }) {
 
   const [loading, setLoading] = useState(() => {
     try {
-      const token = localStorage.getItem('sc_token');
-      return Boolean(token && !isTokenExpired(token));
+      return shouldRetainSessionOnStartup();
     } catch {
       return false;
     }
@@ -66,13 +116,20 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     localStorage.removeItem('sc_token');
     localStorage.removeItem('sc_user');
+    localStorage.removeItem('sc_remember_me');
+    localStorage.removeItem('sc_two_factor_verified');
     localStorage.removeItem('sc_background_alert_token');
     localStorage.removeItem('sc_offline_session');
     try {
       sessionStorage.removeItem('sc_session_active');
+      sessionStorage.removeItem('sc_two_factor_verified');
+      sessionStorage.removeItem('sc_pending_authenticator_challenge');
     } catch {}
     setUser(null);
     setLoading(false);
+    try {
+      API.logout().catch(() => {});
+    } catch {}
   }, []);
 
   const login = useCallback((nextUser, token) => {
@@ -89,6 +146,9 @@ export function AuthProvider({ children }) {
     }
     try {
       sessionStorage.setItem('sc_session_active', 'true');
+      sessionStorage.setItem('sc_two_factor_verified', 'true');
+      localStorage.setItem('sc_two_factor_verified', 'true');
+      sessionStorage.removeItem('sc_pending_authenticator_challenge');
     } catch {}
     setLoading(false);
   }, []);
@@ -126,6 +186,15 @@ export function AuthProvider({ children }) {
         setUser(dbUser);
         try {
           localStorage.setItem('sc_user', JSON.stringify(dbUser));
+          if (
+            dbUser.two_factor_verified ||
+            dbUser.authenticator_mfa_verified ||
+            !dbUser.authenticator_mfa_enabled
+          ) {
+            sessionStorage.setItem('sc_two_factor_verified', 'true');
+            localStorage.setItem('sc_two_factor_verified', 'true');
+            sessionStorage.removeItem('sc_pending_authenticator_challenge');
+          }
         } catch {}
         return dbUser;
       } else if (dbUser === null) {
@@ -159,21 +228,15 @@ export function AuthProvider({ children }) {
 
   // Initial session verification on startup and page refresh
   useEffect(() => {
-    const token = localStorage.getItem('sc_token');
-    if (!token) {
+    if (!shouldRetainSessionOnStartup()) {
       setUser(null);
       setLoading(false);
       return;
     }
 
-    if (isTokenExpired(token)) {
-      logout();
-      return;
-    }
-
-    // Token exists and is not expired; verify with server to restore fresh role & permissions
+    // Token exists and session is valid; verify with server to restore fresh role & permissions
     refreshUser();
-  }, [refreshUser, logout]);
+  }, [refreshUser]);
 
   // Real-time synchronization: custom events, storage events, window focus, and token expiry monitoring
   useEffect(() => {
@@ -250,10 +313,20 @@ export function AuthProvider({ children }) {
     };
   }, [logout, refreshUser]);
 
+  const isTwoFactorVerified = Boolean(
+    user &&
+      (!user.authenticator_mfa_enabled ||
+        user.two_factor_verified ||
+        user.authenticator_mfa_verified ||
+        sessionStorage.getItem('sc_two_factor_verified') === 'true' ||
+        localStorage.getItem('sc_two_factor_verified') === 'true')
+  );
+
   const value = {
     user,
     role: user?.role || null,
     isAuthenticated: Boolean(user && user.role),
+    isTwoFactorVerified,
     loading,
     login,
     refreshUser,
