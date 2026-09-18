@@ -13,8 +13,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:start": "electron electron/main.cjs",
-    "electron:build": "npm run build && electron-builder --win",
-    "build:electron": "npm run build && electron-builder --win",
+    "electron:build": "vite build --base=./ && electron-builder --win",
+    "build:electron": "vite build --base=./ && electron-builder --win",
     "update:meals": "powershell -ExecutionPolicy Bypass -File ../scripts/update_meals.ps1"
   },
   "build": {

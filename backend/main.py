@@ -1207,14 +1207,29 @@ def _resolve_frontend_file(path: str):
     if not frontend_dir:
         return None
 
-    relative_path = os.path.normpath(path).lstrip("\\/")
+    clean_path = path.replace("\\", "/").strip("/")
+    relative_path = os.path.normpath(clean_path).lstrip("\\/")
     absolute_root = os.path.abspath(frontend_dir)
     absolute_path = os.path.abspath(os.path.join(absolute_root, relative_path))
 
-    if os.path.commonpath([absolute_root, absolute_path]) != absolute_root:
-        return None
+    if os.path.commonpath([absolute_root, absolute_path]) == absolute_root and os.path.isfile(absolute_path):
+        return absolute_path
 
-    return absolute_path if os.path.isfile(absolute_path) else None
+    # Fallback 1: Assets requested from nested routes (e.g. /admin/assets/index.js -> /assets/index.js)
+    if "assets/" in clean_path:
+        asset_subpath = clean_path.split("assets/", 1)[1]
+        asset_file = os.path.abspath(os.path.join(absolute_root, "assets", asset_subpath))
+        if os.path.commonpath([absolute_root, asset_file]) == absolute_root and os.path.isfile(asset_file):
+            return asset_file
+
+    # Fallback 2: Root-level public assets requested from nested routes (e.g. /admin/manifest.json -> /manifest.json)
+    filename = os.path.basename(clean_path)
+    if filename in {"manifest.json", "sw.js", "logo.png", "pwa-icon-192.png", "pwa-icon-512.png", "favicon.ico", "favicon.svg", "robots.txt"}:
+        root_file = os.path.abspath(os.path.join(absolute_root, filename))
+        if os.path.commonpath([absolute_root, root_file]) == absolute_root and os.path.isfile(root_file):
+            return root_file
+
+    return None
 
 
 def _frontend_index_response():
@@ -1228,6 +1243,10 @@ FRONTEND_DIR = _get_frontend_dir()
 
 if FRONTEND_DIR:
     app.mount("/app", FrontendStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    _assets_dir = os.path.join(FRONTEND_DIR, "assets")
+    if os.path.isdir(_assets_dir):
+        app.mount("/assets", FrontendStaticFiles(directory=_assets_dir), name="frontend_assets")
+
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -1240,6 +1259,22 @@ def favicon():
     if favicon_file:
         return _frontend_file_response(favicon_file)
     return Response(status_code=204)
+
+
+@app.get("/manifest.json", include_in_schema=False)
+def manifest():
+    manifest_file = _resolve_frontend_file("manifest.json")
+    if manifest_file:
+        return _frontend_file_response(manifest_file)
+    return Response(status_code=404)
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    sw_file = _resolve_frontend_file("sw.js")
+    if sw_file:
+        return _frontend_file_response(sw_file)
+    return Response(status_code=404)
 
 
 @app.websocket("/api/realtime/alerts")
@@ -1729,9 +1764,8 @@ def _get_valid_login_session(db: Session, refresh_token: str, device_id: str):
 
     session_dev = (session.device_id or "").strip()
     incoming_dev = (device_id or "").strip()
-    if session_dev and session_dev != "unknown_device" and incoming_dev and incoming_dev != "unknown_device":
-        if session_dev != incoming_dev[:255]:
-            return None
+    if incoming_dev and incoming_dev != "unknown_device" and session_dev != incoming_dev[:255]:
+        session.device_id = incoming_dev[:255]
 
     if not session.user or not session.user.is_active:
         return None

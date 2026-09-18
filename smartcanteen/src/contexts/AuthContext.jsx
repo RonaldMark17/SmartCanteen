@@ -117,7 +117,7 @@ export function shouldRetainSessionOnStartup() {
     }
 
     // A remembered session can silently rotate an expired access token.
-    if (refreshToken) {
+    if (refreshToken && isRememberedSession()) {
       return true;
     }
 
@@ -160,12 +160,19 @@ export function AuthProvider({ children }) {
   });
 
   const logout = useCallback((reason = 'manual') => {
-    console.warn('[MEALS AUTH] logout() called. Reason:', reason);
-    console.trace('[MEALS AUTH] logout stack trace:');
-    try {
-      // Start server-side revocation while the refresh token is still available.
-      API.logout().catch(() => {});
-    } catch {}
+    console.log('[MEALS AUTH] logout() called. Reason:', reason);
+    const isSilentSessionExpiry =
+      reason === 'http_unauthorized' ||
+      reason === 'session_expired' ||
+      reason === 'token_invalid_after_refresh' ||
+      reason === 'token_expired_no_refresh';
+
+    if (!isSilentSessionExpiry) {
+      try {
+        // Start server-side revocation while the refresh token is still available.
+        API.logout().catch(() => {});
+      } catch {}
+    }
     try {
       localStorage.removeItem('sc_token');
       localStorage.removeItem('sc_user');
@@ -177,6 +184,8 @@ export function AuthProvider({ children }) {
       localStorage.removeItem('sc_session_active');
       sessionStorage.removeItem('sc_token');
       sessionStorage.removeItem('sc_user');
+      sessionStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+      sessionStorage.removeItem(REMEMBER_ME_STORAGE_KEY);
       sessionStorage.removeItem('sc_session_active');
       sessionStorage.removeItem('sc_two_factor_verified');
       sessionStorage.removeItem('sc_pending_authenticator_challenge');
@@ -268,9 +277,15 @@ export function AuthProvider({ children }) {
         }
 
         console.log('[MEALS AUTH] Rotating expired session with refresh token...');
-        const refreshed = await API.refreshSession();
-        token = refreshed?.access_token || getStoredToken();
-        dbUser = refreshed?.user || null;
+        try {
+          const refreshed = await API.refreshSession();
+          token = refreshed?.access_token || getStoredToken();
+          dbUser = refreshed?.user || null;
+        } catch (refreshErr) {
+          console.warn('[MEALS AUTH] Session refresh failed -> clearing session:', refreshErr?.message || refreshErr);
+          logout('session_expired');
+          return null;
+        }
       }
 
       if (!token || isTokenExpired(token)) {
@@ -326,9 +341,10 @@ export function AuthProvider({ children }) {
     } catch (err) {
       console.warn('[MEALS AUTH] refreshUser caught error:', err);
       if (err?.status === 401 || err?.status === 403) {
-        if (getStoredRefreshToken()) {
+        // If an authenticated request to /auth/me failed with 401/403, try silent refresh
+        if (token && getStoredRefreshToken()) {
           try {
-            console.log('[MEALS AUTH] 401/403 error, trying API.refreshSession()...');
+            console.log('[MEALS AUTH] 401/403 on getCurrentUser, trying API.refreshSession()...');
             const refreshed = await API.refreshSession();
             if (refreshed?.access_token && refreshed?.user) {
               setUser(refreshed.user);

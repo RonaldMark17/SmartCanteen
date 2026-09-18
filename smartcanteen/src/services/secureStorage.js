@@ -10,6 +10,7 @@
 
 const SENSITIVE_KEY_SET = new Set([
   'sc_token',
+  'sc_refresh_token',
   'sc_background_alert_token',
   'sc_trusted_authenticator_devices',
   'sc_trusted_authenticator_device',
@@ -18,12 +19,15 @@ const SENSITIVE_KEY_SET = new Set([
   'sc_user',
   'sc_remembered_username',
   'sc_remember_me',
+  'sc_two_factor_verified',
+  'sc_session_active',
   'sc_device_id',
   'sc_login_lockouts',
   'sc_offline_transactions_v1',
   'sc_offline_financial_mutations_v1',
   'sc_api_cache_v1',
   'sc_mfa_challenge',
+  'sc_pending_authenticator_challenge',
 ]);
 
 const MASTER_SALT = 'MEALS_SECURE_VAULT_SPCC_4WMAD1_2026';
@@ -166,7 +170,7 @@ SENSITIVE_KEY_SET.forEach((k) => registerKeyMapping(k));
 /**
  * Migrates any plaintext sensitive entries in a Storage instance to encrypted hashed entries.
  */
-function migrateExistingKeys(storage) {
+function migrateExistingKeys(storage, nativeGetItem, nativeSetItem, nativeRemoveItem) {
   if (!storage || typeof storage.length !== 'number') return;
   try {
     const keysToCheck = [];
@@ -179,13 +183,13 @@ function migrateExistingKeys(storage) {
 
     keysToCheck.forEach((rawKey) => {
       try {
-        const rawVal = storage.getItem(rawKey);
+        const rawVal = nativeGetItem.call(storage, rawKey);
         if (rawVal !== null && !rawVal.startsWith(CIPHER_PREFIX)) {
           const hashed = registerKeyMapping(rawKey);
           const encVal = encryptValue(rawKey, rawVal);
-          // Set hashed encrypted item, remove plaintext item
-          Storage.prototype.setItem.call(storage, hashed, encVal);
-          Storage.prototype.removeItem.call(storage, rawKey);
+          // Set hashed encrypted item, and remove only the raw plaintext item
+          nativeSetItem.call(storage, hashed, encVal);
+          nativeRemoveItem.call(storage, rawKey);
         }
       } catch (err) {
         console.warn('[SecureStorage] Key migration warning for', rawKey, err);
@@ -308,8 +312,8 @@ export function initSecureStorage() {
 
   // Migrate existing data in localStorage and sessionStorage immediately
   try {
-    if (window.localStorage) migrateExistingKeys(window.localStorage);
-    if (window.sessionStorage) migrateExistingKeys(window.sessionStorage);
+    if (window.localStorage) migrateExistingKeys(window.localStorage, nativeGetItem, nativeSetItem, nativeRemoveItem);
+    if (window.sessionStorage) migrateExistingKeys(window.sessionStorage, nativeGetItem, nativeSetItem, nativeRemoveItem);
   } catch {
     // Ignore migration failures during cold boot
   }

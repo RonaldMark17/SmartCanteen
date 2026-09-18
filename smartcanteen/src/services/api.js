@@ -482,6 +482,8 @@ function clearSession() {
   try {
     sessionStorage.removeItem('sc_token');
     sessionStorage.removeItem('sc_user');
+    sessionStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(REMEMBER_ME_STORAGE_KEY);
     sessionStorage.removeItem('sc_session_active');
     sessionStorage.removeItem('sc_two_factor_verified');
     sessionStorage.removeItem('sc_pending_authenticator_challenge');

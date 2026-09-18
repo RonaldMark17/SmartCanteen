@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
     `http://${apiHost}${apiPort ? `:${apiPort}` : ''}`;
 
   return {
-    base: './',
+    base: env.VITE_BASE || process.env.VITE_BASE || '/',
     define: {
       __APP_VERSION__: JSON.stringify(packageJson.version || '1.2.0'),
     },
