@@ -55,7 +55,11 @@ export default function TitleBar() {
   const isAuth = Boolean(user && user.role);
 
   const allNavOptions = [
-    { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
+    {
+      name: 'Dashboard',
+      path: userRole === 'admin' ? '/admin/dashboard' : '/dashboard',
+      icon: ChartBarIcon,
+    },
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },

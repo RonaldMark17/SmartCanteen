@@ -538,7 +538,11 @@ export default function Layout({ children, onLogout }) {
   const demandForecastModuleEnabled = isModuleEnabled(modules, MODULE_KEYS.DEMAND_FORECAST);
 
   const baseNavItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: ChartBarIcon },
+    {
+      name: 'Dashboard',
+      path: user?.role === 'admin' ? '/admin/dashboard' : '/dashboard',
+      icon: ChartBarIcon,
+    },
     { name: 'POS / Cashier', path: '/pos', icon: BuildingStorefrontIcon },
     { name: 'Inventory', path: '/inventory', icon: CubeIcon },
     { name: 'Transactions', path: '/transactions', icon: ClockIcon },
@@ -567,6 +571,9 @@ export default function Layout({ children, onLogout }) {
         location.pathname === '/financial-reports' ||
         location.pathname === '/expenses'
       );
+    }
+    if (path === '/dashboard' || path === '/admin/dashboard') {
+      return location.pathname === '/dashboard' || location.pathname === '/admin/dashboard';
     }
     return location.pathname === path;
   };

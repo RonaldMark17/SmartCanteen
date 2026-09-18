@@ -17,6 +17,7 @@ class AuthenticatorAuthenticationFinishRequest(BaseModel):
     mfa_token: Optional[str] = None
     code: str
     remember_device: bool = False
+    remember_me: bool = False          # Honour long-session preference through the 2FA step
 
 
 class AuthenticatorResetRequest(BaseModel):

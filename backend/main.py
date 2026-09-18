@@ -1809,6 +1809,8 @@ def _user_payload(db: Session, user: models.User) -> dict:
         "full_name": user.full_name,
         "role": user.role,
         "authenticator_mfa_enabled": is_mfa_enabled,
+        "2fa_enabled": is_mfa_enabled,
+        "two_factor_enabled": is_mfa_enabled,
         "two_factor_verified": two_factor_verified,
         "authenticator_mfa_verified": two_factor_verified,
         "recovery_codes_remaining": _count_recovery_codes(db, user),
@@ -1844,7 +1846,10 @@ def _build_authenticator_user_hint(user: models.User, enabled: bool) -> dict:
     return {
         "username": user.username,
         "full_name": user.full_name,
+        "role": user.role,
         "authenticator_mfa_enabled": enabled,
+        "2fa_enabled": enabled,
+        "two_factor_enabled": enabled,
     }
 
 
@@ -2505,6 +2510,24 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
                 },
             )
 
+    is_admin = (user.role or "").strip().lower() in {"admin", "administrator"}
+
+    if is_admin and (not user.authenticator_enabled or not user.authenticator_secret):
+        # Admin must have 2FA enabled! Prompt directly to 2FA Setup
+        response = _begin_authenticator_setup(user)
+        response["setup_required"] = True
+        response["2fa_enabled"] = False
+        response["redirect_url"] = "/admin/setup-2fa"
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGIN_2FA_SETUP_REQUIRED",
+            details="Password accepted; mandatory 2FA setup required for administrator",
+            request=req,
+        )
+        db.commit()
+        return response
+
     if user.authenticator_enabled and user.authenticator_secret:
         device_token = payload.remember_device_token
         trusted_device = _get_valid_trusted_device(db, user, device_token)
@@ -2523,6 +2546,8 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
                 "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
                 "token_type": "bearer",
                 "user": _user_payload(db, user),
+                "redirect_url": "/admin/dashboard" if is_admin else None,
+                "2fa_enabled": True,
             }
             if device_token:
                 response["remember_device_token"] = device_token
@@ -2541,6 +2566,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
             return response
 
         response = _begin_authenticator_authentication(user)
+        response["2fa_enabled"] = True
         audit_action = "LOGIN_AUTHENTICATOR_REQUIRED"
         audit_details = "Password accepted; authenticator app MFA required"
     else:
@@ -2549,6 +2575,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
         expires_delta = timedelta(days=TRUSTED_DEVICE_DAYS) if payload.remember_me else None
         response = _build_login_success(db, user, expires_delta=expires_delta)
         response["authenticator_mfa_enabled"] = False
+        response["2fa_enabled"] = False
         _add_audit_log(
             db,
             user_id=user.id,
@@ -2798,12 +2825,21 @@ def authenticator_authentication_verify(
             "user": _user_payload(db, user),
         }
     else:
-        response = _build_login_success(db, user, two_factor_verified=True)
+        # Honour the "Remember Me" preference forwarded from the login step:
+        # issue a 30-day token so the session survives browser restarts.
+        remember_me_delta = timedelta(days=TRUSTED_DEVICE_DAYS) if data.remember_me else None
+        response = _build_login_success(db, user, two_factor_verified=True, expires_delta=remember_me_delta)
+
     response["authenticator_mfa_verified"] = True
     response["two_factor_verified"] = True
+    response["2fa_enabled"] = True
     response["user"]["authenticator_mfa_enabled"] = True
     response["user"]["two_factor_verified"] = True
     response["user"]["authenticator_mfa_verified"] = True
+    response["user"]["2fa_enabled"] = True
+    response["user"]["two_factor_enabled"] = True
+    if (user.role or "").strip().lower() in {"admin", "administrator"}:
+        response["redirect_url"] = "/admin/dashboard"
     response["recovery_codes_remaining"] = _count_recovery_codes(db, user)
     if recovery_codes:
         response["recovery_codes"] = recovery_codes

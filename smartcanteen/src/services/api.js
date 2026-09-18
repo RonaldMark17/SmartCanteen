@@ -476,9 +476,12 @@ function clearSession() {
   localStorage.removeItem('sc_user');
   localStorage.removeItem('sc_remember_me');
   localStorage.removeItem('sc_two_factor_verified');
+  localStorage.removeItem('sc_session_active');
   localStorage.removeItem(BACKGROUND_ALERT_STORAGE_KEY);
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
   try {
+    sessionStorage.removeItem('sc_token');
+    sessionStorage.removeItem('sc_user');
     sessionStorage.removeItem('sc_session_active');
     sessionStorage.removeItem('sc_two_factor_verified');
     sessionStorage.removeItem('sc_pending_authenticator_challenge');
@@ -649,11 +652,19 @@ function getClientRequestHeaders() {
   };
 }
 
+function getStoredToken() {
+  try {
+    return localStorage.getItem('sc_token') || sessionStorage.getItem('sc_token') || '';
+  } catch {
+    return '';
+  }
+}
+
 function getAuthorizedRequestHeaders() {
   const headers = {
     ...getClientRequestHeaders(),
   };
-  const token = localStorage.getItem('sc_token');
+  const token = getStoredToken();
 
   if (token && !isOfflineSessionToken(token)) {
     headers.Authorization = `Bearer ${token}`;
@@ -742,7 +753,7 @@ async function getCachedResponse(method, path) {
 
 async function performRequest(method, path, body = null, options = {}) {
   const cacheable = isCacheableRequest(method, path);
-  const token = localStorage.getItem('sc_token');
+  const token = getStoredToken();
   const offlineSession = isOfflineSessionActive() || isOfflineSessionToken(token);
 
   if (offlineSession && !String(path || '').startsWith('/auth/')) {
@@ -919,7 +930,7 @@ async function performRequest(method, path, body = null, options = {}) {
 }
 
 function buildPendingGetKey(method, path) {
-  const token = localStorage.getItem('sc_token') || '';
+  const token = getStoredToken() || '';
   return `${String(method || '').toUpperCase()} ${path} ${token}`;
 }
 
@@ -948,7 +959,7 @@ function request(method, path, body = null, options = {}) {
 }
 
 async function requestFile(path) {
-  const token = localStorage.getItem('sc_token');
+  const token = getStoredToken();
   const offlineSession = isOfflineSessionActive() || isOfflineSessionToken(token);
 
   if (offlineSession) {
@@ -1207,7 +1218,23 @@ async function syncPendingOfflineChanges() {
 async function completeAuthenticatedLoginResponse(response, password, { rememberDevice = false, username = '' } = {}) {
   assertMfaWasCompleted(response);
 
+  if (response?.access_token) {
+    safeLocalStorageSetItem('sc_token', response.access_token);
+    try {
+      sessionStorage.setItem('sc_token', response.access_token);
+    } catch {}
+  }
+
+  if (response?.user) {
+    try {
+      safeLocalStorageSetJson('sc_user', response.user);
+      sessionStorage.setItem('sc_user', JSON.stringify(response.user));
+    } catch {}
+  }
+
   try {
+    sessionStorage.setItem('sc_session_active', 'true');
+    localStorage.setItem('sc_session_active', 'true');
     sessionStorage.setItem('sc_two_factor_verified', 'true');
     safeLocalStorageSetItem('sc_two_factor_verified', 'true');
     sessionStorage.removeItem('sc_pending_authenticator_challenge');
@@ -1275,7 +1302,7 @@ async function verifyAuthenticatorLogin(
   mfaToken,
   code,
   password,
-  { rememberDevice = false, username = '' } = {}
+  { rememberDevice = false, rememberMe = false, username = '' } = {}
 ) {
   const normalizedMfaToken = String(mfaToken || '').trim();
   if (!normalizedMfaToken) {
@@ -1287,6 +1314,7 @@ async function verifyAuthenticatorLogin(
     mfa_token: normalizedMfaToken,
     code,
     remember_device: rememberDevice,
+    remember_me: rememberMe,          // Forward "Remember Me" preference so the backend issues a long-lived token
   }, {
     headers: {
       Authorization: `Bearer ${normalizedMfaToken}`,

@@ -428,6 +428,9 @@ function persistAuthenticatedSession(accessToken, user) {
 
   if (accessToken) {
     safeLocalStorageSetItem('sc_token', accessToken, { quotaMessage });
+    try {
+      sessionStorage.setItem('sc_token', accessToken);
+    } catch {}
   }
 
   if (user) {
@@ -436,14 +439,18 @@ function persistAuthenticatedSession(accessToken, user) {
         protectedKeys: ['sc_token'],
         quotaMessage,
       });
+      sessionStorage.setItem('sc_user', JSON.stringify(user));
     } catch (error) {
       localStorage.removeItem('sc_token');
+      try {
+        sessionStorage.removeItem('sc_token');
+      } catch {}
       throw error;
     }
   }
 }
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onRequire2FASetup }) {
   const [username, setUsername] = useState(getRememberedUsername);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -600,6 +607,7 @@ export default function Login({ onLogin }) {
     persistAuthenticatedSession(res.access_token, res.user);
     try {
       sessionStorage.setItem('sc_session_active', 'true');
+      localStorage.setItem('sc_session_active', 'true');
       sessionStorage.setItem('sc_two_factor_verified', 'true');
       safeLocalStorageSetItem('sc_two_factor_verified', 'true');
     } catch {}
@@ -646,6 +654,7 @@ export default function Login({ onLogin }) {
             submittedPassword,
             {
               rememberDevice: rememberUsername,
+              rememberMe: rememberUsername,   // Forward "Remember Me" so the backend issues a long-lived token
               username: submittedUsername.trim(),
             }
           )
@@ -655,6 +664,20 @@ export default function Login({ onLogin }) {
           });
 
       if (res?.mfa_required && !res?.access_token) {
+        if (
+          res?.mfa_type === 'authenticator_setup' ||
+          res?.setup_required ||
+          res?.redirect_url === '/admin/setup-2fa'
+        ) {
+          try {
+            sessionStorage.setItem(MFA_CHALLENGE_STORAGE_KEY, JSON.stringify(res));
+          } catch {}
+          if (typeof onRequire2FASetup === 'function') {
+            onRequire2FASetup(res);
+            setLoading(false);
+            return;
+          }
+        }
         setAuthenticatorChallenge(res);
         setAuthenticatorCode('');
         setAuthenticatorErrorTitle('Verification issue');

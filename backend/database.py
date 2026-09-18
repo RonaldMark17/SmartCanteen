@@ -11,7 +11,12 @@ def _resolve_database_url():
             return database_url.replace("postgres://", "postgresql://", 1)
         return database_url
 
-    sqlite_path = "./canteen.db"
+    from pathlib import Path
+    project_db = Path(__file__).resolve().parent.parent / "canteen.db"
+    if project_db.exists():
+        sqlite_path = project_db.as_posix()
+    else:
+        sqlite_path = "./canteen.db"
     return f"sqlite:///{sqlite_path}"
 
 

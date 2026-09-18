@@ -21,6 +21,7 @@ import AuditLog from './views/AuditLog';
 import TransactionHistory from './views/TransactionHistory';
 import ManageAccounts from './views/ManageAccounts';
 import Settings from './views/Settings';
+import AdminSetup2FA from './views/AdminSetup2FA';
 import { ModuleSettingsProvider } from './contexts/ModuleSettingsContext';
 import { useModuleSettings } from './contexts/useModuleSettings';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -90,11 +91,20 @@ function RoleRoute({ route, role, fallbackPath, element }) {
 }
 
 function AuthenticatedWorkspace() {
-  const { role, logout } = useAuth();
+  const { user, role, logout, login, refreshUser } = useAuth();
   const { modules } = useModuleSettings();
   const defaultRoute = getDefaultRoute(role, modules);
   const routeElements = {
-    dashboard: <Dashboard />,
+    adminDashboard: <Dashboard />,
+    adminSetup2FA: (
+      <AdminSetup2FA
+        onComplete={(updatedUser, token) => {
+          if (updatedUser) login(updatedUser, token);
+          refreshUser();
+        }}
+      />
+    ),
+    dashboard: role === 'admin' ? <Navigate to="/admin/dashboard" replace /> : <Dashboard />,
     pos: <POS />,
     inventory: <Inventory />,
     analytics: <Analytics />,
@@ -115,6 +125,7 @@ function AuthenticatedWorkspace() {
     <Layout onLogout={logout}>
       <Routes>
         <Route path="/" element={<Navigate to={defaultRoute} replace />} />
+        <Route path="/login" element={<Navigate to={defaultRoute} replace />} />
 
         {APP_ROUTE_ACCESS.map((route) => (
           <Route
@@ -140,11 +151,51 @@ function AuthenticatedWorkspace() {
 }
 
 function AppContent() {
-  const { isAuthenticated, role, loading, refreshUser, login, isTwoFactorVerified } = useAuth();
+  const { user, isAuthenticated, role, loading, refreshUser, login, isTwoFactorVerified } = useAuth();
   const [splashFinished, setSplashFinished] = useState(false);
+  const [pending2FASetup, setPending2FASetup] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem('sc_pending_authenticator_challenge');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
 
   if (loading || !splashFinished) {
     return <AppSplashScreen onFinished={() => setSplashFinished(true)} />;
+  }
+
+  const isAdmin = Boolean(
+    role && ['admin', 'administrator'].includes(String(role).toLowerCase())
+  );
+  const isAdmin2FAMissing =
+    isAdmin &&
+    Boolean(user) &&
+    !user['2fa_enabled'] &&
+    !user.two_factor_enabled &&
+    !user.authenticator_mfa_enabled;
+
+  // Intercept navigation flow if 2FA setup is required/pending for an admin account
+  if (pending2FASetup || isAdmin2FAMissing) {
+    return (
+      <>
+        <Toaster />
+        <AdminSetup2FA
+          initialChallenge={pending2FASetup}
+          onComplete={(nextUser, token) => {
+            setPending2FASetup(null);
+            try {
+              sessionStorage.removeItem('sc_pending_authenticator_challenge');
+            } catch {}
+            if (nextUser) {
+              login(nextUser, token);
+            }
+            refreshUser();
+          }}
+        />
+      </>
+    );
   }
 
   if (!isAuthenticated || !isValidRole(role) || !isTwoFactorVerified) {
@@ -152,11 +203,14 @@ function AppContent() {
       <>
         <Toaster />
         <Login
-          onLogin={(user, token) => {
-            if (user) {
-              login(user, token);
+          onLogin={(loggedUser, token) => {
+            if (loggedUser) {
+              login(loggedUser, token);
             }
             refreshUser();
+          }}
+          onRequire2FASetup={(challenge) => {
+            setPending2FASetup(challenge);
           }}
         />
       </>

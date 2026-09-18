@@ -5,6 +5,27 @@ function isOfflineSessionToken(token) {
   return String(token || '').startsWith('offline-session:');
 }
 
+export function getStoredToken() {
+  try {
+    return (
+      localStorage.getItem('sc_token') ||
+      sessionStorage.getItem('sc_token') ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function getStoredUser() {
+  try {
+    const raw = localStorage.getItem('sc_user') || sessionStorage.getItem('sc_user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isTokenExpired(token) {
   if (!token || typeof token !== 'string') return true;
   if (isOfflineSessionToken(token)) {
@@ -13,7 +34,10 @@ export function isTokenExpired(token) {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return true;
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+      base64 += '=';
+    }
     const jsonPayload = decodeURIComponent(
       atob(base64)
         .split('')
@@ -30,51 +54,27 @@ export function isTokenExpired(token) {
   }
 }
 
-export function isPageRefresh() {
-  try {
-    const navEntries = typeof window !== 'undefined' && window.performance?.getEntriesByType?.('navigation');
-    if (navEntries && navEntries.length > 0) {
-      return navEntries[0].type === 'reload';
-    }
-    return typeof window !== 'undefined' && window.performance?.navigation?.type === 1;
-  } catch {
-    return false;
-  }
-}
-
 export function shouldRetainSessionOnStartup() {
   try {
-    const token = localStorage.getItem('sc_token');
+    const token = getStoredToken();
     if (!token) return false;
     if (isTokenExpired(token)) {
-      localStorage.removeItem('sc_token');
-      localStorage.removeItem('sc_user');
-      localStorage.removeItem('sc_remember_me');
+      // Clear ALL auth state so a cold boot after token expiry
+      // never restores a stale "verified" flag.
       try {
+        localStorage.removeItem('sc_token');
+        localStorage.removeItem('sc_user');
+        localStorage.removeItem('sc_remember_me');
+        localStorage.removeItem('sc_two_factor_verified');
+        localStorage.removeItem('sc_session_active');
+        sessionStorage.removeItem('sc_token');
+        sessionStorage.removeItem('sc_user');
         sessionStorage.removeItem('sc_session_active');
+        sessionStorage.removeItem('sc_two_factor_verified');
       } catch {}
       return false;
     }
-
-    const isRememberMe = localStorage.getItem('sc_remember_me') === 'true';
-    if (isRememberMe) {
-      return true;
-    }
-
-    const isSessionActive = sessionStorage.getItem('sc_session_active') === 'true';
-    const isReload = isPageRefresh();
-
-    if (isSessionActive || isReload) {
-      try {
-        sessionStorage.setItem('sc_session_active', 'true');
-      } catch {}
-      return true;
-    }
-
-    // Closed and reopened without Remember Me
-    localStorage.removeItem('sc_token');
-    localStorage.removeItem('sc_user');
-    return false;
+    return true;
   } catch {
     return false;
   }
@@ -98,8 +98,7 @@ export function AuthProvider({ children }) {
       if (!shouldRetainSessionOnStartup()) {
         return null;
       }
-      const cached = localStorage.getItem('sc_user');
-      return cached ? JSON.parse(cached) : null;
+      return getStoredUser();
     } catch {
       return null;
     }
@@ -114,13 +113,16 @@ export function AuthProvider({ children }) {
   });
 
   const logout = useCallback(() => {
-    localStorage.removeItem('sc_token');
-    localStorage.removeItem('sc_user');
-    localStorage.removeItem('sc_remember_me');
-    localStorage.removeItem('sc_two_factor_verified');
-    localStorage.removeItem('sc_background_alert_token');
-    localStorage.removeItem('sc_offline_session');
     try {
+      localStorage.removeItem('sc_token');
+      localStorage.removeItem('sc_user');
+      localStorage.removeItem('sc_remember_me');
+      localStorage.removeItem('sc_two_factor_verified');
+      localStorage.removeItem('sc_background_alert_token');
+      localStorage.removeItem('sc_offline_session');
+      localStorage.removeItem('sc_session_active');
+      sessionStorage.removeItem('sc_token');
+      sessionStorage.removeItem('sc_user');
       sessionStorage.removeItem('sc_session_active');
       sessionStorage.removeItem('sc_two_factor_verified');
       sessionStorage.removeItem('sc_pending_authenticator_challenge');
@@ -136,18 +138,41 @@ export function AuthProvider({ children }) {
     if (token) {
       try {
         localStorage.setItem('sc_token', token);
+        sessionStorage.setItem('sc_token', token);
       } catch {}
     }
     if (nextUser) {
       setUser(nextUser);
       try {
         localStorage.setItem('sc_user', JSON.stringify(nextUser));
+        sessionStorage.setItem('sc_user', JSON.stringify(nextUser));
       } catch {}
     }
     try {
       sessionStorage.setItem('sc_session_active', 'true');
-      sessionStorage.setItem('sc_two_factor_verified', 'true');
-      localStorage.setItem('sc_two_factor_verified', 'true');
+      localStorage.setItem('sc_session_active', 'true');
+
+      // Only mark 2FA as verified for non-admin users, or admin users who already
+      // completed 2FA setup.  Setting this flag unconditionally would let an admin
+      // whose authenticator isn't yet configured slip past the mandatory setup gate.
+      const isAdminUser = Boolean(
+        nextUser?.role &&
+          ['admin', 'administrator'].includes(String(nextUser.role).toLowerCase())
+      );
+      const userHas2FA = Boolean(
+        nextUser?.['2fa_enabled'] ||
+          nextUser?.two_factor_enabled ||
+          nextUser?.authenticator_mfa_enabled
+      );
+      if (!isAdminUser || userHas2FA) {
+        sessionStorage.setItem('sc_two_factor_verified', 'true');
+        localStorage.setItem('sc_two_factor_verified', 'true');
+      } else {
+        // Admin without 2FA configured — clear any stale verified flag.
+        sessionStorage.removeItem('sc_two_factor_verified');
+        localStorage.removeItem('sc_two_factor_verified');
+      }
+
       sessionStorage.removeItem('sc_pending_authenticator_challenge');
     } catch {}
     setLoading(false);
@@ -160,6 +185,7 @@ export function AuthProvider({ children }) {
       const updated = { ...prev, ...nextDetails };
       try {
         localStorage.setItem('sc_user', JSON.stringify(updated));
+        sessionStorage.setItem('sc_user', JSON.stringify(updated));
       } catch {
         // Ignore quota error
       }
@@ -168,7 +194,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const refreshUser = useCallback(async (opts = {}) => {
-    const token = localStorage.getItem('sc_token');
+    const token = getStoredToken();
     if (!token) {
       setUser(null);
       setLoading(false);
@@ -185,15 +211,30 @@ export function AuthProvider({ children }) {
       if (dbUser && dbUser.role) {
         setUser(dbUser);
         try {
+          localStorage.setItem('sc_token', token);
+          sessionStorage.setItem('sc_token', token);
           localStorage.setItem('sc_user', JSON.stringify(dbUser));
+          sessionStorage.setItem('sc_user', JSON.stringify(dbUser));
+          sessionStorage.setItem('sc_session_active', 'true');
+          localStorage.setItem('sc_session_active', 'true');
+          const isAdminUser = Boolean(
+            dbUser?.role && ['admin', 'administrator'].includes(String(dbUser.role).toLowerCase())
+          );
+          const has2FA = Boolean(
+            dbUser['2fa_enabled'] || dbUser.two_factor_enabled || dbUser.authenticator_mfa_enabled
+          );
+
           if (
             dbUser.two_factor_verified ||
             dbUser.authenticator_mfa_verified ||
-            !dbUser.authenticator_mfa_enabled
+            (!isAdminUser && !dbUser.authenticator_mfa_enabled)
           ) {
             sessionStorage.setItem('sc_two_factor_verified', 'true');
             localStorage.setItem('sc_two_factor_verified', 'true');
             sessionStorage.removeItem('sc_pending_authenticator_challenge');
+          } else if (isAdminUser && !has2FA) {
+            sessionStorage.removeItem('sc_two_factor_verified');
+            localStorage.removeItem('sc_two_factor_verified');
           }
         } catch {}
         return dbUser;
@@ -209,15 +250,10 @@ export function AuthProvider({ children }) {
       }
       // If network / connectivity error, retain cached user session if present and token valid
       console.warn('Backend check failed during session verification, keeping cached session if active:', err);
-      const cached = localStorage.getItem('sc_user');
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (parsed?.role) {
-            setUser(parsed);
-            return parsed;
-          }
-        } catch {}
+      const cached = getStoredUser();
+      if (cached && cached.role) {
+        setUser(cached);
+        return cached;
       }
       logout();
       return null;
@@ -274,7 +310,7 @@ export function AuthProvider({ children }) {
     };
 
     const handleWindowFocus = () => {
-      const token = localStorage.getItem('sc_token');
+      const token = getStoredToken();
       if (token) {
         if (isTokenExpired(token)) {
           logout();
@@ -291,7 +327,7 @@ export function AuthProvider({ children }) {
 
     // Periodic sync & token expiry check every 30 seconds for active sessions
     const intervalId = window.setInterval(() => {
-      const token = localStorage.getItem('sc_token');
+      const token = getStoredToken();
       if (token) {
         if (isTokenExpired(token)) {
           logout();
@@ -313,13 +349,26 @@ export function AuthProvider({ children }) {
     };
   }, [logout, refreshUser]);
 
+  const isAdmin = Boolean(
+    user?.role && ['admin', 'administrator'].includes(String(user.role).toLowerCase())
+  );
+  const is2FAConfigured = Boolean(
+    user && (user['2fa_enabled'] || user.two_factor_enabled || user.authenticator_mfa_enabled)
+  );
+
   const isTwoFactorVerified = Boolean(
     user &&
-      (!user.authenticator_mfa_enabled ||
-        user.two_factor_verified ||
-        user.authenticator_mfa_verified ||
-        sessionStorage.getItem('sc_two_factor_verified') === 'true' ||
-        localStorage.getItem('sc_two_factor_verified') === 'true')
+      (isAdmin
+        ? is2FAConfigured &&
+          (user.two_factor_verified ||
+            user.authenticator_mfa_verified ||
+            sessionStorage.getItem('sc_two_factor_verified') === 'true' ||
+            localStorage.getItem('sc_two_factor_verified') === 'true')
+        : !user.authenticator_mfa_enabled ||
+          user.two_factor_verified ||
+          user.authenticator_mfa_verified ||
+          sessionStorage.getItem('sc_two_factor_verified') === 'true' ||
+          localStorage.getItem('sc_two_factor_verified') === 'true')
   );
 
   const value = {

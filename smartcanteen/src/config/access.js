@@ -5,12 +5,24 @@ import {
 } from './modules';
 
 export const ROLE_DEFAULT_ROUTES = {
-  admin: '/dashboard',
+  admin: '/admin/dashboard',
   staff: '/inventory',
   cashier: '/pos',
 };
 
 export const APP_ROUTE_ACCESS = [
+  {
+    key: 'adminDashboard',
+    path: '/admin/dashboard',
+    allowedRoles: ['admin'],
+    moduleKey: MODULE_KEYS.DASHBOARD,
+  },
+  {
+    key: 'adminSetup2FA',
+    path: '/admin/setup-2fa',
+    allowedRoles: ['admin'],
+    moduleKey: MODULE_KEYS.SETTINGS,
+  },
   {
     key: 'dashboard',
     path: '/dashboard',

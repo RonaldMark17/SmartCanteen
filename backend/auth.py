@@ -129,16 +129,39 @@ def get_current_user(
 
 
 def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
-    """Raises 403 if the caller is not an admin."""
-    if (current_user.role or "").strip().lower() not in {"admin", "administrator"}:
+    """Raises 403 if the caller is not an admin, or if 2FA has not been verified for the admin."""
+    role = (current_user.role or "").strip().lower()
+    if role not in {"admin", "administrator"}:
         raise HTTPException(status_code=403, detail="Admin access required")
+    token_payload = getattr(current_user, "_token_payload", {}) or {}
+    if not current_user.authenticator_enabled or not token_payload.get("two_factor_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "2fa_required",
+                "message": "Two-Factor Authentication (2FA) is mandatory for administrator accounts. Please complete 2FA setup.",
+                "redirect_url": "/admin/setup-2fa",
+            },
+        )
     return current_user
 
 
 def require_staff_or_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
     """Raises 403 if the caller is neither admin nor staff."""
-    if (current_user.role or "").strip().lower() not in {"admin", "administrator", "staff"}:
+    role = (current_user.role or "").strip().lower()
+    if role not in {"admin", "administrator", "staff"}:
         raise HTTPException(status_code=403, detail="Staff or admin access required")
+    if role in {"admin", "administrator"}:
+        token_payload = getattr(current_user, "_token_payload", {}) or {}
+        if not current_user.authenticator_enabled or not token_payload.get("two_factor_verified"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "2fa_required",
+                    "message": "Two-Factor Authentication (2FA) is mandatory for administrator accounts.",
+                    "redirect_url": "/admin/setup-2fa",
+                },
+            )
     return current_user
 
 
