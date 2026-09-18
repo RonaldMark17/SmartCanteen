@@ -4,7 +4,7 @@ import uuid
 
 import bcrypt
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, Request, Response
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -21,10 +21,7 @@ EXPIRE_MINS = 480   # 8-hour sessions (canteen shift length)
 MFA_EXPIRE_MINS = 5
 BACKGROUND_ALERT_EXPIRE_DAYS = 30
 
-AUTH_COOKIE_NAME = "sc_token"
-TRUSTED_DEVICE_COOKIE_NAME = "sc_trusted_device"
-
-security = HTTPBearer(auto_error=False)
+security = HTTPBearer()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -100,79 +97,16 @@ def decode_mfa_token(token: str, purpose: str = "authenticator") -> dict:
     return payload
 
 
-def _is_request_secure(request: Optional[Request]) -> bool:
-    if not request:
-        return False
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
-    return request.url.scheme == "https" or forwarded_proto == "https"
-
-
-def set_auth_cookie(
-    response: Response,
-    token: str,
-    request: Optional[Request] = None,
-    max_age: int = EXPIRE_MINS * 60,
-) -> None:
-    """Sets HttpOnly, Secure, SameSite session cookie containing JWT."""
-    is_secure = _is_request_secure(request)
-    response.set_cookie(
-        key=AUTH_COOKIE_NAME,
-        value=token,
-        max_age=max_age,
-        expires=max_age,
-        path="/",
-        httponly=True,
-        secure=is_secure,
-        samesite="lax",
-    )
-
-
-def set_trusted_device_cookie(
-    response: Response,
-    device_token: str,
-    request: Optional[Request] = None,
-    max_age: int = 30 * 86400,
-) -> None:
-    """Sets HttpOnly, Secure, SameSite cookie for trusted 2FA device bypass."""
-    is_secure = _is_request_secure(request)
-    response.set_cookie(
-        key=TRUSTED_DEVICE_COOKIE_NAME,
-        value=device_token,
-        max_age=max_age,
-        expires=max_age,
-        path="/",
-        httponly=True,
-        secure=is_secure,
-        samesite="lax",
-    )
-
-
-def clear_auth_cookies(response: Response) -> None:
-    """Clears authentication and trusted device cookies on logout."""
-    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
-    response.delete_cookie(key=TRUSTED_DEVICE_COOKIE_NAME, path="/")
-
-
 # ── Dependencies ───────────────────────────────────────────────────────────────
 
 def get_current_user(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> models.User:
-    """Validates JWT from HttpOnly cookie or Authorization Bearer header and returns the authenticated user."""
-    token = None
-    if request and request.cookies.get(AUTH_COOKIE_NAME):
-        token = request.cookies.get(AUTH_COOKIE_NAME)
-    elif credentials and credentials.credentials:
-        token = credentials.credentials
-
-    if not token:
-        raise HTTPException(status_code=401, detail="Authentication credentials were not provided")
-
+    """Validates JWT and returns the authenticated user."""
     exc = HTTPException(status_code=401, detail="Invalid or expired token")
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("purpose") == "background_alert":
             raise exc
         username = payload.get("sub")

@@ -4,6 +4,9 @@ import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
   CheckBadgeIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  DocumentDuplicateIcon,
   DocumentMagnifyingGlassIcon,
   EyeIcon,
   MagnifyingGlassMinusIcon,
@@ -25,8 +28,28 @@ function formatCurrency(amount) {
   })}`;
 }
 
+function extractReceiptList(data) {
+  if (!data) return [];
+  if (Array.isArray(data.items) && data.items.length > 0) return data.items;
+  if (Array.isArray(data.receipts) && data.receipts.length > 0) return data.receipts;
+  const rawStr = data.receipt || data.receiptName || data.filename;
+  if (typeof rawStr === 'string' && rawStr.trim() && rawStr !== 'No receipt' && rawStr !== '-') {
+    const list = rawStr.split(',').map((s) => s.trim()).filter(Boolean);
+    if (list.length > 0) return list;
+  }
+  if (data.dataUrl) {
+    return [data];
+  }
+  if (rawStr && rawStr !== 'No receipt' && rawStr !== '-') {
+    return [rawStr];
+  }
+  return [];
+}
+
 export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpdated }) {
-  const [storedReceipt, setStoredReceipt] = useState(null);
+  const [receiptItems, setReceiptItems] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [resolvedReceipts, setResolvedReceipts] = useState({});
   const [loading, setLoading] = useState(true);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -34,42 +57,61 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef(null);
 
+  // Initialize receipt items whenever receiptData changes
   useEffect(() => {
-    let isMounted = true;
-    setLoading(true);
+    const items = extractReceiptList(receiptData);
+    setReceiptItems(items);
+    setCurrentIndex(0);
+    setResolvedReceipts({});
     setZoomLevel(1);
     setRotation(0);
     setUploadError('');
+  }, [receiptData]);
 
-    async function loadData() {
-      if (!receiptData) {
-        setLoading(false);
-        return;
-      }
+  // Load receipt data for active item and pre-resolve others
+  useEffect(() => {
+    let isMounted = true;
+    if (!receiptData || receiptItems.length === 0) {
+      setLoading(false);
+      return;
+    }
 
-      // If receiptData already has dataUrl provided (e.g. preview before saving)
-      if (receiptData.dataUrl) {
-        if (isMounted) {
-          setStoredReceipt(receiptData);
-          setLoading(false);
+    const currentItem = receiptItems[currentIndex];
+    if (!currentItem) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setZoomLevel(1);
+    setRotation(0);
+
+    async function resolveItem(item, index) {
+      if (typeof item === 'object' && item !== null) {
+        if (item.dataUrl || item.url) {
+          return {
+            filename: item.filename || item.name || `Receipt_${index + 1}`,
+            dataUrl: item.dataUrl || null,
+            url: item.url || null,
+            isPdf: item.isPdf || item.mimeType === 'application/pdf',
+            mimeType: item.mimeType || 'image/jpeg',
+            category: item.category || receiptData.category,
+            amount: item.amount || receiptData.amount,
+            date: item.date || receiptData.date,
+          };
         }
-        return;
       }
 
-      // Look up in local storage / IndexedDB / backend
-      const filename = receiptData.receipt || receiptData.receiptName || receiptData.filename;
-      const expenseId = receiptData.id;
-
-      let found = null;
-      if (filename && filename !== 'No receipt' && filename !== '-') {
-        found = await getReceipt(filename, receiptData);
-      }
-      if (!found && expenseId) {
-        found = await getReceipt(expenseId, receiptData);
+      const filename = typeof item === 'string' ? item : item.filename || item.name;
+      if (!filename || filename === 'No receipt' || filename === '-') {
+        return null;
       }
 
-      // Fallback: direct backend URL if filename exists
-      if (!found && filename && filename !== 'No receipt' && filename !== '-') {
+      let found = await getReceipt(filename, receiptData);
+      if (!found && receiptData.id) {
+        found = await getReceipt(receiptData.id, receiptData);
+      }
+      if (!found && filename) {
         const directUrl = API.getFinancialReceiptUrl(filename);
         if (directUrl) {
           found = {
@@ -78,50 +120,100 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
             category: receiptData.category,
             amount: receiptData.amount,
             date: receiptData.date,
+            isPdf: String(filename).toLowerCase().endsWith('.pdf'),
           };
         }
       }
 
-      if (isMounted) {
-        setStoredReceipt(found);
-        setLoading(false);
-      }
+      return found || { filename, isPdf: String(filename).toLowerCase().endsWith('.pdf') };
     }
 
-    loadData();
+    async function loadCurrent() {
+      const resolved = await resolveItem(currentItem, currentIndex);
+      if (isMounted) {
+        setResolvedReceipts((prev) => ({
+          ...prev,
+          [currentIndex]: resolved,
+        }));
+        setLoading(false);
+      }
+
+      // Pre-resolve adjacent items in background for smooth navigation
+      receiptItems.forEach(async (item, idx) => {
+        if (idx !== currentIndex && !resolvedReceipts[idx]) {
+          const res = await resolveItem(item, idx);
+          if (isMounted && res) {
+            setResolvedReceipts((prev) => ({
+              ...prev,
+              [idx]: res,
+            }));
+          }
+        }
+      });
+    }
+
+    loadCurrent();
 
     return () => {
       isMounted = false;
     };
-  }, [receiptData]);
+  }, [receiptData, receiptItems, currentIndex]);
 
-  // Handle keyboard Escape
+  // Handle keyboard navigation (ArrowLeft, ArrowRight, Escape)
   useEffect(() => {
     function handleKeyDown(event) {
       if (event.key === 'Escape') {
         onClose?.();
+      } else if (event.key === 'ArrowLeft') {
+        if (receiptItems.length > 1) {
+          setCurrentIndex((prev) => (prev > 0 ? prev - 1 : receiptItems.length - 1));
+        }
+      } else if (event.key === 'ArrowRight') {
+        if (receiptItems.length > 1) {
+          setCurrentIndex((prev) => (prev < receiptItems.length - 1 ? prev + 1 : 0));
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, receiptItems.length]);
 
   if (!receiptData) return null;
 
+  const currentItem = receiptItems[currentIndex];
+  const activeReceipt = resolvedReceipts[currentIndex];
+
   const filename =
-    receiptData.receipt || receiptData.receiptName || receiptData.filename || 'Receipt';
+    activeReceipt?.filename ||
+    (typeof currentItem === 'string'
+      ? currentItem
+      : currentItem?.filename || currentItem?.name) ||
+    receiptData.receipt ||
+    receiptData.receiptName ||
+    receiptData.filename ||
+    'Receipt';
+
   const category = receiptData.category || 'Operating Expense';
   const amount = receiptData.amount || 0;
   const date = receiptData.date || 'N/A';
-  const supplier = receiptData.supplier && receiptData.supplier !== '-' ? receiptData.supplier : 'None specified';
+  const supplier =
+    receiptData.supplier && receiptData.supplier !== '-' ? receiptData.supplier : 'None specified';
   const description =
     receiptData.description && receiptData.description !== '-' ? receiptData.description : 'None specified';
-  const typeLabel = receiptData.typeLabel || (receiptData.type === 'monthly' ? 'Monthly Expense' : 'Daily Expense');
+  const typeLabel =
+    receiptData.typeLabel || (receiptData.type === 'monthly' ? 'Monthly Expense' : 'Daily Expense');
 
-  const previewSource = storedReceipt?.dataUrl || storedReceipt?.url || receiptData.dataUrl || null;
+  const previewSource =
+    activeReceipt?.dataUrl ||
+    activeReceipt?.url ||
+    (typeof currentItem === 'object' && (currentItem?.dataUrl || currentItem?.url)) ||
+    receiptData.dataUrl ||
+    null;
+
   const isPdf =
-    storedReceipt?.isPdf ||
-    storedReceipt?.mimeType === 'application/pdf' ||
+    activeReceipt?.isPdf ||
+    activeReceipt?.mimeType === 'application/pdf' ||
+    (typeof currentItem === 'object' && (currentItem?.isPdf || currentItem?.mimeType === 'application/pdf')) ||
     String(filename).toLowerCase().endsWith('.pdf');
 
   function handleZoomIn() {
@@ -141,6 +233,16 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
     setRotation((prev) => (prev + 90) % 360);
   }
 
+  function handlePrevReceipt() {
+    if (receiptItems.length <= 1) return;
+    setCurrentIndex((prev) => (prev > 0 ? prev - 1 : receiptItems.length - 1));
+  }
+
+  function handleNextReceipt() {
+    if (receiptItems.length <= 1) return;
+    setCurrentIndex((prev) => (prev < receiptItems.length - 1 ? prev + 1 : 0));
+  }
+
   async function handleFileSelected(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -157,8 +259,8 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const updatedEntry = {
-        key: filename,
-        filename,
+        key: validation.sanitizedName,
+        filename: validation.sanitizedName,
         rawName: file.name,
         dataUrl,
         mimeType: validation.mimeType,
@@ -176,7 +278,10 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
         console.warn('Backend receipt upload:', err);
       });
 
-      setStoredReceipt(updatedEntry);
+      setResolvedReceipts((prev) => ({
+        ...prev,
+        [currentIndex]: updatedEntry,
+      }));
       onReceiptUpdated?.(updatedEntry);
       window.showToast?.('Receipt attached and verified!', 'success');
     } catch (err) {
@@ -201,6 +306,17 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
   function handlePrint() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
+
+    const allFilenames =
+      receiptItems.length > 1
+        ? receiptItems
+            .map((item, idx) =>
+              typeof item === 'string'
+                ? item
+                : item?.filename || item?.name || `Receipt ${idx + 1}`
+            )
+            .join(', ')
+        : filename;
 
     const receiptHtml = `
       <!DOCTYPE html>
@@ -334,15 +450,17 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
               <td>${description}</td>
             </tr>
             <tr>
-              <th>Receipt Document</th>
-              <td>${filename}</td>
+              <th>Receipt Document(s)</th>
+              <td>${allFilenames}</td>
             </tr>
           </table>
 
           ${
             previewSource && !isPdf
               ? `<div class="receipt-img-box">
-                   <div style="font-size:12px; font-weight:700; color:#64748b; margin-bottom:10px; text-transform:uppercase;">Attached Receipt Image</div>
+                   <div style="font-size:12px; font-weight:700; color:#64748b; margin-bottom:10px; text-transform:uppercase;">
+                     Attached Receipt Image ${receiptItems.length > 1 ? `(${currentIndex + 1} of ${receiptItems.length})` : ''}
+                   </div>
                    <img src="${previewSource}" class="receipt-img" alt="Receipt Image" />
                  </div>`
               : ''
@@ -388,6 +506,11 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
                 <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700 border border-emerald-200">
                   {typeLabel}
                 </span>
+                {receiptItems.length > 1 && (
+                  <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-bold text-primary border border-primary/20">
+                    Receipt {currentIndex + 1} of {receiptItems.length}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-md" title={filename}>
                 {filename}
@@ -395,14 +518,41 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close modal"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-          >
-            <XMarkIcon className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Multi-receipt navigation in header */}
+            {receiptItems.length > 1 && (
+              <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={handlePrevReceipt}
+                  title="Previous Receipt (←)"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-600 hover:bg-white hover:text-slate-900 shadow-2xs transition"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                </button>
+                <span className="px-2 text-xs font-bold text-slate-700 font-mono">
+                  {currentIndex + 1} / {receiptItems.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleNextReceipt}
+                  title="Next Receipt (→)"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-600 hover:bg-white hover:text-slate-900 shadow-2xs transition"
+                >
+                  <ChevronRightIcon className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close modal"
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+            >
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}
@@ -441,6 +591,28 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
 
           {/* Main Preview Container */}
           <div className="relative rounded-2xl border border-slate-200 bg-slate-900/5 p-4 min-h-[320px] flex flex-col items-center justify-center overflow-hidden">
+            {/* Multi-receipt Floating Previous/Next Navigation Arrows */}
+            {receiptItems.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePrevReceipt}
+                  title="Previous Receipt (←)"
+                  className="absolute left-3 top-1/2 z-20 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-md backdrop-blur-xs border border-slate-200 hover:bg-white hover:text-primary transition active:scale-95"
+                >
+                  <ChevronLeftIcon className="h-5 w-5 stroke-[2.5]" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextReceipt}
+                  title="Next Receipt (→)"
+                  className="absolute right-3 top-1/2 z-20 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-md backdrop-blur-xs border border-slate-200 hover:bg-white hover:text-primary transition active:scale-95"
+                >
+                  <ChevronRightIcon className="h-5 w-5 stroke-[2.5]" />
+                </button>
+              </>
+            )}
+
             {loading ? (
               <div className="flex flex-col items-center gap-3 py-16">
                 <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
@@ -588,6 +760,71 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
               </div>
             )}
           </div>
+
+          {/* Thumbnail Gallery Strip when multiple receipts exist */}
+          {receiptItems.length > 1 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <DocumentDuplicateIcon className="h-4 w-4 text-slate-500" />
+                  All Attached Receipts ({receiptItems.length})
+                </span>
+                <span className="text-[11px] font-medium text-slate-400">
+                  Click a thumbnail to view
+                </span>
+              </div>
+              <div className="flex items-center gap-2.5 overflow-x-auto pb-1 custom-scrollbar">
+                {receiptItems.map((item, idx) => {
+                  const resolved = resolvedReceipts[idx];
+                  const itemPreview = resolved?.dataUrl || resolved?.url || (typeof item === 'object' && (item?.dataUrl || item?.url));
+                  const itemIsPdf = resolved?.isPdf || (typeof item === 'object' && item?.isPdf);
+                  const itemLabel = typeof item === 'string' ? item : item?.filename || item?.name || `Receipt ${idx + 1}`;
+                  const isSelected = idx === currentIndex;
+
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setCurrentIndex(idx)}
+                      className={`relative flex-shrink-0 flex items-center gap-2 rounded-xl border p-1.5 transition-all text-left ${
+                        isSelected
+                          ? 'border-primary ring-2 ring-primary/20 bg-primary/5 shadow-xs'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="relative h-12 w-12 rounded-lg overflow-hidden bg-slate-100 flex items-center justify-center border border-slate-200">
+                        {itemPreview && !itemIsPdf ? (
+                          <img
+                            src={itemPreview}
+                            alt={`Receipt ${idx + 1}`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : itemIsPdf ? (
+                          <div className="flex flex-col items-center justify-center text-rose-600">
+                            <ReceiptPercentIcon className="h-5 w-5" />
+                            <span className="text-[9px] font-black uppercase">PDF</span>
+                          </div>
+                        ) : (
+                          <PhotoIcon className="h-5 w-5 text-slate-400" />
+                        )}
+                        <span className="absolute bottom-0.5 right-0.5 rounded-full bg-slate-900/80 px-1 text-[9px] font-black text-white">
+                          {idx + 1}
+                        </span>
+                      </div>
+                      <div className="pr-2 max-w-[120px]">
+                        <p className={`text-xs font-bold truncate ${isSelected ? 'text-primary' : 'text-slate-700'}`}>
+                          Receipt {idx + 1}
+                        </p>
+                        <p className="text-[10px] text-slate-400 truncate font-mono" title={itemLabel}>
+                          {itemLabel}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Hidden file input for re-uploading receipts */}
@@ -609,7 +846,7 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
                 className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100 transition"
               >
                 <ArrowDownTrayIcon className="h-4 w-4" />
-                Download File
+                Download Current
               </button>
             )}
             <button
@@ -619,7 +856,7 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100 transition"
             >
               <ArrowUpTrayIcon className="h-4 w-4" />
-              {previewSource ? 'Replace Receipt' : 'Attach Receipt'}
+              {previewSource ? 'Replace Active' : 'Attach Receipt'}
             </button>
             <button
               type="button"
@@ -631,13 +868,35 @@ export default function ReceiptPreviewModal({ receiptData, onClose, onReceiptUpd
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {receiptItems.length > 1 && (
+              <div className="flex items-center gap-1 mr-2">
+                <button
+                  type="button"
+                  onClick={handlePrevReceipt}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition flex items-center gap-1"
+                >
+                  <ChevronLeftIcon className="h-3.5 w-3.5" />
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextReceipt}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition flex items-center gap-1"
+                >
+                  Next
+                  <ChevronRightIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

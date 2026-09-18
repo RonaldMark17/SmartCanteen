@@ -32,12 +32,7 @@ export function AuthProvider({ children }) {
   });
   const [loading, setLoading] = useState(true);
 
-  const logout = useCallback(async () => {
-    try {
-      await API.logout();
-    } catch {
-      // Ignore network errors during logout
-    }
+  const logout = useCallback(() => {
     localStorage.removeItem('sc_token');
     localStorage.removeItem('sc_user');
     localStorage.removeItem('sc_background_alert_token');
@@ -46,9 +41,6 @@ export function AuthProvider({ children }) {
     try {
       sessionStorage.removeItem('sc_session_active');
     } catch {}
-    // Preserve trusted device tokens on this device across logout.
-    // Device revocation is managed explicitly in Settings / Manage Accounts.
-    localStorage.removeItem('sc_offline_login_v1');
     setUser(null);
     setLoading(false);
   }, []);
@@ -68,6 +60,13 @@ export function AuthProvider({ children }) {
   }, []);
 
   const refreshUser = useCallback(async (opts = {}) => {
+    const token = localStorage.getItem('sc_token');
+    if (!token) {
+      setUser(null);
+      setLoading(false);
+      return null;
+    }
+
     try {
       const dbUser = await API.getCurrentUser();
       if (dbUser && dbUser.role) {
@@ -93,8 +92,6 @@ export function AuthProvider({ children }) {
       }
     } catch (err) {
       if (err?.status === 401 || err?.status === 403) {
-        // Session expired: silently clear local session data.
-        // Preserve sc_remembered_username so the login form pre-fills the username.
         localStorage.removeItem('sc_token');
         localStorage.removeItem('sc_user');
         localStorage.removeItem('sc_background_alert_token');
@@ -104,9 +101,8 @@ export function AuthProvider({ children }) {
           sessionStorage.removeItem('sc_session_active');
         } catch {}
         setUser(null);
-        // Only call the full logout() on explicit user action (opts.explicit === true)
         if (opts.explicit) {
-          await logout();
+          logout();
         }
       }
       return null;
@@ -153,22 +149,20 @@ export function AuthProvider({ children }) {
     };
 
     const handleStorageEvent = (event) => {
-      if (event.key === 'sc_user') {
-        if (event.newValue) {
-          try {
-            const parsed = JSON.parse(event.newValue);
-            if (parsed && parsed.role) {
-              setUser(parsed);
-            }
-          } catch {}
-        } else {
-          logout();
-        }
+      if (event.key === 'sc_user' && event.newValue) {
+        try {
+          const parsed = JSON.parse(event.newValue);
+          if (parsed && parsed.role) {
+            setUser(parsed);
+          }
+        } catch {}
+      } else if (event.key === 'sc_token' && !event.newValue) {
+        logout();
       }
     };
 
     const handleWindowFocus = () => {
-      if (user) {
+      if (localStorage.getItem('sc_token')) {
         refreshUser();
       }
     };
@@ -179,7 +173,7 @@ export function AuthProvider({ children }) {
 
     // Periodic sync every 30 seconds for active sessions
     const intervalId = window.setInterval(() => {
-      if (user && document.visibilityState !== 'hidden') {
+      if (localStorage.getItem('sc_token') && document.visibilityState !== 'hidden') {
         refreshUser();
       }
     }, 30000);
@@ -190,7 +184,7 @@ export function AuthProvider({ children }) {
       window.removeEventListener('focus', handleWindowFocus);
       window.clearInterval(intervalId);
     };
-  }, [logout, refreshUser, user]);
+  }, [logout, refreshUser]);
 
   const value = {
     user,

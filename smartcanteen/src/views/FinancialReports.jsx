@@ -478,6 +478,11 @@ function parseExpenseNotes(report) {
       );
       if (typedMatch) {
         const type = typedMatch[1].toLowerCase();
+        const rawReceipt = cleanNoteValue(typedMatch[7]) || 'No receipt';
+        const receiptList =
+          rawReceipt && rawReceipt !== 'No receipt' && rawReceipt !== '-'
+            ? rawReceipt.split(',').map((s) => s.trim()).filter(Boolean)
+            : [];
         return {
           id: `expense-note-${report.id}-${index}`,
           date: typedMatch[2],
@@ -485,7 +490,8 @@ function parseExpenseNotes(report) {
           amount: toMoney(typedMatch[4]),
           supplier: cleanNoteValue(typedMatch[5]) || '-',
           description: cleanNoteValue(typedMatch[6]) || '-',
-          receipt: cleanNoteValue(typedMatch[7]) || 'No receipt',
+          receipt: rawReceipt,
+          receipts: receiptList,
           monthLabel: report.month_label,
           reportId: report.id,
           type,
@@ -503,6 +509,12 @@ function parseExpenseNotes(report) {
         return null;
       }
 
+      const legacyRawReceipt = cleanNoteValue(legacyMatch[6]) || 'No receipt';
+      const legacyReceiptList =
+        legacyRawReceipt && legacyRawReceipt !== 'No receipt' && legacyRawReceipt !== '-'
+          ? legacyRawReceipt.split(',').map((s) => s.trim()).filter(Boolean)
+          : [];
+
       return {
         id: `expense-note-${report.id}-${index}`,
         date: legacyMatch[1],
@@ -510,7 +522,8 @@ function parseExpenseNotes(report) {
         amount: toMoney(legacyMatch[3]),
         supplier: cleanNoteValue(legacyMatch[4]) || '-',
         description: cleanNoteValue(legacyMatch[5]) || '-',
-        receipt: cleanNoteValue(legacyMatch[6]) || 'No receipt',
+        receipt: legacyRawReceipt,
+        receipts: legacyReceiptList,
         monthLabel: report.month_label,
         reportId: report.id,
         type: 'daily',
@@ -931,8 +944,9 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
       ['Beginning Cash', formatCurrency(activeReport.beginning_cash_on_hand)],
       ['Current Sales', formatCurrency(activeReport.current_sales)],
       ['Cost of Sales', formatCurrency(activeReport.cost_of_sales)],
-      ['Operation Expenses', formatCurrency(activeReport.total_operating_expenses)],
       ['Gross Income', formatCurrency(activeReport.gross_income)],
+      ['Operation Expenses', formatCurrency(activeReport.total_operating_expenses)],
+      ['Over All Net Profit', formatCurrency(activeReport.net_profit)],
       ['Current Balance', formatCurrency(activeReport.fund_current_balance_total ?? activeReport.ending_cash)],
     ];
   } else if (type === 'quarterly') {
@@ -1420,10 +1434,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     receiptName: '',
   });
   const [activePreviewReceipt, setActivePreviewReceipt] = useState(null);
-  const [expenseReceiptFile, setExpenseReceiptFile] = useState(null);
-  const [expenseReceiptDataUrl, setExpenseReceiptDataUrl] = useState('');
+  const [expenseReceiptItems, setExpenseReceiptItems] = useState([]);
   const [expenseReceiptError, setExpenseReceiptError] = useState('');
-  const [expenseReceiptValidation, setExpenseReceiptValidation] = useState(null);
   const [expenseSuccessAlert, setExpenseSuccessAlert] = useState(null);
   const expenseFileInputRef = useRef(null);
 
@@ -1439,10 +1451,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     description: '',
     receiptName: '',
   });
-  const [editReceiptFile, setEditReceiptFile] = useState(null);
-  const [editReceiptDataUrl, setEditReceiptDataUrl] = useState('');
+  const [editReceiptItems, setEditReceiptItems] = useState([]);
   const [editReceiptError, setEditReceiptError] = useState('');
-  const [editReceiptValidation, setEditReceiptValidation] = useState(null);
   const [savingEditExpense, setSavingEditExpense] = useState(false);
   const editExpenseFileInputRef = useRef(null);
 
@@ -2623,62 +2633,92 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
   }
 
   async function handleReceiptFileChange(event) {
-    const file = event.target.files?.[0];
-    if (!file) {
-      setExpenseReceiptFile(null);
-      setExpenseReceiptDataUrl('');
-      setExpenseReceiptError('');
-      setExpenseReceiptValidation(null);
-      setExpenseEntryDraft((draft) => ({ ...draft, receiptName: '' }));
-      return;
-    }
+    const selectedFiles = Array.from(event.target.files || []);
+    if (selectedFiles.length === 0) return;
 
-    const validation = validateReceiptFile(file);
-    if (!validation.valid) {
-      setExpenseReceiptError(validation.error || 'Invalid receipt file.');
-      setExpenseReceiptFile(null);
-      setExpenseReceiptDataUrl('');
-      setExpenseReceiptValidation(null);
-      setExpenseEntryDraft((draft) => ({ ...draft, receiptName: '' }));
-      if (expenseFileInputRef.current) {
-        expenseFileInputRef.current.value = '';
+    let hasError = '';
+    const newItems = [];
+
+    for (const file of selectedFiles) {
+      const validation = validateReceiptFile(file);
+      if (!validation.valid) {
+        hasError = validation.error || `File ${file.name} is invalid.`;
+        continue;
       }
-      return;
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        newItems.push({
+          id: `${Date.now()}-${Math.random()}`,
+          file,
+          dataUrl,
+          validation,
+          name: validation.sanitizedName,
+          sizeFormatted: validation.sizeFormatted,
+          isPdf: validation.isPdf,
+          mimeType: validation.mimeType,
+        });
+      } catch (err) {
+        hasError = `Failed to read file: ${file.name}`;
+      }
     }
 
-    setExpenseReceiptError('');
-    setExpenseReceiptValidation(validation);
-    setExpenseReceiptFile(file);
-    setExpenseEntryDraft((draft) => ({ ...draft, receiptName: validation.sanitizedName }));
+    if (hasError) {
+      setExpenseReceiptError(hasError);
+    } else {
+      setExpenseReceiptError('');
+    }
 
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setExpenseReceiptDataUrl(dataUrl);
-    } catch (err) {
-      console.warn('Failed to read receipt preview data:', err);
+    if (newItems.length > 0) {
+      setExpenseReceiptItems((prev) => [...prev, ...newItems]);
+      setExpenseEntryDraft((draft) => {
+        const currentNames = draft.receiptName ? draft.receiptName.split(',').map((s) => s.trim()).filter(Boolean) : [];
+        const addedNames = newItems.map((item) => item.name);
+        return {
+          ...draft,
+          receiptName: [...currentNames, ...addedNames].join(', '),
+        };
+      });
+    }
+
+    if (expenseFileInputRef.current) {
+      expenseFileInputRef.current.value = '';
     }
   }
 
-  function handleClearReceiptUpload() {
-    setExpenseReceiptFile(null);
-    setExpenseReceiptDataUrl('');
+  function handleRemoveReceiptItem(indexToRemove) {
+    setExpenseReceiptItems((prev) => {
+      const updated = prev.filter((_, idx) => idx !== indexToRemove);
+      const updatedNames = updated.map((item) => item.name).join(', ');
+      setExpenseEntryDraft((draft) => ({ ...draft, receiptName: updatedNames }));
+      return updated;
+    });
     setExpenseReceiptError('');
-    setExpenseReceiptValidation(null);
+  }
+
+  function handleClearReceiptUpload() {
+    setExpenseReceiptItems([]);
+    setExpenseReceiptError('');
     setExpenseEntryDraft((draft) => ({ ...draft, receiptName: '' }));
     if (expenseFileInputRef.current) {
       expenseFileInputRef.current.value = '';
     }
   }
 
-  function handleQuickPreviewUploadedReceipt(targetReport) {
-    if (!expenseReceiptDataUrl && !expenseReceiptFile) return;
+  function handleQuickPreviewUploadedReceipt(targetReport, initialIndex = 0) {
+    if (expenseReceiptItems.length === 0) return;
     const periodValue =
       expenseEntryDraft.type === 'monthly'
         ? getReportMonthValue(targetReport)
         : expenseEntryDraft.date;
     setActivePreviewReceipt({
-      filename: expenseEntryDraft.receiptName || expenseReceiptFile?.name || 'Uploaded Receipt',
-      dataUrl: expenseReceiptDataUrl,
+      items: expenseReceiptItems.map((item) => ({
+        filename: item.name,
+        name: item.name,
+        dataUrl: item.dataUrl,
+        isPdf: item.isPdf,
+        mimeType: item.mimeType,
+      })),
+      initialIndex,
       category: expenseEntryDraft.category,
       amount: expenseEntryDraft.amount || 0,
       date: periodValue,
@@ -2686,37 +2726,40 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       description: expenseEntryDraft.description,
       type: expenseEntryDraft.type,
       typeLabel: expenseEntryDraft.type === 'monthly' ? 'Monthly Expense' : 'Daily Expense',
-      isPdf: expenseReceiptValidation?.isPdf,
-      mimeType: expenseReceiptValidation?.mimeType,
     });
   }
 
   async function executeAddExpenseEntry(amount, expenseType, periodValue, typeLabel, targetReport, nextExpenses, sanitizedReceiptName) {
     setSavingExpenseEntry(true);
     try {
+      const receiptNames = expenseReceiptItems.length > 0
+        ? expenseReceiptItems.map((it) => it.name).filter(Boolean)
+        : sanitizedReceiptName
+        ? sanitizedReceiptName.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+      const receiptNoteValue = receiptNames.length > 0 ? receiptNames.join(', ') : 'No receipt';
+
       const line = [
         `[${typeLabel}] ${periodValue}`,
         expenseEntryDraft.category,
         formatCurrency(amount),
         `Supplier: ${cleanNoteValue(expenseEntryDraft.supplier) || '-'}`,
         `Description: ${cleanNoteValue(expenseEntryDraft.description) || '-'}`,
-        `Receipt: ${cleanNoteValue(sanitizedReceiptName) || 'No receipt'}`,
+        `Receipt: ${cleanNoteValue(receiptNoteValue)}`,
       ].join(' | ');
 
-      // Save receipt to local IndexedDB/memory storage and upload to backend
-      const dataUrlToSave = expenseReceiptDataUrl;
-      const fileToSave = expenseReceiptFile;
-      const validationToSave = expenseReceiptValidation;
-
-      if (sanitizedReceiptName && (dataUrlToSave || fileToSave)) {
+      // Save each receipt item to local IndexedDB and upload to backend
+      for (const item of expenseReceiptItems) {
+        const itemReceiptName = item.name;
+        if (!itemReceiptName) continue;
         const receiptEntry = {
-          key: sanitizedReceiptName,
-          filename: sanitizedReceiptName,
-          rawName: fileToSave?.name || expenseEntryDraft.receiptName,
-          dataUrl: dataUrlToSave,
-          mimeType: validationToSave?.mimeType || 'image/png',
-          size: validationToSave?.size || 0,
-          sizeFormatted: validationToSave?.sizeFormatted || '',
+          key: itemReceiptName,
+          filename: itemReceiptName,
+          rawName: item.file?.name || itemReceiptName,
+          dataUrl: item.dataUrl,
+          mimeType: item.mimeType || 'image/png',
+          size: item.validation?.size || item.file?.size || 0,
+          sizeFormatted: item.sizeFormatted || '',
           date: periodValue,
           category: expenseEntryDraft.category,
           amount,
@@ -2725,22 +2768,21 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
           reportId: targetReport.id,
           type: expenseType,
           typeLabel,
-          isPdf: validationToSave?.isPdf || false,
+          isPdf: item.isPdf || false,
         };
         await saveReceipt(receiptEntry);
 
-        // Also save under raw name if different
-        if (fileToSave?.name && fileToSave.name !== sanitizedReceiptName) {
+        if (item.file?.name && item.file.name !== itemReceiptName) {
           await saveReceipt({
             ...receiptEntry,
-            key: fileToSave.name,
-            filename: fileToSave.name,
+            key: item.file.name,
+            filename: item.file.name,
           });
         }
 
-        if (fileToSave) {
+        if (item.file) {
           try {
-            await API.uploadFinancialReceipt(fileToSave);
+            await API.uploadFinancialReceipt(item.file);
           } catch (uploadErr) {
             console.warn('Backend receipt upload fallback:', uploadErr);
           }
@@ -2762,7 +2804,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         amount: formatCurrency(amount),
         supplier: cleanNoteValue(expenseEntryDraft.supplier) || '',
         description: cleanNoteValue(expenseEntryDraft.description) || '',
-        receiptName: sanitizedReceiptName,
+        receiptName: receiptNoteValue,
         monthLabel: targetReport.month_label,
       });
 
@@ -2849,9 +2891,12 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       });
     }
 
-    const sanitizedReceiptName = expenseEntryDraft.receiptName
-      ? sanitizeReceiptFilename(expenseEntryDraft.receiptName)
-      : '';
+    const receiptNames = expenseReceiptItems.length > 0
+      ? expenseReceiptItems.map((it) => it.name).filter(Boolean)
+      : expenseEntryDraft.receiptName
+      ? expenseEntryDraft.receiptName.split(',').map((s) => sanitizeReceiptFilename(s.trim())).filter(Boolean)
+      : [];
+    const sanitizedReceiptName = receiptNames.join(', ');
     const periodValue = expenseType === 'monthly' ? getReportMonthValue(targetReport) : expenseEntryDraft.date;
     const typeLabel = expenseType === 'monthly' ? 'Monthly Expense' : 'Daily Expense';
 
@@ -2869,6 +2914,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         { label: 'Category', value: category },
         { label: 'Amount', value: formatCurrency(amount), highlight: true },
         ...(expenseEntryDraft.description ? [{ label: 'Description', value: expenseEntryDraft.description }] : []),
+        ...(receiptNames.length > 0 ? [{ label: 'Receipts', value: `${receiptNames.length} attached (${sanitizedReceiptName})` }] : []),
       ],
       onConfirm: async () => {
         setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
@@ -2886,6 +2932,9 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     if (!row) return;
     setEditingExpense(row);
     const isMonthly = row.type === 'monthly';
+    const existingReceipts = (row.receipt && row.receipt !== 'No receipt' && row.receipt !== '-')
+      ? row.receipt.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
     setEditExpenseDraft({
       type: isMonthly ? 'monthly' : 'daily',
       date: isMonthly ? '' : row.date,
@@ -2894,62 +2943,91 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       amount: String(row.amount || ''),
       supplier: row.supplier && row.supplier !== '-' ? row.supplier : '',
       description: row.description && row.description !== '-' && row.description !== 'Monthly category total' ? row.description : '',
-      receiptName: row.receipt && row.receipt !== 'No receipt' && row.receipt !== '-' ? row.receipt : '',
+      receiptName: existingReceipts.join(', '),
     });
-    setEditReceiptFile(null);
-    setEditReceiptDataUrl('');
+    setEditReceiptItems(
+      existingReceipts.map((name, idx) => ({
+        id: `existing-${idx}-${name}`,
+        name,
+        isExisting: true,
+      }))
+    );
     setEditReceiptError('');
-    setEditReceiptValidation(null);
   }
 
   function handleCloseEditExpense() {
     setEditingExpense(null);
-    setEditReceiptFile(null);
-    setEditReceiptDataUrl('');
+    setEditReceiptItems([]);
     setEditReceiptError('');
-    setEditReceiptValidation(null);
   }
 
   async function handleEditReceiptFileChange(event) {
-    const file = event.target.files?.[0];
-    if (!file) {
-      setEditReceiptFile(null);
-      setEditReceiptDataUrl('');
-      setEditReceiptError('');
-      setEditReceiptValidation(null);
-      return;
-    }
+    const selectedFiles = Array.from(event.target.files || []);
+    if (selectedFiles.length === 0) return;
 
-    const validation = validateReceiptFile(file);
-    if (!validation.valid) {
-      setEditReceiptError(validation.error || 'Invalid receipt file.');
-      setEditReceiptFile(null);
-      setEditReceiptDataUrl('');
-      setEditReceiptValidation(null);
-      if (editExpenseFileInputRef.current) {
-        editExpenseFileInputRef.current.value = '';
+    let hasError = '';
+    const newItems = [];
+
+    for (const file of selectedFiles) {
+      const validation = validateReceiptFile(file);
+      if (!validation.valid) {
+        hasError = validation.error || `File ${file.name} is invalid.`;
+        continue;
       }
-      return;
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        newItems.push({
+          id: `${Date.now()}-${Math.random()}`,
+          file,
+          dataUrl,
+          validation,
+          name: validation.sanitizedName,
+          sizeFormatted: validation.sizeFormatted,
+          isPdf: validation.isPdf,
+          mimeType: validation.mimeType,
+          isExisting: false,
+        });
+      } catch {
+        hasError = `Failed to read file: ${file.name}`;
+      }
     }
 
-    setEditReceiptError('');
-    setEditReceiptValidation(validation);
-    setEditReceiptFile(file);
-    setEditExpenseDraft((draft) => ({ ...draft, receiptName: validation.sanitizedName }));
+    if (hasError) {
+      setEditReceiptError(hasError);
+    } else {
+      setEditReceiptError('');
+    }
 
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setEditReceiptDataUrl(dataUrl);
-    } catch {
-      setEditReceiptError('Failed to read receipt file preview.');
+    if (newItems.length > 0) {
+      setEditReceiptItems((prev) => [...prev, ...newItems]);
+      setEditExpenseDraft((draft) => {
+        const currentNames = draft.receiptName ? draft.receiptName.split(',').map((s) => s.trim()).filter(Boolean) : [];
+        const addedNames = newItems.map((it) => it.name);
+        return {
+          ...draft,
+          receiptName: [...currentNames, ...addedNames].join(', '),
+        };
+      });
+    }
+
+    if (editExpenseFileInputRef.current) {
+      editExpenseFileInputRef.current.value = '';
     }
   }
 
-  function handleClearEditReceiptUpload() {
-    setEditReceiptFile(null);
-    setEditReceiptDataUrl('');
+  function handleRemoveEditReceiptItem(indexToRemove) {
+    setEditReceiptItems((prev) => {
+      const updated = prev.filter((_, idx) => idx !== indexToRemove);
+      const updatedNames = updated.map((it) => it.name).join(', ');
+      setEditExpenseDraft((draft) => ({ ...draft, receiptName: updatedNames }));
+      return updated;
+    });
     setEditReceiptError('');
-    setEditReceiptValidation(null);
+  }
+
+  function handleClearEditReceiptUpload() {
+    setEditReceiptItems([]);
+    setEditReceiptError('');
     setEditExpenseDraft((draft) => ({ ...draft, receiptName: '' }));
     if (editExpenseFileInputRef.current) {
       editExpenseFileInputRef.current.value = '';
@@ -2959,9 +3037,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
   async function executeSaveEditExpense(amount, expenseType, effectiveMonth, targetReport, originalReport) {
     setSavingEditExpense(true);
     try {
-      const sanitizedReceiptName = editExpenseDraft.receiptName
-        ? sanitizeReceiptFilename(editExpenseDraft.receiptName)
-        : '';
+      const allReceiptNames = editReceiptItems.map((it) => it.name).filter(Boolean);
+      const sanitizedReceiptName = allReceiptNames.length > 0 ? allReceiptNames.join(', ') : 'No receipt';
       const periodValue = expenseType === 'monthly' ? getReportMonthValue(targetReport) : editExpenseDraft.date;
       const typeLabel = expenseType === 'monthly' ? 'Monthly Expense' : 'Daily Expense';
       const newLine = [
@@ -2970,33 +3047,41 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         formatCurrency(amount),
         `Supplier: ${cleanNoteValue(editExpenseDraft.supplier) || '-'}`,
         `Description: ${cleanNoteValue(editExpenseDraft.description) || '-'}`,
-        `Receipt: ${cleanNoteValue(sanitizedReceiptName) || 'No receipt'}`,
+        `Receipt: ${cleanNoteValue(sanitizedReceiptName)}`,
       ].join(' | ');
 
-      // Save receipt if new file / dataUrl provided
-      if (sanitizedReceiptName && (editReceiptDataUrl || editReceiptFile)) {
-        const receiptEntry = {
-          key: sanitizedReceiptName,
-          filename: sanitizedReceiptName,
-          rawName: editReceiptFile?.name || editExpenseDraft.receiptName,
-          dataUrl: editReceiptDataUrl,
-          mimeType: editReceiptValidation?.mimeType || 'image/png',
-          size: editReceiptValidation?.size || 0,
-          sizeFormatted: editReceiptValidation?.sizeFormatted || '',
-          date: periodValue,
-          category: editExpenseDraft.category,
-          amount,
-          supplier: editExpenseDraft.supplier,
-          description: editExpenseDraft.description,
-          reportId: targetReport.id,
-          type: expenseType,
-          typeLabel,
-          isPdf: editReceiptValidation?.isPdf || false,
-        };
-        await saveReceipt(receiptEntry);
-        if (editReceiptFile) {
+      // Save each newly uploaded receipt
+      for (const item of editReceiptItems) {
+        if (!item.isExisting && item.file) {
+          const itemReceiptName = item.name || sanitizeReceiptFilename(item.file.name);
+          const receiptEntry = {
+            key: itemReceiptName,
+            filename: itemReceiptName,
+            rawName: item.file.name || itemReceiptName,
+            dataUrl: item.dataUrl,
+            mimeType: item.mimeType || 'image/png',
+            size: item.validation?.size || item.file.size || 0,
+            sizeFormatted: item.sizeFormatted || '',
+            date: periodValue,
+            category: editExpenseDraft.category,
+            amount,
+            supplier: editExpenseDraft.supplier,
+            description: editExpenseDraft.description,
+            reportId: targetReport.id,
+            type: expenseType,
+            typeLabel,
+            isPdf: item.isPdf || false,
+          };
+          await saveReceipt(receiptEntry);
+          if (item.file.name && item.file.name !== itemReceiptName) {
+            await saveReceipt({
+              ...receiptEntry,
+              key: item.file.name,
+              filename: item.file.name,
+            });
+          }
           try {
-            await API.uploadFinancialReceipt(editReceiptFile);
+            await API.uploadFinancialReceipt(item.file);
           } catch (uploadErr) {
             console.warn('Backend receipt upload fallback:', uploadErr);
           }
@@ -3424,14 +3509,20 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   action: () => handleTabChange('expenses'),
                   actionLabel: 'Manage →',
                 },
+                {
+                  label: 'Over All Net Profit',
+                  amount: statement.netProfit,
+                  isNetProfit: true,
+                  formula: '(Gross Income - Expenses)',
+                },
                 { label: 'Current Balance', amount: statement.currentBalance, isBalance: true },
-              ].map(({ label, amount, isPrimary, isGross, isBalance, action, actionLabel }) => (
+              ].map(({ label, amount, isPrimary, isGross, isNetProfit, isBalance, action, actionLabel, formula }) => (
                 <div
                   key={label}
                   className={`flex items-center justify-between gap-3 px-5 py-2.5 transition-colors ${
                     isBalance
                       ? 'bg-emerald-500/10 dark:bg-emerald-950/40 border-t border-emerald-500/20 dark:border-emerald-800/40'
-                      : isGross
+                      : isNetProfit || isGross
                       ? 'bg-slate-50/70 dark:bg-slate-800/30'
                       : 'hover:bg-slate-50/50 dark:hover:bg-slate-800/20'
                   }`}
@@ -3441,7 +3532,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                       className={`text-xs ${
                         isBalance
                           ? 'font-black text-emerald-900 dark:text-emerald-200'
-                          : isGross
+                          : isNetProfit || isGross
                           ? 'font-black text-slate-900 dark:text-white'
                           : isPrimary
                           ? 'font-bold text-slate-800 dark:text-slate-200'
@@ -3450,6 +3541,11 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                     >
                       {label}
                     </span>
+                    {formula && (
+                      <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        {formula}
+                      </span>
+                    )}
                     {action && (
                       <button
                         type="button"
@@ -3464,6 +3560,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                     className={`font-mono shrink-0 ${
                       isBalance
                         ? 'text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-300'
+                        : isNetProfit
+                        ? `text-sm font-black ${amount < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`
                         : isGross
                         ? 'text-sm font-black text-slate-900 dark:text-white'
                         : isPrimary
@@ -4366,25 +4464,53 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                             </span>
                           </td>
                           <td className="px-3 py-3 text-center whitespace-nowrap">
-                            {row.receipt && row.receipt !== 'No receipt' && row.receipt !== '-' ? (
-                              <button
-                                type="button"
-                                onClick={() => setActivePreviewReceipt(row)}
-                                className="group inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                title={`Click to preview receipt: ${row.receipt}`}
-                              >
-                                <PhotoIcon className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                                <span className="max-w-[65px] truncate font-mono text-[10px]">
-                                  {row.receipt}
-                                </span>
-                                <EyeIcon className="h-3 w-3 shrink-0 opacity-70 group-hover:opacity-100 transition-opacity" />
-                              </button>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-xs text-slate-400">
-                                <MinusCircleIcon className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600" />
-                                <span className="hidden xl:inline text-[11px]">None</span>
-                              </span>
-                            )}
+                            {(() => {
+                              const rawReceipt = row.receipt;
+                              const hasReceipt = rawReceipt && rawReceipt !== 'No receipt' && rawReceipt !== '-';
+                              if (!hasReceipt) {
+                                return (
+                                  <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                                    <MinusCircleIcon className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600" />
+                                    <span className="hidden xl:inline text-[11px]">None</span>
+                                  </span>
+                                );
+                              }
+                              const receiptList = Array.isArray(row.receipts) && row.receipts.length > 0
+                                ? row.receipts
+                                : rawReceipt.split(',').map((s) => s.trim()).filter(Boolean);
+
+                              if (receiptList.length > 1) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => setActivePreviewReceipt({ ...row, receipts: receiptList })}
+                                    className="group inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-800 transition hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 shadow-2xs"
+                                    title={`View all ${receiptList.length} attached receipts:\n${receiptList.join('\n')}`}
+                                  >
+                                    <PhotoIcon className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                                    <span className="font-semibold text-[11px] font-mono">
+                                      {receiptList.length} Receipts
+                                    </span>
+                                    <EyeIcon className="h-3 w-3 shrink-0 opacity-70 group-hover:opacity-100 transition-opacity" />
+                                  </button>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => setActivePreviewReceipt({ ...row, receipts: receiptList })}
+                                  className="group inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                  title={`Click to preview receipt: ${receiptList[0] || rawReceipt}`}
+                                >
+                                  <PhotoIcon className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                                  <span className="max-w-[65px] truncate font-mono text-[10px]">
+                                    {receiptList[0] || rawReceipt}
+                                  </span>
+                                  <EyeIcon className="h-3 w-3 shrink-0 opacity-70 group-hover:opacity-100 transition-opacity" />
+                                </button>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-3 text-center whitespace-nowrap">
                             <div className="inline-flex items-center gap-1 justify-center">
@@ -4458,19 +4584,29 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                       </div>
 
                       <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                        {row.receipt && row.receipt !== 'No receipt' && row.receipt !== '-' ? (
-                          <button
-                            type="button"
-                            onClick={() => setActivePreviewReceipt(row)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                          >
-                            <PhotoIcon className="h-3.5 w-3.5 text-emerald-600" />
-                            <span className="max-w-[120px] truncate font-mono">{row.receipt}</span>
-                            <EyeIcon className="h-3.5 w-3.5 opacity-70" />
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-400">No receipt</span>
-                        )}
+                        {(() => {
+                          const rawReceipt = row.receipt;
+                          const hasReceipt = rawReceipt && rawReceipt !== 'No receipt' && rawReceipt !== '-';
+                          if (!hasReceipt) {
+                            return <span className="text-xs text-slate-400">No receipt</span>;
+                          }
+                          const receiptList = Array.isArray(row.receipts) && row.receipts.length > 0
+                            ? row.receipts
+                            : rawReceipt.split(',').map((s) => s.trim()).filter(Boolean);
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setActivePreviewReceipt({ ...row, receipts: receiptList })}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                            >
+                              <PhotoIcon className="h-3.5 w-3.5 text-emerald-600" />
+                              <span className="max-w-[120px] truncate font-mono">
+                                {receiptList.length > 1 ? `${receiptList.length} Receipts` : receiptList[0] || rawReceipt}
+                              </span>
+                              <EyeIcon className="h-3.5 w-3.5 opacity-70" />
+                            </button>
+                          );
+                        })()}
 
                         <div className="flex items-center gap-1.5">
                           <button
@@ -4699,12 +4835,13 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                     <input
                       ref={expenseFileInputRef}
                       type="file"
+                      multiple
                       accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
                       onChange={handleReceiptFileChange}
                       className="hidden"
                     />
 
-                    {!expenseReceiptValidation ? (
+                    {expenseReceiptItems.length === 0 ? (
                       <button
                         type="button"
                         onClick={() => expenseFileInputRef.current?.click()}
@@ -4716,10 +4853,10 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                           </div>
                           <div className="min-w-0">
                             <div className="text-xs font-bold text-slate-700 dark:text-slate-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                              Choose a File
+                              Choose Receipt File(s)
                             </div>
                             <div className="text-[11px] text-slate-400 dark:text-slate-500">
-                              JPG, PNG, WEBP, GIF, PDF (Max: 5 MB)
+                              JPG, PNG, WEBP, GIF, PDF (Multiple files supported)
                             </div>
                           </div>
                         </div>
@@ -4728,59 +4865,84 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                         </span>
                       </button>
                     ) : (
-                      <div className="flex items-center justify-between rounded-xl border border-emerald-300/80 bg-emerald-50/80 p-3 dark:border-emerald-800/80 dark:bg-emerald-950/40">
-                        <div className="flex items-center gap-2.5 overflow-hidden">
-                          {expenseReceiptDataUrl && !expenseReceiptValidation.isPdf ? (
-                            <img
-                              src={expenseReceiptDataUrl}
-                              alt="Receipt thumbnail"
-                              className="h-10 w-10 shrink-0 rounded-lg object-cover border border-emerald-300 shadow-2xs"
-                            />
-                          ) : (
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
-                              <PhotoIcon className="h-5 w-5" />
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="truncate text-xs font-bold text-slate-900 dark:text-white font-mono" title={expenseEntryDraft.receiptName}>
-                                {expenseEntryDraft.receiptName}
-                              </span>
-                              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200">
-                                <ShieldCheckIcon className="h-3 w-3" />
-                                Ready
-                              </span>
-                            </div>
-                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                              {expenseReceiptValidation.sizeFormatted}
-                            </span>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between px-0.5">
+                          <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                            <DocumentDuplicateIcon className="h-3.5 w-3.5 text-emerald-600" />
+                            Attached Receipts ({expenseReceiptItems.length})
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => expenseFileInputRef.current?.click()}
+                              className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 transition"
+                            >
+                              + Add More
+                            </button>
+                            <span className="text-slate-300 dark:text-slate-700">•</span>
+                            <button
+                              type="button"
+                              onClick={handleClearReceiptUpload}
+                              className="text-[11px] font-bold text-rose-600 hover:text-rose-700 transition"
+                            >
+                              Clear All
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleQuickPreviewUploadedReceipt(selectedReport)}
-                            title="Preview uploaded receipt"
-                            className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition dark:text-emerald-300 dark:hover:bg-emerald-900/50"
-                          >
-                            <EyeIcon className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => expenseFileInputRef.current?.click()}
-                            title="Change file"
-                            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-200/60 transition dark:text-slate-300 dark:hover:bg-slate-800"
-                          >
-                            <ArrowPathIcon className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleClearReceiptUpload}
-                            title="Remove receipt"
-                            className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-100 transition dark:text-rose-400 dark:hover:bg-rose-950/60"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
+
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                          {expenseReceiptItems.map((item, idx) => (
+                            <div
+                              key={item.id || idx}
+                              className="flex items-center justify-between rounded-xl border border-emerald-300/80 bg-emerald-50/80 p-2.5 dark:border-emerald-800/80 dark:bg-emerald-950/40"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {item.dataUrl && !item.isPdf ? (
+                                  <img
+                                    src={item.dataUrl}
+                                    alt={item.name}
+                                    className="h-8 w-8 shrink-0 rounded-lg object-cover border border-emerald-300 shadow-2xs"
+                                  />
+                                ) : (
+                                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
+                                    <PhotoIcon className="h-4 w-4" />
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="truncate text-xs font-bold text-slate-900 dark:text-white font-mono" title={item.name}>
+                                      {item.name}
+                                    </span>
+                                    <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200">
+                                      <ShieldCheckIcon className="h-2.5 w-2.5" />
+                                      Ready
+                                    </span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    {item.sizeFormatted || 'Ready'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickPreviewUploadedReceipt(selectedReport, idx)}
+                                  title="Preview this receipt"
+                                  className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                                >
+                                  <EyeIcon className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveReceiptItem(idx)}
+                                  title="Remove this receipt"
+                                  className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-100 transition dark:text-rose-400 dark:hover:bg-rose-950/60"
+                                >
+                                  <TrashIcon className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -5595,17 +5757,18 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                 />
               </FormField>
 
-              <FormField label="Receipt">
+              <FormField label="Receipt(s)">
                 <div className="space-y-2.5">
                   <input
                     ref={editExpenseFileInputRef}
                     type="file"
+                    multiple
                     accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
                     onChange={handleEditReceiptFileChange}
                     className="hidden"
                   />
 
-                  {!editReceiptValidation && !editExpenseDraft.receiptName ? (
+                  {editReceiptItems.length === 0 ? (
                     <button
                       type="button"
                       onClick={() => editExpenseFileInputRef.current?.click()}
@@ -5617,10 +5780,10 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                         </div>
                         <div className="min-w-0">
                           <div className="text-xs font-bold text-slate-700 dark:text-slate-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                            Attach Receipt File
+                            Attach Receipt File(s)
                           </div>
                           <div className="text-[11px] text-slate-400 dark:text-slate-500">
-                            JPG, PNG, WEBP, GIF, PDF (Max: 5 MB)
+                            JPG, PNG, WEBP, GIF, PDF (Multiple files supported)
                           </div>
                         </div>
                       </div>
@@ -5629,81 +5792,129 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                       </span>
                     </button>
                   ) : (
-                    <div className="flex items-center justify-between rounded-xl border border-emerald-300/80 bg-emerald-50/80 p-3 dark:border-emerald-800/80 dark:bg-emerald-950/40">
-                      <div className="flex items-center gap-2.5 overflow-hidden">
-                        {editReceiptDataUrl && !editReceiptValidation?.isPdf ? (
-                          <img
-                            src={editReceiptDataUrl}
-                            alt="Receipt preview"
-                            className="h-10 w-10 shrink-0 rounded-lg object-cover border border-emerald-300 shadow-2xs"
-                          />
-                        ) : (
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
-                            <PhotoIcon className="h-5 w-5" />
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className="truncate text-xs font-bold text-slate-900 dark:text-white font-mono"
-                              title={editExpenseDraft.receiptName}
-                            >
-                              {editExpenseDraft.receiptName}
-                            </span>
-                            <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200">
-                              <ShieldCheckIcon className="h-3 w-3" />
-                              {editReceiptValidation ? 'New File' : 'Existing'}
-                            </span>
-                          </div>
-                          {editReceiptValidation?.sizeFormatted && (
-                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                              {editReceiptValidation.sizeFormatted}
-                            </span>
-                          )}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between px-0.5">
+                        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                          <DocumentDuplicateIcon className="h-3.5 w-3.5 text-emerald-600" />
+                          Attached Receipts ({editReceiptItems.length})
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => editExpenseFileInputRef.current?.click()}
+                            className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 transition"
+                          >
+                            + Add More
+                          </button>
+                          <span className="text-slate-300 dark:text-slate-700">•</span>
+                          <button
+                            type="button"
+                            onClick={handleClearEditReceiptUpload}
+                            className="text-[11px] font-bold text-rose-600 hover:text-rose-700 transition"
+                          >
+                            Clear All
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (editReceiptDataUrl) {
-                              setActivePreviewReceipt({
-                                filename: editExpenseDraft.receiptName || 'Receipt',
-                                dataUrl: editReceiptDataUrl,
-                                category: editExpenseDraft.category,
-                                amount: editExpenseDraft.amount || 0,
-                                date: editExpenseDraft.type === 'monthly' ? editExpenseDraft.month : editExpenseDraft.date,
-                                supplier: editExpenseDraft.supplier,
-                                description: editExpenseDraft.description,
-                                type: editExpenseDraft.type,
-                                isPdf: editReceiptValidation?.isPdf,
-                                mimeType: editReceiptValidation?.mimeType,
-                              });
-                            } else if (editingExpense.receipt && editingExpense.receipt !== 'No receipt') {
-                              setActivePreviewReceipt(editingExpense);
-                            }
-                          }}
-                          title="Preview receipt"
-                          className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition dark:text-emerald-300 dark:hover:bg-emerald-900/50"
-                        >
-                          <EyeIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => editExpenseFileInputRef.current?.click()}
-                          title="Change file"
-                          className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-200/60 transition dark:text-slate-300 dark:hover:bg-slate-800"
-                        >
-                          <ArrowPathIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleClearEditReceiptUpload}
-                          title="Remove receipt"
-                          className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-100 transition dark:text-rose-400 dark:hover:bg-rose-950/60"
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </button>
+
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                        {editReceiptItems.map((item, idx) => {
+                          const directUrl = API.getFinancialReceiptUrl(item.name);
+                          const isPdf = item.isPdf || String(item.name).toLowerCase().endsWith('.pdf');
+                          return (
+                            <div
+                              key={item.id || idx}
+                              className="flex items-center justify-between rounded-xl border border-emerald-300/80 bg-emerald-50/80 p-2.5 dark:border-emerald-800/80 dark:bg-emerald-950/40"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {item.dataUrl && !isPdf ? (
+                                  <img
+                                    src={item.dataUrl}
+                                    alt={item.name}
+                                    className="h-8 w-8 shrink-0 rounded-lg object-cover border border-emerald-300 shadow-2xs"
+                                  />
+                                ) : directUrl && !isPdf ? (
+                                  <img
+                                    src={directUrl}
+                                    alt={item.name}
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none';
+                                    }}
+                                    className="h-8 w-8 shrink-0 rounded-lg object-cover border border-emerald-300 shadow-2xs"
+                                  />
+                                ) : (
+                                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
+                                    <PhotoIcon className="h-4 w-4" />
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className="truncate text-xs font-bold text-slate-900 dark:text-white font-mono"
+                                      title={item.name}
+                                    >
+                                      {item.name}
+                                    </span>
+                                    <span
+                                      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.2 text-[9px] font-bold ${
+                                        item.isExisting
+                                          ? 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                                          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200'
+                                      }`}
+                                    >
+                                      <ShieldCheckIcon className="h-2.5 w-2.5" />
+                                      {item.isExisting ? 'Existing' : 'New File'}
+                                    </span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    {item.sizeFormatted || (item.isExisting ? 'Saved Document' : 'Ready')}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActivePreviewReceipt({
+                                      ...editingExpense,
+                                      items: editReceiptItems.map((it) => ({
+                                        filename: it.name,
+                                        name: it.name,
+                                        dataUrl: it.dataUrl || null,
+                                        url: API.getFinancialReceiptUrl(it.name),
+                                        isPdf: it.isPdf || String(it.name).toLowerCase().endsWith('.pdf'),
+                                        mimeType: it.mimeType,
+                                      })),
+                                      initialIndex: idx,
+                                      category: editExpenseDraft.category,
+                                      amount: editExpenseDraft.amount || 0,
+                                      date:
+                                        editExpenseDraft.type === 'monthly'
+                                          ? editExpenseDraft.month
+                                          : editExpenseDraft.date,
+                                      supplier: editExpenseDraft.supplier,
+                                      description: editExpenseDraft.description,
+                                      type: editExpenseDraft.type,
+                                    });
+                                  }}
+                                  title="Preview receipt"
+                                  className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                                >
+                                  <EyeIcon className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveEditReceiptItem(idx)}
+                                  title="Remove receipt"
+                                  className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-100 transition dark:text-rose-400 dark:hover:bg-rose-950/60"
+                                >
+                                  <TrashIcon className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

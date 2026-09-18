@@ -11,15 +11,9 @@ import {
   removeOfflineTransactions,
   saveApiCacheEntry,
   saveOfflineFinancialMutation,
+  saveOfflineLoginProfile,
 } from './offlineStore';
 import { safeLocalStorageSetItem, safeLocalStorageSetJson } from './storage';
-
-// Purge legacy sensitive tokens from client storage
-if (typeof window !== 'undefined' && window.localStorage) {
-  try {
-    localStorage.removeItem('sc_offline_login_v1');
-  } catch {}
-}
 
 const API_ROOT_PATH = '/api';
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
@@ -482,9 +476,6 @@ function clearSession() {
   localStorage.removeItem('sc_user');
   localStorage.removeItem(BACKGROUND_ALERT_STORAGE_KEY);
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
-  localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
-  localStorage.removeItem('sc_trusted_authenticator_device');
-  localStorage.removeItem('sc_offline_login_v1');
 }
 
 function handleUnauthorizedSessionClear() {
@@ -1219,6 +1210,11 @@ async function completeAuthenticatedLoginResponse(response, password, { remember
   } else {
     clearTrustedDeviceToken(username || response?.user?.username);
   }
+
+  if (password && response?.user) {
+    await saveOfflineLoginProfile({ user: response.user, password });
+  }
+
   localStorage.removeItem(OFFLINE_SESSION_STORAGE_KEY);
   return response;
 }
@@ -1484,6 +1480,10 @@ export const API = {
     const formData = new FormData();
     formData.append('file', file);
     return request('POST', '/financial-reports/receipts/upload', formData);
+  },
+  uploadFinancialReceipts: async (files = []) => {
+    const list = Array.from(files || []);
+    return Promise.all(list.map((file) => API.uploadFinancialReceipt(file)));
   },
   getFinancialReceiptUrl: (filename) => {
     if (!filename) return '';
