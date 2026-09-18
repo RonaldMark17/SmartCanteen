@@ -422,29 +422,30 @@ function clearStoredAuthenticatorChallenge() {
   }
 }
 
-function persistAuthenticatedSession(accessToken, user) {
+function persistAuthenticatedSession(accessToken, user, rememberMe) {
   const quotaMessage =
     'This device is out of browser storage. MEALS cleared temporary cache, but there is still not enough space to save your session. Clear site data for this app and try again.';
+  const targetStorage = rememberMe ? localStorage : sessionStorage;
+  const otherStorage = rememberMe ? sessionStorage : localStorage;
 
   if (accessToken) {
-    safeLocalStorageSetItem('sc_token', accessToken, { quotaMessage });
-    try {
-      sessionStorage.setItem('sc_token', accessToken);
-    } catch {}
+    targetStorage.setItem('sc_token', accessToken);
+    otherStorage.removeItem('sc_token');
   }
 
   if (user) {
     try {
-      safeLocalStorageSetJson('sc_user', user, {
-        protectedKeys: ['sc_token'],
-        quotaMessage,
-      });
-      sessionStorage.setItem('sc_user', JSON.stringify(user));
+      if (rememberMe) {
+        safeLocalStorageSetJson('sc_user', user, {
+          protectedKeys: ['sc_token'],
+          quotaMessage,
+        });
+      } else {
+        sessionStorage.setItem('sc_user', JSON.stringify(user));
+      }
+      otherStorage.removeItem('sc_user');
     } catch (error) {
-      localStorage.removeItem('sc_token');
-      try {
-        sessionStorage.removeItem('sc_token');
-      } catch {}
+      targetStorage.removeItem('sc_token');
       throw error;
     }
   }
@@ -604,13 +605,17 @@ export default function Login({ onLogin, onRequire2FASetup }) {
       localStorage.removeItem(REMEMBERED_USERNAME_STORAGE_KEY);
       localStorage.removeItem('sc_remember_me');
     }
-    persistAuthenticatedSession(res.access_token, res.user);
+    persistAuthenticatedSession(res.access_token, res.user, rememberUsername);
     try {
-      sessionStorage.setItem('sc_session_active', 'true');
-      localStorage.setItem('sc_session_active', 'true');
-      sessionStorage.setItem('sc_two_factor_verified', 'true');
-      safeLocalStorageSetItem('sc_two_factor_verified', 'true');
-    } catch {}
+      const targetStorage = rememberUsername ? localStorage : sessionStorage;
+      const otherStorage = rememberUsername ? sessionStorage : localStorage;
+      targetStorage.setItem('sc_session_active', 'true');
+      targetStorage.setItem('sc_two_factor_verified', 'true');
+      otherStorage.removeItem('sc_session_active');
+      otherStorage.removeItem('sc_two_factor_verified');
+    } catch {
+      /* ignore storage access issue */
+    }
     clearStoredAuthenticatorChallenge();
     setAuthenticatorChallenge(null);
     setAuthenticatorCode('');
@@ -622,7 +627,7 @@ export default function Login({ onLogin, onRequire2FASetup }) {
     if (res.offline) {
       window.showToast?.('Signed in with offline access saved on this device.', 'warning');
     }
-    onLogin?.(res.user, res.access_token);
+    onLogin?.(res.user, res.access_token, rememberUsername);
   };
 
   const handleSubmit = async (e) => {
@@ -670,10 +675,19 @@ export default function Login({ onLogin, onRequire2FASetup }) {
           res?.redirect_url === '/admin/setup-2fa'
         ) {
           try {
-            sessionStorage.setItem(MFA_CHALLENGE_STORAGE_KEY, JSON.stringify(res));
-          } catch {}
+            if (rememberUsername) {
+              safeLocalStorageSetItem('sc_remember_me', 'true');
+              safeLocalStorageSetItem(REMEMBERED_USERNAME_STORAGE_KEY, submittedUsername.trim());
+            }
+            sessionStorage.setItem(
+              MFA_CHALLENGE_STORAGE_KEY,
+              JSON.stringify({ ...res, remember_me: Boolean(rememberUsername) })
+            );
+          } catch {
+            /* ignore storage access issue */
+          }
           if (typeof onRequire2FASetup === 'function') {
-            onRequire2FASetup(res);
+            onRequire2FASetup({ ...res, remember_me: Boolean(rememberUsername) });
             setLoading(false);
             return;
           }
@@ -843,7 +857,7 @@ export default function Login({ onLogin, onRequire2FASetup }) {
   const downloadRecoveryCodes = () => {
     downloadRecoveryCodesFile(
       pendingRecoveryCodes,
-      pendingLoginResult?.submittedUsername || identifier || 'user'
+      pendingLoginResult?.submittedUsername || pendingLoginResult?.identifier || username || 'user'
     );
   };
 
@@ -1243,7 +1257,7 @@ export default function Login({ onLogin, onRequire2FASetup }) {
           {/* Form */}
           <form onSubmit={handleSubmit} className="mt-5 space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+              <label htmlFor="login-username" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                 Username
               </label>
               <div className="relative">
@@ -1251,6 +1265,8 @@ export default function Login({ onLogin, onRequire2FASetup }) {
                   <UserIcon className="h-4 w-4" />
                 </div>
                 <input
+                  id="login-username"
+                  name="username"
                   type="text"
                   required
                   placeholder="Enter your username"
@@ -1265,7 +1281,7 @@ export default function Login({ onLogin, onRequire2FASetup }) {
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                <label htmlFor="login-password" className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Password
                 </label>
                 <button
@@ -1281,6 +1297,8 @@ export default function Login({ onLogin, onRequire2FASetup }) {
                   <LockClosedIcon className="h-4 w-4" />
                 </div>
                 <input
+                  id="login-password"
+                  name="password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   placeholder="Enter your password"
@@ -1302,8 +1320,10 @@ export default function Login({ onLogin, onRequire2FASetup }) {
             </div>
 
             <div className="flex items-center justify-between text-xs pt-0.5">
-              <label className="flex items-center gap-2 text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+              <label htmlFor="login-remember-me" className="flex items-center gap-2 text-slate-600 dark:text-slate-400 cursor-pointer select-none">
                 <input
+                  id="login-remember-me"
+                  name="remember_me"
                   type="checkbox"
                   checked={rememberUsername}
                   onChange={(event) => setRememberUsername(event.target.checked)}
@@ -1497,10 +1517,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               {passwordResetMode === 'request' ? (
                 <form onSubmit={submitPasswordResetRequest} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="password-reset-request-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="password-reset-request-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={passwordResetIdentifier}
@@ -1521,10 +1543,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               ) : passwordResetMode === 'status' ? (
                 <form onSubmit={checkPasswordResetStatus} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="password-reset-status-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="password-reset-status-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={passwordResetIdentifier}
@@ -1545,10 +1569,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               ) : passwordResetMode === 'appeal' ? (
                 <form onSubmit={submitPasswordResetAppeal} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="password-reset-appeal-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="password-reset-appeal-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={passwordResetIdentifier}
@@ -1559,11 +1585,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="password-reset-appeal-reason" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Appeal reason
                     </label>
                     <textarea
-                      id="appeal-placeholder"
+                      id="password-reset-appeal-reason"
+                      name="appeal_reason"
                       required
                       rows={4}
                       value={passwordResetAppealReason}
@@ -1592,10 +1619,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               ) : (
                 <form onSubmit={submitApprovedPasswordChange} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="password-reset-change-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="password-reset-change-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={passwordResetIdentifier}
@@ -1606,10 +1635,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="password-reset-new-password" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       New password
                     </label>
                     <input
+                      id="password-reset-new-password"
+                      name="new_password"
                       type="password"
                       required
                       minLength={6}
@@ -1621,10 +1652,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="password-reset-confirm-password" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Confirm password
                     </label>
                     <input
+                      id="password-reset-confirm-password"
+                      name="confirm_password"
                       type="password"
                       required
                       minLength={6}
@@ -1781,10 +1814,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               {authRecoveryMode === 'request' ? (
                 <form onSubmit={submitAuthenticatorRecoveryRequest} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="auth-recovery-request-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="auth-recovery-request-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={authRecoveryIdentifier}
@@ -1795,10 +1830,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="auth-recovery-request-reason" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Recovery reason
                     </label>
                     <textarea
+                      id="auth-recovery-request-reason"
+                      name="recovery_reason"
                       required
                       rows={4}
                       value={authRecoveryReason}
@@ -1818,10 +1855,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               ) : authRecoveryMode === 'status' ? (
                 <form onSubmit={checkAuthenticatorRecoveryStatus} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="auth-recovery-status-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="auth-recovery-status-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={authRecoveryIdentifier}
@@ -1842,10 +1881,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               ) : authRecoveryMode === 'appeal' ? (
                 <form onSubmit={submitAuthenticatorRecoveryAppeal} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="auth-recovery-appeal-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="auth-recovery-appeal-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={authRecoveryIdentifier}
@@ -1856,10 +1897,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="auth-recovery-appeal-reason" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Appeal reason
                     </label>
                     <textarea
+                      id="auth-recovery-appeal-reason"
+                      name="appeal_reason"
                       required
                       rows={4}
                       value={authRecoveryAppealReason}
@@ -1897,10 +1940,12 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               ) : (
                 <form onSubmit={startApprovedAuthenticatorSetup} className="mt-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label htmlFor="auth-recovery-setup-identifier" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Username or email
                     </label>
                     <input
+                      id="auth-recovery-setup-identifier"
+                      name="identifier"
                       type="text"
                       required
                       value={authRecoveryIdentifier}
@@ -1990,11 +2035,13 @@ export default function Login({ onLogin, onRequire2FASetup }) {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                <label htmlFor="login-authenticator-code" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   6-digit code or recovery code
                 </label>
                 <input
                   ref={authenticatorCodeRef}
+                  id="login-authenticator-code"
+                  name="two_factor_code"
                   type="text"
                   inputMode={isAuthenticatorSetup ? 'numeric' : 'text'}
                   required

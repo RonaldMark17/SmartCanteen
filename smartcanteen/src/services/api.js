@@ -20,6 +20,8 @@ const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
 const OFFLINE_SESSION_STORAGE_KEY = 'sc_offline_session';
 const TRUSTED_DEVICE_STORAGE_KEY = 'sc_trusted_authenticator_devices';
 const BACKGROUND_ALERT_STORAGE_KEY = 'sc_background_alert_token';
+const REFRESH_TOKEN_STORAGE_KEY = 'sc_refresh_token';
+const REMEMBER_ME_STORAGE_KEY = 'sc_remember_me';
 const DEFAULT_REMOTE_API_ORIGIN = 'https://smartcanteen.duckdns.org';
 const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
@@ -318,21 +320,12 @@ function resolveApiBase() {
     return normalizeApiBase(DEFAULT_REMOTE_API_BASE);
   }
 
-  if (isLocalWebHost()) {
+  // Web browser runtime:
+  if (typeof window !== 'undefined' && window.location?.origin && window.location.protocol !== 'file:') {
+    if (window.MEALS_CONFIG?.apiBaseUrl && isAbsoluteUrl(window.MEALS_CONFIG.apiBaseUrl)) {
+      return normalizeApiBase(window.MEALS_CONFIG.apiBaseUrl);
+    }
     return normalizeApiBase(`${window.location.origin}${API_ROOT_PATH}`);
-  }
-
-  if (isDefaultProductionWebHost()) {
-    return API_ROOT_PATH;
-  }
-
-  const secureWebApiBase = resolveSecureWebApiBase();
-  if (secureWebApiBase) {
-    return secureWebApiBase;
-  }
-
-  if (import.meta.env.DEV && isProxyRelativeApiBase(envApiBase)) {
-    return API_ROOT_PATH;
   }
 
   return normalizeApiBase(envApiBase || DEFAULT_REMOTE_API_BASE);
@@ -358,6 +351,11 @@ function resolveFallbackApiBase(primaryBase) {
   }
 
   if (window.location?.protocol === 'https:') {
+    return null;
+  }
+
+  // Never fall back to loopback 127.0.0.1 on deployed systems or non-local clients
+  if (!isLocalWebHost()) {
     return null;
   }
 
@@ -467,6 +465,7 @@ function isLoginFlowPath(path) {
   const normalizedPath = String(path || '');
   return (
     normalizedPath.startsWith('/auth/login') ||
+    normalizedPath.startsWith('/auth/refresh') ||
     normalizedPath.startsWith('/auth/authenticator/verify')
   );
 }
@@ -474,7 +473,8 @@ function isLoginFlowPath(path) {
 function clearSession() {
   localStorage.removeItem('sc_token');
   localStorage.removeItem('sc_user');
-  localStorage.removeItem('sc_remember_me');
+  localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+  localStorage.removeItem(REMEMBER_ME_STORAGE_KEY);
   localStorage.removeItem('sc_two_factor_verified');
   localStorage.removeItem('sc_session_active');
   localStorage.removeItem(BACKGROUND_ALERT_STORAGE_KEY);
@@ -489,6 +489,8 @@ function clearSession() {
 }
 
 function handleUnauthorizedSessionClear() {
+  console.warn('[MEALS AUTH] handleUnauthorizedSessionClear() triggered in api.js!');
+  console.trace('[MEALS AUTH] handleUnauthorizedSessionClear trace:');
   clearSession();
   if (typeof window !== 'undefined') {
     try {
@@ -652,9 +654,40 @@ function getClientRequestHeaders() {
   };
 }
 
+function isRememberedSession() {
+  try {
+    return (
+      localStorage.getItem(REMEMBER_ME_STORAGE_KEY) === 'true' ||
+      Boolean(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getStoredRefreshToken() {
+  try {
+    return (
+      localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) ||
+      sessionStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) ||
+      ''
+    );
+  } catch {
+    return '';
+  }
+}
+
 function getStoredToken() {
   try {
-    return localStorage.getItem('sc_token') || sessionStorage.getItem('sc_token') || '';
+    const sessionToken = sessionStorage.getItem('sc_token');
+    if (sessionToken) {
+      return sessionToken;
+    }
+    const localToken = localStorage.getItem('sc_token');
+    if (localToken) {
+      return localToken;
+    }
+    return '';
   } catch {
     return '';
   }
@@ -749,6 +782,48 @@ async function getCachedResponse(method, path) {
 
   const latestMatch = getLatestApiCacheEntry({ method, path });
   return latestMatch?.data ?? null;
+}
+
+let activeRefreshPromise = null;
+
+async function executeSilentRefresh() {
+  if (activeRefreshPromise) {
+    return activeRefreshPromise;
+  }
+  activeRefreshPromise = (async () => {
+    try {
+      const refreshToken = getStoredRefreshToken();
+      if (!refreshToken) {
+        return null;
+      }
+      const response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getClientRequestHeaders(),
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!response.ok) {
+        return null;
+      }
+      const data = await response.json();
+      if (data?.access_token) {
+        await completeAuthenticatedLoginResponse(data, '', {
+          rememberDevice: true,
+          rememberMe: true,
+          username: data?.user?.username || '',
+        });
+        return data;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      activeRefreshPromise = null;
+    }
+  })();
+  return activeRefreshPromise;
 }
 
 async function performRequest(method, path, body = null, options = {}) {
@@ -861,6 +936,16 @@ async function performRequest(method, path, body = null, options = {}) {
     }
 
     if (res.status === 401 && !isLoginFlowPath(path)) {
+      const refreshToken = getStoredRefreshToken();
+      if (refreshToken && !options._isRetry) {
+        const refreshed = await executeSilentRefresh();
+        if (refreshed?.access_token) {
+          return performRequest(method, path, body, {
+            ...options,
+            _isRetry: true,
+          });
+        }
+      }
       handleUnauthorizedSessionClear();
       return null;
     }
@@ -1215,28 +1300,64 @@ async function syncPendingOfflineChanges() {
   };
 }
 
-async function completeAuthenticatedLoginResponse(response, password, { rememberDevice = false, username = '' } = {}) {
+async function completeAuthenticatedLoginResponse(
+  response,
+  password,
+  { rememberDevice = false, rememberMe = false, username = '' } = {}
+) {
   assertMfaWasCompleted(response);
+  const persistent = Boolean(response?.remember_me || rememberMe);
 
   if (response?.access_token) {
-    safeLocalStorageSetItem('sc_token', response.access_token);
-    try {
-      sessionStorage.setItem('sc_token', response.access_token);
-    } catch {}
+    if (persistent) {
+      safeLocalStorageSetItem('sc_token', response.access_token);
+      try {
+        sessionStorage.removeItem('sc_token');
+      } catch {}
+    } else {
+      try {
+        sessionStorage.setItem('sc_token', response.access_token);
+      } catch {}
+      localStorage.removeItem('sc_token');
+    }
   }
 
   if (response?.user) {
-    try {
+    const serializedUser = JSON.stringify(response.user);
+    if (persistent) {
       safeLocalStorageSetJson('sc_user', response.user);
-      sessionStorage.setItem('sc_user', JSON.stringify(response.user));
+      try {
+        sessionStorage.removeItem('sc_user');
+      } catch {}
+    } else {
+      try {
+        sessionStorage.setItem('sc_user', serializedUser);
+      } catch {}
+      localStorage.removeItem('sc_user');
+    }
+  }
+
+  if (persistent && response?.refresh_token) {
+    safeLocalStorageSetItem(REFRESH_TOKEN_STORAGE_KEY, response.refresh_token);
+    safeLocalStorageSetItem(REMEMBER_ME_STORAGE_KEY, 'true');
+    safeLocalStorageSetItem('sc_session_active', 'true');
+    safeLocalStorageSetItem('sc_two_factor_verified', 'true');
+    try {
+      sessionStorage.removeItem('sc_session_active');
+      sessionStorage.removeItem('sc_two_factor_verified');
+    } catch {}
+  } else if (!persistent) {
+    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+    localStorage.removeItem(REMEMBER_ME_STORAGE_KEY);
+    localStorage.removeItem('sc_session_active');
+    localStorage.removeItem('sc_two_factor_verified');
+    try {
+      sessionStorage.setItem('sc_session_active', 'true');
+      sessionStorage.setItem('sc_two_factor_verified', 'true');
     } catch {}
   }
 
   try {
-    sessionStorage.setItem('sc_session_active', 'true');
-    localStorage.setItem('sc_session_active', 'true');
-    sessionStorage.setItem('sc_two_factor_verified', 'true');
-    safeLocalStorageSetItem('sc_two_factor_verified', 'true');
     sessionStorage.removeItem('sc_pending_authenticator_challenge');
   } catch {}
 
@@ -1285,7 +1406,11 @@ async function login(username, password, { rememberDevice = false, rememberMe = 
     }
 
     if (response?.access_token) {
-      return completeAuthenticatedLoginResponse(response, password, { rememberDevice: isRemembered, username });
+      return completeAuthenticatedLoginResponse(response, password, {
+        rememberDevice: isRemembered,
+        rememberMe: isRemembered,
+        username,
+      });
     }
 
     throw new Error('Authenticator app verification is required before opening the dashboard.');
@@ -1320,7 +1445,11 @@ async function verifyAuthenticatorLogin(
       Authorization: `Bearer ${normalizedMfaToken}`,
     },
   });
-  return completeAuthenticatedLoginResponse(response, password, { rememberDevice, username });
+  return completeAuthenticatedLoginResponse(response, password, {
+    rememberDevice: rememberDevice || Boolean(response?.remember_me),
+    rememberMe: rememberMe || Boolean(response?.remember_me),
+    username,
+  });
 }
 
 export async function verifyAuthenticatorSetup({
@@ -1329,6 +1458,7 @@ export async function verifyAuthenticatorSetup({
   username = '',
   rememberDevice = false,
 }) {
+  const rememberMe = isRememberedSession();
   const normalizedMfaToken = String(mfaToken || '').trim();
   if (!normalizedMfaToken) {
     throw new Error('Verification session expired. Please start authenticator setup again.');
@@ -1341,7 +1471,8 @@ export async function verifyAuthenticatorSetup({
       username,
       mfa_token: normalizedMfaToken,
       code,
-      remember_device: rememberDevice,
+      remember_device: rememberDevice || rememberMe,
+      remember_me: rememberMe,
     },
     {
       headers: {
@@ -1350,17 +1481,29 @@ export async function verifyAuthenticatorSetup({
     }
   );
 
-  if (response?.access_token) {
-    safeLocalStorageSetItem('sc_token', response.access_token);
-  }
-  if (response?.user) {
-    safeLocalStorageSetJson('sc_user', response.user);
-  }
-  if (rememberDevice) {
-    saveTrustedDeviceToken(username, response);
-  }
+  await completeAuthenticatedLoginResponse(response, '', {
+    rememberDevice: rememberDevice || rememberMe || Boolean(response?.remember_me),
+    rememberMe: rememberMe || Boolean(response?.remember_me),
+    username,
+  });
 
   return response;
+}
+
+async function refreshSession() {
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) {
+    const error = new Error('No remembered session is available.');
+    error.status = 401;
+    throw error;
+  }
+
+  const response = await request('POST', '/auth/refresh', { refresh_token: refreshToken });
+  return completeAuthenticatedLoginResponse(response, '', {
+    rememberDevice: true,
+    rememberMe: true,
+    username: response?.user?.username || '',
+  });
 }
 
 export const API = {
@@ -1369,12 +1512,15 @@ export const API = {
   verifyAuthenticatorSetup,
   logout: async () => {
     try {
-      await performRequest('POST', '/auth/logout');
+      await performRequest('POST', '/auth/logout', {
+        refresh_token: getStoredRefreshToken() || undefined,
+      });
     } catch {
-      // Ignore network errors during logout
+      // Clear this browser even if the server cannot be reached.
     }
     clearSession();
   },
+  refreshSession,
   me: () => request('GET', '/auth/me'),
   register: (data) => request('POST', '/auth/register', data),
   requestPasswordReset: (usernameOrEmail) => request('POST', '/auth/password-reset/request', { usernameOrEmail }),

@@ -12,6 +12,14 @@ class LoginRequest(BaseModel):
     remember_me: bool = False
 
 
+class RefreshSessionRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
 class AuthenticatorAuthenticationFinishRequest(BaseModel):
     username: Optional[str] = None
     mfa_token: Optional[str] = None

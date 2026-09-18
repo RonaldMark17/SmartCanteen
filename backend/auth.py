@@ -18,6 +18,7 @@ import os
 SECRET_KEY  = os.getenv("JWT_SECRET_KEY", "smartcanteen-secret-key-CHANGE-THIS-in-prod-2024!")
 ALGORITHM   = "HS256"
 EXPIRE_MINS = 480   # 8-hour sessions (canteen shift length)
+REMEMBERED_EXPIRE_DAYS = 30  # 30-day persistent session for Remember Me
 MFA_EXPIRE_MINS = 5
 BACKGROUND_ALERT_EXPIRE_DAYS = 30
 

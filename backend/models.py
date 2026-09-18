@@ -33,6 +33,8 @@ class User(Base):
     audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="user")
     trusted_devices: Mapped[List["UserTrustedDevice"]] = relationship("UserTrustedDevice", back_populates="user",
                                    cascade="all, delete-orphan")
+    login_sessions: Mapped[List["UserLoginSession"]] = relationship("UserLoginSession", back_populates="user",
+                                  cascade="all, delete-orphan")
     recovery_codes: Mapped[List["UserRecoveryCode"]] = relationship("UserRecoveryCode", back_populates="user",
                                   cascade="all, delete-orphan")
     alert_states: Mapped[List["UserAlertState"]] = relationship("UserAlertState", back_populates="user",
@@ -52,6 +54,24 @@ class UserTrustedDevice(Base):
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="trusted_devices")
+
+
+class UserLoginSession(Base):
+    """A revocable, device-bound refresh session for a remembered login."""
+
+    __tablename__ = "user_login_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    device_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    two_factor_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
+    user: Mapped["User"] = relationship("User", back_populates="login_sessions")
 
 
 class UserRecoveryCode(Base):

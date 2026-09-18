@@ -98,8 +98,8 @@ function AuthenticatedWorkspace() {
     adminDashboard: <Dashboard />,
     adminSetup2FA: (
       <AdminSetup2FA
-        onComplete={(updatedUser, token) => {
-          if (updatedUser) login(updatedUser, token);
+        onComplete={(updatedUser, token, rememberMe) => {
+          if (updatedUser) login(updatedUser, token, rememberMe);
           refreshUser();
         }}
         onCancel={() => logout()}
@@ -163,6 +163,15 @@ function AppContent() {
     }
   });
 
+  console.log('[MEALS AUTH] AppContent render state:', {
+    loading,
+    splashFinished,
+    isAuthenticated,
+    role,
+    isTwoFactorVerified,
+    username: user?.username || null,
+  });
+
   if (loading || !splashFinished) {
     return <AppSplashScreen onFinished={() => setSplashFinished(true)} />;
   }
@@ -179,18 +188,19 @@ function AppContent() {
 
   // Intercept navigation flow if 2FA setup is required/pending for an admin account
   if (pending2FASetup || isAdmin2FAMissing) {
+    console.log('[MEALS AUTH] Intercepting to AdminSetup2FA:', { pending2FASetup: Boolean(pending2FASetup), isAdmin2FAMissing });
     return (
       <>
         <Toaster />
         <AdminSetup2FA
           initialChallenge={pending2FASetup}
-          onComplete={(nextUser, token) => {
+          onComplete={(nextUser, token, rememberMe) => {
             setPending2FASetup(null);
             try {
               sessionStorage.removeItem('sc_pending_authenticator_challenge');
             } catch {}
             if (nextUser) {
-              login(nextUser, token);
+              login(nextUser, token, rememberMe);
             }
             refreshUser();
           }}
@@ -207,13 +217,20 @@ function AppContent() {
   }
 
   if (!isAuthenticated || !isValidRole(role) || !isTwoFactorVerified) {
+    console.warn('[MEALS AUTH] Rendering Login view. Reason check:', {
+      isAuthenticated,
+      validRole: isValidRole(role),
+      isTwoFactorVerified,
+      role,
+      user: user ? user.username : null,
+    });
     return (
       <>
         <Toaster />
         <Login
-          onLogin={(loggedUser, token) => {
+          onLogin={(loggedUser, token, rememberMe) => {
             if (loggedUser) {
-              login(loggedUser, token);
+              login(loggedUser, token, rememberMe);
             }
             refreshUser();
           }}

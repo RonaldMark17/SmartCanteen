@@ -1676,6 +1676,99 @@ def _attach_trusted_device_response(response: dict, token: str, expires_at: date
     return response
 
 
+def _login_session_token_hash(token: str) -> str:
+    normalized = (token or "").strip()
+    if not normalized:
+        return ""
+
+    return hmac.new(
+        auth.SECRET_KEY.encode("utf-8"),
+        f"login-session:{normalized}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _create_login_session(
+    db: Session,
+    user: models.User,
+    device_id: str,
+    *,
+    two_factor_verified: bool,
+):
+    raw_token = secrets.token_urlsafe(48)
+    now = utc_now_naive()
+    session = models.UserLoginSession(
+        user_id=user.id,
+        token_hash=_login_session_token_hash(raw_token),
+        device_id=(device_id or "unknown_device")[:255],
+        two_factor_verified=two_factor_verified,
+        expires_at=now + timedelta(days=TRUSTED_DEVICE_DAYS),
+        last_used_at=now,
+    )
+    db.add(session)
+    db.flush()
+    return raw_token, session
+
+
+def _get_valid_login_session(db: Session, refresh_token: str, device_id: str):
+    token_hash = _login_session_token_hash(refresh_token)
+    if not token_hash:
+        return None
+
+    session = (
+        db.query(models.UserLoginSession)
+        .filter(
+            models.UserLoginSession.token_hash == token_hash,
+            models.UserLoginSession.revoked_at.is_(None),
+            models.UserLoginSession.expires_at > utc_now_naive(),
+        )
+        .first()
+    )
+    if not session:
+        return None
+
+    session_dev = (session.device_id or "").strip()
+    incoming_dev = (device_id or "").strip()
+    if session_dev and session_dev != "unknown_device" and incoming_dev and incoming_dev != "unknown_device":
+        if session_dev != incoming_dev[:255]:
+            return None
+
+    if not session.user or not session.user.is_active:
+        return None
+
+    return session
+
+
+def _attach_login_session_response(
+    response: dict,
+    db: Session,
+    user: models.User,
+    device_id: str,
+    *,
+    two_factor_verified: bool,
+) -> dict:
+    refresh_token, session = _create_login_session(
+        db,
+        user,
+        device_id,
+        two_factor_verified=two_factor_verified,
+    )
+    response["remember_me"] = True
+    response["refresh_token"] = refresh_token
+    response["refresh_token_expires_at"] = session.expires_at.isoformat() + "Z"
+    response["session_id"] = session.id
+    return response
+
+
+def _revoke_user_login_sessions(db: Session, user: models.User):
+    db.query(models.UserLoginSession).filter(
+        models.UserLoginSession.user_id == user.id,
+        models.UserLoginSession.revoked_at.is_(None),
+    ).update(
+        {models.UserLoginSession.revoked_at: utc_now_naive()},
+        synchronize_session=False,
+    )
+
 def _normalize_recovery_code(code: str) -> str:
     return "".join(
         character
@@ -1797,6 +1890,7 @@ def _reset_user_authenticator(db: Session, user: models.User, *, revoke_remember
             {models.UserTrustedDevice.revoked_at: now},
             synchronize_session=False,
         )
+        _revoke_user_login_sessions(db, user)
 
 
 def _user_payload(db: Session, user: models.User) -> dict:
@@ -1823,15 +1917,18 @@ def _build_login_success(
     user: models.User,
     expires_delta: Optional[timedelta] = None,
     two_factor_verified: bool = False,
+    remember_me: bool = False,
+    device_id: str = "",
 ) -> dict[str, Any]:
     token_claims = {"sub": user.username}
     is_mfa_enabled = bool(getattr(user, "authenticator_enabled", False))
     if two_factor_verified or not is_mfa_enabled:
         token_claims["two_factor_verified"] = True
-    setattr(user, "_token_payload", token_claims)
+    if remember_me and expires_delta is None:
+        expires_delta = timedelta(days=auth.REMEMBERED_EXPIRE_DAYS)
     token = auth.create_access_token(token_claims, expires_delta=expires_delta)
     user_data = _user_payload(db, user)
-    return {
+    response = {
         "access_token": token,
         "background_alert_token": auth.create_background_alert_token(user.username),
         "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
@@ -1839,7 +1936,17 @@ def _build_login_success(
         "user": user_data,
         "two_factor_verified": token_claims.get("two_factor_verified", False),
         "authenticator_mfa_verified": token_claims.get("two_factor_verified", False),
+        "remember_me": bool(remember_me),
     }
+    if remember_me:
+        _attach_login_session_response(
+            response,
+            db,
+            user,
+            device_id,
+            two_factor_verified=bool(token_claims.get("two_factor_verified")),
+        )
+    return response
 
 
 def _build_authenticator_user_hint(user: models.User, enabled: bool) -> dict:
@@ -2414,8 +2521,12 @@ def _begin_authenticator_setup(user: models.User, extra: Optional[dict] = None):
     }
 
 
-def _begin_authenticator_authentication(user: models.User):
-    mfa_token, _token_id = auth.create_mfa_token(user.username, purpose="authenticator")
+def _begin_authenticator_authentication(user: models.User, extra: Optional[dict] = None):
+    mfa_token, _token_id = auth.create_mfa_token(
+        user.username,
+        purpose="authenticator",
+        extra=extra,
+    )
     return {
         "mfa_required": True,
         "mfa_type": "authenticator",
@@ -2514,7 +2625,13 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
 
     if is_admin and (not user.authenticator_enabled or not user.authenticator_secret):
         # Admin must have 2FA enabled! Prompt directly to 2FA Setup
-        response = _begin_authenticator_setup(user)
+        response = _begin_authenticator_setup(
+            user,
+            extra={
+                "remember_me": bool(payload.remember_me),
+                "remember_device": bool(payload.remember_me),
+            },
+        )
         response["setup_required"] = True
         response["2fa_enabled"] = False
         response["redirect_url"] = "/admin/setup-2fa"
@@ -2538,7 +2655,7 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
             setattr(user, "_token_payload", token_claims)
             token = auth.create_access_token(
                 token_claims,
-                expires_delta=timedelta(days=TRUSTED_DEVICE_DAYS),
+                expires_delta=timedelta(days=TRUSTED_DEVICE_DAYS) if payload.remember_me else None,
             )
             response = {
                 "access_token": token,
@@ -2555,6 +2672,16 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
             response["two_factor_verified"] = True
             response["remember_device_verified"] = True
             response["remember_device_expires_at"] = trusted_device.expires_at.isoformat() + "Z"
+            if payload.remember_me:
+                _attach_login_session_response(
+                    response,
+                    db,
+                    user,
+                    device_id,
+                    two_factor_verified=True,
+                )
+            else:
+                response["remember_me"] = False
             _add_audit_log(
                 db,
                 user_id=user.id,
@@ -2565,15 +2692,25 @@ def login(payload: schemas.LoginRequest, req: Request, db: Session = Depends(get
             db.commit()
             return response
 
-        response = _begin_authenticator_authentication(user)
+        response = _begin_authenticator_authentication(
+            user,
+            extra={
+                "remember_me": bool(payload.remember_me),
+                "remember_device": bool(payload.remember_me),
+            },
+        )
         response["2fa_enabled"] = True
         audit_action = "LOGIN_AUTHENTICATOR_REQUIRED"
         audit_details = "Password accepted; authenticator app MFA required"
     else:
         login_lockout_manager.reset_lockout(db, payload.username, client_ip, device_id, user=user)
         _clear_authenticator_verification_attempts(user)
-        expires_delta = timedelta(days=TRUSTED_DEVICE_DAYS) if payload.remember_me else None
-        response = _build_login_success(db, user, expires_delta=expires_delta)
+        response = _build_login_success(
+            db,
+            user,
+            remember_me=bool(payload.remember_me),
+            device_id=device_id,
+        )
         response["authenticator_mfa_enabled"] = False
         response["2fa_enabled"] = False
         _add_audit_log(
@@ -2675,6 +2812,8 @@ def authenticator_authentication_verify(
             ),
         ) from exc
 
+    remember_me = bool(data.remember_me or token_payload.get("remember_me"))
+    remember_device = bool(data.remember_device or token_payload.get("remember_device"))
     token_username = token_payload.get("sub")
     if not token_username:
         auth_logger.warning(
@@ -2760,6 +2899,7 @@ def authenticator_authentication_verify(
                 {models.UserTrustedDevice.revoked_at: now},
                 synchronize_session=False,
             )
+            _revoke_user_login_sessions(db, user)
             recovery_request.status = "used"
             recovery_request.completed_at = now
             recovery_request.expires_at = None
@@ -2798,7 +2938,7 @@ def authenticator_authentication_verify(
     login_lockout_manager.reset_lockout(db, user.username, client_ip, device_id, user=user)
     remember_device_token = None
     remember_device_expires_at = None
-    if data.remember_device:
+    if remember_device:
         remember_device_token, remember_device_expires_at = _create_trusted_device(db, user)
 
     _add_audit_log(
@@ -2812,7 +2952,7 @@ def authenticator_authentication_verify(
 
     token_claims = {"sub": user.username, "two_factor_verified": True}
     setattr(user, "_token_payload", token_claims)
-    if data.remember_device:
+    if remember_device:
         token = auth.create_access_token(
             token_claims,
             expires_delta=timedelta(days=TRUSTED_DEVICE_DAYS),
@@ -2823,12 +2963,24 @@ def authenticator_authentication_verify(
             "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
             "token_type": "bearer",
             "user": _user_payload(db, user),
+            "remember_me": remember_me,
         }
+        if remember_me:
+            _attach_login_session_response(
+                response,
+                db,
+                user,
+                device_id,
+                two_factor_verified=True,
+            )
     else:
-        # Honour the "Remember Me" preference forwarded from the login step:
-        # issue a 30-day token so the session survives browser restarts.
-        remember_me_delta = timedelta(days=TRUSTED_DEVICE_DAYS) if data.remember_me else None
-        response = _build_login_success(db, user, two_factor_verified=True, expires_delta=remember_me_delta)
+        response = _build_login_success(
+            db,
+            user,
+            two_factor_verified=True,
+            remember_me=remember_me,
+            device_id=device_id,
+        )
 
     response["authenticator_mfa_verified"] = True
     response["two_factor_verified"] = True
@@ -2847,6 +2999,7 @@ def authenticator_authentication_verify(
         response["recovery_code_used"] = True
     if remember_device_token and remember_device_expires_at:
         _attach_trusted_device_response(response, remember_device_token, remember_device_expires_at)
+    db.commit()
     return response
 
 
@@ -3252,6 +3405,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="New password must be different from current password")
 
     current.password_hash = auth.get_password_hash(new_pwd)
+    _revoke_user_login_sessions(db, current)
     _add_audit_log(
         db,
         user_id=current.id,
@@ -3310,27 +3464,93 @@ def me(
     return _user_payload(db, current)
 
 
+@app.post("/auth/refresh", include_in_schema=False)
+@app.post("/api/auth/refresh", tags=["Auth"])
+def refresh_remembered_session(
+    data: schemas.RefreshSessionRequest,
+    req: Request,
+    db: Session = Depends(get_db),
+):
+    device_id = req.headers.get("x-smartcanteen-device-id") or req.headers.get("x-device-id") or ""
+    session = _get_valid_login_session(db, data.refresh_token, device_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Remembered session is invalid or expired")
+
+    user = session.user
+    two_factor_verified = bool(session.two_factor_verified)
+    session.revoked_at = utc_now_naive()
+    token_claims = {"sub": user.username}
+    if two_factor_verified:
+        token_claims["two_factor_verified"] = True
+    setattr(user, "_token_payload", token_claims)
+
+    response = {
+        "access_token": auth.create_access_token(
+            token_claims,
+            expires_delta=timedelta(days=auth.REMEMBERED_EXPIRE_DAYS),
+        ),
+        "background_alert_token": auth.create_background_alert_token(user.username),
+        "background_alert_expires_in_days": auth.BACKGROUND_ALERT_EXPIRE_DAYS,
+        "token_type": "bearer",
+        "user": _user_payload(db, user),
+        "two_factor_verified": two_factor_verified,
+        "authenticator_mfa_verified": two_factor_verified,
+        "remember_me": True,
+    }
+    _attach_login_session_response(
+        response,
+        db,
+        user,
+        device_id,
+        two_factor_verified=two_factor_verified,
+    )
+    _add_audit_log(
+        db,
+        user_id=user.id,
+        action="REMEMBERED_SESSION_REFRESHED",
+        details="Remembered session refreshed on the same device",
+        request=req,
+    )
+    db.commit()
+    return response
+
+
 @app.post("/auth/logout", include_in_schema=False)
 @app.post("/api/auth/logout", tags=["Auth"])
 def logout(
     req: Request,
+    data: Optional[schemas.LogoutRequest] = None,
     db: Session = Depends(get_db),
 ):
     token = None
     auth_header = req.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
-    if token:
-        user = auth.get_user_from_token(token, db)
-        if user:
-            _add_audit_log(
-                db,
-                user_id=user.id,
-                action="LOGOUT",
-                details=f"User {user.username} logged out",
-                request=req,
+
+    user = auth.get_user_from_token(token, db) if token else None
+    refresh_token = (data.refresh_token or "").strip() if data else ""
+    if refresh_token:
+        session = (
+            db.query(models.UserLoginSession)
+            .filter(
+                models.UserLoginSession.token_hash == _login_session_token_hash(refresh_token),
+                models.UserLoginSession.revoked_at.is_(None),
             )
-            db.commit()
+            .first()
+        )
+        if session:
+            session.revoked_at = utc_now_naive()
+            user = user or session.user
+
+    if user:
+        _add_audit_log(
+            db,
+            user_id=user.id,
+            action="LOGOUT",
+            details=f"User {user.username} logged out",
+            request=req,
+        )
+    db.commit()
     return {"message": "Logged out successfully"}
 
 
