@@ -171,6 +171,17 @@ function ComparisonIndicator({ value, inverse = false }) {
   );
 }
 
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -190,6 +201,7 @@ export default function Dashboard() {
   const [detail, setDetail] = useState(null);
   const [selectedReportId, setSelectedReportId] = useState('');
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   // Staff & Cashier Operational State
   const [operationalProducts, setOperationalProducts] = useState([]);
@@ -500,16 +512,41 @@ export default function Dashboard() {
     },
   }), [chartTextColor, tooltipBg]);
 
-  const handlePrintPdf = () => {
-    window.print();
+  const handlePrintPdf = async () => {
+    if (!selectedSchoolYearId) {
+      window.print();
+      return;
+    }
+    setExportingPdf(true);
+    try {
+      const file = await API.downloadFinancialSchoolYearPdf(selectedSchoolYearId, selectedReportId);
+      if (file?.blob) {
+        downloadBlob(file.blob, file.filename);
+        window.showToast?.('PDF report exported.', 'success');
+      }
+    } catch (error) {
+      window.showToast?.(error?.message || 'Unable to export the PDF report.', 'error');
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
+    if (!selectedSchoolYearId) {
+      return;
+    }
     setExportingExcel(true);
-    setTimeout(() => {
-      window.print();
+    try {
+      const file = await API.downloadFinancialSchoolYearWorkbook(selectedSchoolYearId, selectedReportId);
+      if (file?.blob) {
+        downloadBlob(file.blob, file.filename);
+        window.showToast?.('Excel report exported.', 'success');
+      }
+    } catch (error) {
+      window.showToast?.(error?.message || 'Unable to export the Excel report.', 'error');
+    } finally {
       setExportingExcel(false);
-    }, 500);
+    }
   };
 
   // Operational Inventory Calculations (Staff & Cashier)
@@ -1340,10 +1377,11 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={handlePrintPdf}
-            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            disabled={exportingPdf}
+            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
           >
             <PrinterIcon className="h-4 w-4 text-purple-600" />
-            Export PDF
+            {exportingPdf ? 'Exporting PDF...' : 'Export PDF'}
           </button>
           <button
             type="button"

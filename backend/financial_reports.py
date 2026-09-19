@@ -24,6 +24,7 @@ import backend.auth as auth
 import backend.models as models
 import backend.schemas as schemas
 from backend.database import SQLALCHEMY_DATABASE_URL, get_db
+from backend.excel_to_pdf import convert_xlsx_to_pdf
 from backend.time_utils import build_ph_date_range_bounds, get_ph_today
 
 
@@ -2568,6 +2569,54 @@ def export_school_year_workbook(
         filename=f"CANTEEN-REPORT-{school_year.name}.xlsx",
         media_type=EXCEL_MEDIA_TYPE,
         background=BackgroundTask(_remove_file_if_exists, export_path),
+    )
+
+
+@router.get("/api/financial-reports/school-years/{school_year_id}/export-pdf")
+def export_school_year_pdf(
+    school_year_id: int,
+    report_id: Optional[int] = None,
+    all_sheets: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_financial_report_user),
+):
+    school_year = _ensure_and_reload_school_year(db, school_year_id)
+    xlsx_path = _build_school_year_workbook_export(
+        db,
+        school_year,
+        selected_report_id=report_id,
+    )
+
+    sheet_name = None
+    if report_id and not all_sheets:
+        selected_report = next(
+            (report for report in school_year.monthly_reports if report.id == report_id),
+            None,
+        )
+        if selected_report:
+            sheet_name = selected_report.month_name
+
+    pdf_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        prefix=f"canteen-report-{school_year.name}-",
+        suffix=".pdf",
+    )
+    pdf_path = pdf_file.name
+    pdf_file.close()
+
+    try:
+        ok = convert_xlsx_to_pdf(xlsx_path, pdf_path, sheet_name=sheet_name)
+        if not ok or not os.path.isfile(pdf_path) or os.path.getsize(pdf_path) == 0:
+            raise HTTPException(status_code=500, detail="Failed to convert Excel report to PDF")
+    finally:
+        _remove_file_if_exists(xlsx_path)
+
+    filename_suffix = f"-{sheet_name}" if sheet_name else ""
+    return FileResponse(
+        pdf_path,
+        filename=f"CANTEEN-REPORT-{school_year.name}{filename_suffix}.pdf",
+        media_type="application/pdf",
+        background=BackgroundTask(_remove_file_if_exists, pdf_path),
     )
 
 

@@ -1116,17 +1116,152 @@ function buildGeneratedReportHtml(payload) {
   `;
 }
 
-function openPrintableWindow(html, warning = 'Allow pop-ups to print the report.') {
-  const printWindow = window.open('', '_blank', 'width=1100,height=900');
-  if (!printWindow) {
-    window.showToast?.(warning, 'warning');
-    return;
+async function printPdfReport(schoolYearId, reportId = null, allSheets = false, defaultFilename = 'DepEd-Canteen-Report') {
+  const printWindow = window.open('', '_blank', 'width=1150,height=900');
+  if (printWindow) {
+    try {
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>Preparing DepEd Report...</title>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+                background-color: #0f172a;
+                color: #f8fafc;
+              }
+              .spinner {
+                width: 44px;
+                height: 44px;
+                border: 3.5px solid rgba(255, 255, 255, 0.15);
+                border-radius: 50%;
+                border-top-color: #10b981;
+                animation: spin 0.8s linear infinite;
+                margin-bottom: 18px;
+              }
+              @keyframes spin {
+                to { transform: rotate(360deg); }
+              }
+              .title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+              .subtitle { font-size: 13px; color: #94a3b8; }
+            </style>
+          </head>
+          <body>
+            <div class="spinner"></div>
+            <div class="title">Preparing Official DepEd Report</div>
+            <div class="subtitle">Generating printable PDF directly from Excel data...</div>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    } catch {
+      // Ignored if document access was restricted
+    }
   }
 
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
+  try {
+    const file = await API.downloadFinancialSchoolYearPdf(schoolYearId, reportId, allSheets);
+    if (!file?.blob) {
+      throw new Error('No PDF data received from the server.');
+    }
+
+    const pdfBlob = new Blob([file.blob], { type: 'application/pdf' });
+    const blobUrl = window.URL.createObjectURL(pdfBlob);
+    const title = file.filename || defaultFilename;
+
+    if (printWindow && !printWindow.closed) {
+      try {
+        printWindow.document.open();
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="utf-8" />
+              <title>${title}</title>
+              <style>
+                html, body {
+                  margin: 0;
+                  padding: 0;
+                  width: 100%;
+                  height: 100%;
+                  overflow: hidden;
+                  background-color: #525659;
+                }
+                iframe {
+                  width: 100%;
+                  height: 100%;
+                  border: none;
+                  display: block;
+                }
+              </style>
+            </head>
+            <body>
+              <iframe id="pdfFrame" src="${blobUrl}"></iframe>
+              <script>
+                const frame = document.getElementById('pdfFrame');
+                let hasPrinted = false;
+                function triggerPrint() {
+                  if (hasPrinted) return;
+                  hasPrinted = true;
+                  try {
+                    frame.contentWindow.focus();
+                    frame.contentWindow.print();
+                  } catch (e) {
+                    window.location.replace('${blobUrl}');
+                  }
+                }
+                frame.onload = () => setTimeout(triggerPrint, 500);
+                setTimeout(triggerPrint, 1500);
+              </script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+        printWindow.focus();
+      } catch {
+        printWindow.location.href = blobUrl;
+      }
+    } else {
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = 'none';
+      iframe.src = blobUrl;
+      document.body.appendChild(iframe);
+      iframe.onload = () => {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+          } catch {
+            downloadBlob(file.blob, file.filename);
+            window.showToast?.('Popup blocked. Downloaded PDF report for printing.', 'info');
+          }
+        }, 500);
+      };
+      setTimeout(() => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      }, 60000);
+    }
+  } catch (err) {
+    if (printWindow && !printWindow.closed) {
+      printWindow.close();
+    }
+    throw err;
+  }
 }
 
 function FormField({
@@ -1394,6 +1529,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
   });
   const [fundMonitoringDraft, setFundMonitoringDraft] = useState({});
   const [exportingWorkbook, setExportingWorkbook] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [printingPdf, setPrintingPdf] = useState(false);
   const [savingStatement, setSavingStatement] = useState(false);
   const [creatingSchoolYear, setCreatingSchoolYear] = useState(false);
   const [deletingSchoolYear, setDeletingSchoolYear] = useState(false);
@@ -2136,19 +2273,56 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     }
   }
 
-  function handlePrintFinancialReport() {
-    if (!selectedReport || !detail?.school_year?.name) {
+  async function handlePrintFinancialReport() {
+    if (!selectedSchoolYearId) {
+      window.showToast?.('Please select a school year first.', 'warning');
       return;
     }
 
-    openPrintableWindow(
-      buildPrintableHtml(detail.school_year.name, selectedReport, statement, selectedReport.allocations || [])
-    );
+    setPrintingPdf(true);
+    try {
+      await printPdfReport(
+        selectedSchoolYearId,
+        selectedReportId,
+        false,
+        detail?.school_year?.name ? `CANTEEN-REPORT-${detail.school_year.name}` : 'DepEd Canteen Report'
+      );
+    } catch (error) {
+      const backendMessage =
+        error?.apiDetail?.message ||
+        error?.apiDetail?.detail ||
+        error?.message ||
+        '';
+      const displayMessage = backendMessage || 'Unable to prepare the PDF report for printing.';
+      window.showToast?.(displayMessage, 'error');
+    } finally {
+      setPrintingPdf(false);
+    }
   }
 
-  function handleExportFinancialPdf() {
-    handlePrintFinancialReport();
-    window.showToast?.('Choose "Save as PDF" in the print dialog to export a PDF.', 'info');
+  async function handleExportFinancialPdf() {
+    if (!selectedSchoolYearId) {
+      return;
+    }
+
+    setExportingPdf(true);
+    try {
+      const file = await API.downloadFinancialSchoolYearPdf(selectedSchoolYearId, selectedReportId);
+      if (file?.blob) {
+        downloadBlob(file.blob, file.filename);
+        window.showToast?.('PDF report exported.', 'success');
+      }
+    } catch (error) {
+      const backendMessage =
+        error?.apiDetail?.message ||
+        error?.apiDetail?.detail ||
+        error?.message ||
+        '';
+      const displayMessage = backendMessage || 'Unable to export the PDF report.';
+      window.showToast?.(displayMessage, 'error');
+    } finally {
+      setExportingPdf(false);
+    }
   }
 
   async function executeSaveStatement(nextBeginningCash, nextCurrentSales, nextCostOfSales) {
@@ -3353,13 +3527,62 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     }
   }
 
-  function handlePrintGeneratedReport() {
-    openPrintableWindow(buildGeneratedReportHtml(generatedReportPayload));
+  async function handlePrintGeneratedReport() {
+    if (!selectedSchoolYearId) {
+      window.showToast?.('Please select a school year first.', 'warning');
+      return;
+    }
+
+    const isFullYear = reportType === 'school-year' || reportType === 'annual';
+    setPrintingPdf(true);
+    try {
+      await printPdfReport(
+        selectedSchoolYearId,
+        selectedReportId,
+        isFullYear,
+        detail?.school_year?.name ? `CANTEEN-REPORT-${detail.school_year.name}` : 'DepEd Canteen Report'
+      );
+    } catch (error) {
+      const backendMessage =
+        error?.apiDetail?.message ||
+        error?.apiDetail?.detail ||
+        error?.message ||
+        '';
+      const displayMessage = backendMessage || 'Unable to prepare the PDF report for printing.';
+      window.showToast?.(displayMessage, 'error');
+    } finally {
+      setPrintingPdf(false);
+    }
   }
 
-  function handleExportGeneratedPdf() {
-    handlePrintGeneratedReport();
-    window.showToast?.('Choose "Save as PDF" in the print dialog to export a PDF.', 'info');
+  async function handleExportGeneratedPdf() {
+    if (!selectedSchoolYearId) {
+      return;
+    }
+
+    const isFullYear = reportType === 'school-year' || reportType === 'annual';
+    setExportingPdf(true);
+    try {
+      const file = await API.downloadFinancialSchoolYearPdf(
+        selectedSchoolYearId,
+        selectedReportId,
+        isFullYear
+      );
+      if (file?.blob) {
+        downloadBlob(file.blob, file.filename);
+        window.showToast?.('PDF report exported.', 'success');
+      }
+    } catch (error) {
+      const backendMessage =
+        error?.apiDetail?.message ||
+        error?.apiDetail?.detail ||
+        error?.message ||
+        '';
+      const displayMessage = backendMessage || 'Unable to export the PDF report.';
+      window.showToast?.(displayMessage, 'error');
+    } finally {
+      setExportingPdf(false);
+    }
   }
 
   function renderEmptySchoolYears() {
@@ -5003,18 +5226,20 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               <button
                 type="button"
                 onClick={handleExportFinancialPdf}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                disabled={exportingPdf || !selectedSchoolYearId}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
               >
                 <DocumentArrowDownIcon className="h-4 w-4 text-slate-500" />
-                Export PDF
+                {exportingPdf ? 'Preparing...' : 'Export PDF'}
               </button>
               <button
                 type="button"
                 onClick={handlePrintFinancialReport}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                disabled={printingPdf || !selectedSchoolYearId}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
               >
                 <PrinterIcon className="h-4 w-4 text-slate-500" />
-                Print Report
+                {printingPdf ? 'Preparing Print...' : 'Print Report'}
               </button>
             </>
           }
@@ -5109,18 +5334,20 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               <button
                 type="button"
                 onClick={handleExportGeneratedPdf}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                disabled={exportingPdf || !selectedSchoolYearId}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
               >
                 <DocumentArrowDownIcon className="h-4 w-4 text-slate-500" />
-                Export PDF
+                {exportingPdf ? 'Preparing...' : 'Export PDF'}
               </button>
               <button
                 type="button"
                 onClick={handlePrintGeneratedReport}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                disabled={printingPdf || !selectedSchoolYearId}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
               >
                 <PrinterIcon className="h-4 w-4 text-slate-500" />
-                Print
+                {printingPdf ? 'Preparing Print...' : 'Print'}
               </button>
             </>
           }

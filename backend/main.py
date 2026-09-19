@@ -4739,14 +4739,45 @@ def delete_product(
     pid: int,
     req: Request,
     background_tasks: BackgroundTasks,
+    hard_delete: bool = Query(False, description="Permanently delete the product from the database"),
     db: Session = Depends(get_db),
     current: models.User = Depends(auth.require_admin),
 ):
     product = db.query(models.Product).filter(models.Product.id == pid).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    product.is_active = False
+
     _resolve_product_low_stock_alerts(db, product.id, product.name)
+
+    if hard_delete:
+        product_name = product.name
+        # Detach transaction items to maintain financial records without violating foreign keys
+        db.query(models.TransactionItem).filter(models.TransactionItem.product_id == pid).update(
+            {"product_id": None}, synchronize_session=False
+        )
+        # Delete related inventory movement logs
+        db.query(models.InventoryLog).filter(models.InventoryLog.product_id == pid).delete(
+            synchronize_session=False
+        )
+        # Delete the product record
+        db.delete(product)
+        _add_audit_log(
+            db,
+            user_id=current.id,
+            action="PRODUCT_HARD_DELETED",
+            details=f"Permanently deleted product '{product_name}' (ID: {pid})",
+            request=req,
+        )
+        db.commit()
+        _queue_stock_alert_refresh(
+            background_tasks,
+            "product-hard-deleted",
+            product_id=pid,
+            is_active=False,
+        )
+        return {"message": f"Product '{product_name}' permanently deleted"}
+
+    product.is_active = False
     db.commit()
     _add_audit_log(
         db,
@@ -4763,6 +4794,150 @@ def delete_product(
         is_active=False,
     )
     return {"message": "Product deactivated"}
+
+
+@app.delete("/api/products/{pid}/permanent", tags=["Products"])
+def hard_delete_product(
+    pid: int,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    return delete_product(pid=pid, req=req, background_tasks=background_tasks, hard_delete=True, db=db, current=current)
+
+
+@app.post("/api/products/archive/purge", tags=["Products"])
+@app.delete("/api/products/archive/purge", tags=["Products"])
+def purge_archived_products(
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    archived_products = db.query(models.Product).filter(models.Product.is_active == False).all()
+    count = len(archived_products)
+    if count == 0:
+        return {"message": "No archived products to purge", "count": 0}
+
+    archived_ids = [p.id for p in archived_products]
+
+    for p in archived_products:
+        _resolve_product_low_stock_alerts(db, p.id, p.name)
+
+    db.query(models.TransactionItem).filter(models.TransactionItem.product_id.in_(archived_ids)).update(
+        {"product_id": None}, synchronize_session=False
+    )
+    db.query(models.InventoryLog).filter(models.InventoryLog.product_id.in_(archived_ids)).delete(
+        synchronize_session=False
+    )
+    for p in archived_products:
+        db.delete(p)
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="ARCHIVE_PURGED",
+        details=f"Permanently purged {count} archived products from database",
+        request=req,
+    )
+    db.commit()
+
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "archive-purged",
+    )
+    return {"message": f"Successfully purged {count} archived products permanently", "count": count}
+
+
+@app.post("/api/products/archive/bulk-hard-delete", tags=["Products"])
+def bulk_hard_delete_archived_products(
+    payload: schemas.BulkProductActionRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    if not payload.product_ids:
+        raise HTTPException(status_code=400, detail="No product IDs provided")
+
+    products = (
+        db.query(models.Product)
+        .filter(models.Product.id.in_(payload.product_ids), models.Product.is_active == False)
+        .all()
+    )
+    count = len(products)
+    if count == 0:
+        raise HTTPException(status_code=404, detail="No matching archived products found")
+
+    target_ids = [p.id for p in products]
+    product_names = [p.name for p in products]
+
+    for p in products:
+        _resolve_product_low_stock_alerts(db, p.id, p.name)
+
+    db.query(models.TransactionItem).filter(models.TransactionItem.product_id.in_(target_ids)).update(
+        {"product_id": None}, synchronize_session=False
+    )
+    db.query(models.InventoryLog).filter(models.InventoryLog.product_id.in_(target_ids)).delete(
+        synchronize_session=False
+    )
+    for p in products:
+        db.delete(p)
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PRODUCTS_BULK_HARD_DELETED",
+        details=f"Permanently deleted {count} archived products: {', '.join(product_names[:5])}{'...' if len(product_names) > 5 else ''}",
+        request=req,
+    )
+    db.commit()
+
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "products-bulk-hard-deleted",
+    )
+    return {"message": f"Successfully deleted {count} archived products permanently", "count": count}
+
+
+@app.post("/api/products/archive/bulk-restore", tags=["Products"])
+def bulk_restore_archived_products(
+    payload: schemas.BulkProductActionRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_admin),
+):
+    if not payload.product_ids:
+        raise HTTPException(status_code=400, detail="No product IDs provided")
+
+    products = (
+        db.query(models.Product)
+        .filter(models.Product.id.in_(payload.product_ids), models.Product.is_active == False)
+        .all()
+    )
+    count = len(products)
+    if count == 0:
+        raise HTTPException(status_code=404, detail="No matching archived products found")
+
+    for p in products:
+        p.is_active = True
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PRODUCTS_BULK_RESTORED",
+        details=f"Restored {count} products to active inventory",
+        request=req,
+    )
+    db.commit()
+
+    _queue_stock_alert_refresh(
+        background_tasks,
+        "products-bulk-restored",
+    )
+    return {"message": f"Successfully restored {count} products", "count": count}
 
 
 @app.get("/api/products/low-stock", tags=["Products"])

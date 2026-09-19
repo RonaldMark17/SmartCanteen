@@ -20,7 +20,6 @@ import {
   ArrowDownTrayIcon,
   ArchiveBoxIcon,
   ArrowPathIcon,
-  BanknotesIcon,
   CheckCircleIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -392,14 +391,6 @@ export default function Inventory() {
 
   const allAlertProducts = useMemo(() => {
     return activeProducts.filter((p) => isOutOfStock(p) || isLowStock(p));
-  }, [activeProducts]);
-
-  const totalStockValue = useMemo(() => {
-    return activeProducts.reduce((sum, p) => {
-      const price = Number(p.price || 0);
-      const stock = Number(p.stock || 0);
-      return sum + (price * stock);
-    }, 0);
   }, [activeProducts]);
 
   const categories = useMemo(() => {
@@ -910,6 +901,37 @@ export default function Inventory() {
     }
   };
 
+  const handleHardDelete = (product) => {
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Permanently Delete Product',
+      message: `Are you sure you want to permanently delete "${product.name}"? This action cannot be undone and will permanently remove this item from the database.`,
+      confirmLabel: 'Yes, Delete Permanently',
+      tone: 'rose',
+      isLoading: false,
+      loadingText: 'Deleting...',
+      details: [
+        { label: 'Product Name', value: product.name },
+        { label: 'Category', value: product.category || 'General' },
+        { label: 'Archived Stock', value: formatProductQuantity(product) },
+        { label: 'Base Unit', value: formatUnit(getProductBaseUnit(product)) },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await (API.hardDeleteProduct || API.deleteProductPermanently)(product.id);
+          closeSaveConfirm();
+          window.showToast?.(`"${product.name}" has been permanently deleted from database.`, 'success');
+          requestAlertRefresh({ source: 'inventory', reason: 'product-hard-deleted' });
+          fetchProducts();
+        } catch (err) {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+          window.showToast?.(err?.message || 'Failed to permanently delete product.', 'error');
+        }
+      },
+    });
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
   // Export CSV Report
   // ─────────────────────────────────────────────────────────────────────────
@@ -1052,7 +1074,7 @@ export default function Inventory() {
       {/* ─────────────────────────────────────────────────────────────────────
           1. INVENTORY OVERVIEW SUMMARY CARDS (Balanced 60-30-10 Color Theory)
       ─────────────────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {/* Total Products */}
         <div className="flex items-start justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs transition-all dark:border-slate-800 dark:bg-slate-900">
           <div>
@@ -1152,24 +1174,6 @@ export default function Inventory() {
             }`}
           >
             <XCircleIcon className="h-5 w-5 stroke-[2]" />
-          </div>
-        </div>
-
-        {/* Stock Value */}
-        <div className="flex items-start justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs transition-all dark:border-slate-800 dark:bg-slate-900">
-          <div>
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Stock Value
-            </div>
-            <div className="mt-2 text-2xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">
-              {loading ? <Skeleton className="h-7 w-24" /> : `₱${formatCurrency(totalStockValue)}`}
-            </div>
-            <p className="mt-1 text-xs font-medium text-slate-400 dark:text-slate-500">
-              Total inventory value
-            </p>
-          </div>
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/60 dark:text-emerald-400">
-            <BanknotesIcon className="h-5 w-5 stroke-[2]" />
           </div>
         </div>
       </div>
@@ -1888,14 +1892,25 @@ export default function Inventory() {
                           {formatUnit(getProductBaseUnit(product))}
                         </td>
                         <td className="px-5 py-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleRestore(product)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-2xs transition hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                          >
-                            <ArrowPathIcon className="h-3.5 w-3.5" />
-                            Restore Item
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRestore(product)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-2xs transition hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                            >
+                              <ArrowPathIcon className="h-3.5 w-3.5" />
+                              Restore Item
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleHardDelete(product)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 shadow-2xs transition hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-300"
+                              title={`Permanently delete "${product.name}" from database`}
+                            >
+                              <TrashIcon className="h-3.5 w-3.5" />
+                              Hard Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))

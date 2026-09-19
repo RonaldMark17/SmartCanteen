@@ -1591,6 +1591,8 @@ export const API = {
   createProduct: (data) => request('POST', '/products', data),
   updateProduct: (id, data) => request('PUT', `/products/${id}`, data),
   deleteProduct: (id) => request('DELETE', `/products/${id}`),
+  hardDeleteProduct: (id) => request('DELETE', `/products/${id}?hard_delete=true`),
+  deleteProductPermanently: (id) => request('DELETE', `/products/${id}?hard_delete=true`),
   replenishInventory: (data) => request('POST', '/inventory/replenish', data),
   adjustInventory: (data) => request('POST', '/inventory/adjust', data),
   getInventoryHistory: (params = {}) => request('GET', `/inventory/history${toQuery(params)}`),
@@ -1668,6 +1670,13 @@ export const API = {
   downloadFinancialSchoolYearWorkbook: (schoolYearId, reportId = null) =>
     requestFile(
       `/financial-reports/school-years/${schoolYearId}/export${toQuery({ report_id: reportId })}`
+    ),
+  downloadFinancialSchoolYearPdf: (schoolYearId, reportId = null, allSheets = false) =>
+    requestFile(
+      `/financial-reports/school-years/${schoolYearId}/export-pdf${toQuery({
+        report_id: reportId,
+        all_sheets: allSheets ? true : undefined,
+      })}`
     ),
   uploadFinancialReceipt: (file) => {
     const formData = new FormData();

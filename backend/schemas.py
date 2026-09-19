@@ -222,6 +222,10 @@ class ProductResponse(BaseModel):
         from_attributes = True
 
 
+class BulkProductActionRequest(BaseModel):
+    product_ids: List[int]
+
+
 class QuickSaleProductResponse(ProductResponse):
     sales_last_30_days: float = 0.0
     orders_last_30_days: int = 0
