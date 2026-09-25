@@ -15,6 +15,12 @@
     "electron:start": "electron electron/main.cjs",
     "electron:build": "vite build --base=./ && electron-builder --win",
     "build:electron": "vite build --base=./ && electron-builder --win",
+    "cap:sync": "cap sync",
+    "cap:open": "cap open android",
+    "android:sync": "vite build && cap sync android",
+    "android:build": "vite build && cap sync android && cd android && .\\gradlew.bat assembleDebug",
+    "android:build:release": "vite build && cap sync android && cd android && .\\gradlew.bat assembleRelease",
+    "build:android": "vite build && cap sync android && cd android && .\\gradlew.bat assembleDebug",
     "update:meals": "powershell -ExecutionPolicy Bypass -File ../scripts/update_meals.ps1"
   },
   "build": {
@@ -69,10 +75,10 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@capacitor/android": "^8.3.0",
-    "@capacitor/cli": "^8.3.0",
-    "@capacitor/core": "^8.3.0",
-    "@capacitor/local-notifications": "^8.0.2",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/local-notifications": "^8.3.1",
     "@eslint/js": "^9.39.4",
     "@heroicons/react": "^2.2.0",
     "@tailwindcss/postcss": "^4.2.2",

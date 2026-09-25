@@ -9,13 +9,16 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Optional, Any, cast
+from typing import Optional, Any, cast, Union
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from starlette.background import BackgroundTask
@@ -2618,6 +2621,595 @@ def export_school_year_pdf(
         media_type="application/pdf",
         background=BackgroundTask(_remove_file_if_exists, pdf_path),
     )
+
+
+# ── Generated Custom Report Exports (Reports Tab) ──────────────────────────
+
+class GeneratedReportExportPayload(BaseModel):
+    title: str
+    subtitle: Optional[str] = ""
+    school_year_name: Optional[str] = ""
+    school_year_id: Optional[int] = None
+    report_type: Optional[str] = None
+    report_id: Optional[int] = None
+    metrics: list[Any] = []
+    headers: list[str] = []
+    rows: list[list[Any]] = []
+
+
+def _clean_num_val(val: Any) -> tuple[Any, bool]:
+    if val is None:
+        return "", False
+    if isinstance(val, (int, float)):
+        return float(val), True
+    s = str(val).strip()
+    norm = re.sub(r'^(PHP|Php|php|₱|\$)\s*', '', s).replace(',', '').strip()
+    try:
+        f = float(norm)
+        return f, True
+    except (ValueError, TypeError):
+        return s, False
+
+
+def _generate_custom_report_excel(payload: GeneratedReportExportPayload) -> str:
+    wb = Workbook()
+    ws = wb.active
+    clean_sheet_name = re.sub(r'[:*?/[\]\\]', '_', payload.title)[:31]
+    ws.title = clean_sheet_name or "Report"
+    ws.views.sheetView[0].showGridLines = True
+
+    headers = payload.headers if payload.headers else ["Particulars", "Amount"]
+    rows = payload.rows or []
+    metrics = payload.metrics or []
+
+    num_cols = max(len(headers), len(metrics), 2)
+    max_col_letter = get_column_letter(num_cols)
+
+    thin_border = Border(
+        left=Side(style='thin', color='CBD5E1'),
+        right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'),
+        bottom=Side(style='thin', color='CBD5E1')
+    )
+
+    # 1. Official Header
+    header_lines = [
+        ("Republic of the Philippines", 10, True, "475569"),
+        ("Department of Education", 12, True, "0F172A"),
+        ("REGION IV-A CALABARZON", 9, True, "475569"),
+        ("SCHOOLS DIVISION OFFICE OF LAGUNA", 9, True, "475569"),
+        ("BAY SUB-OFFICE — BAY CENTRAL ELEMENTARY SCHOOL", 10, True, "0F172A"),
+        ("CANTEEN OPERATIONS MANAGEMENT", 9, False, "64748B"),
+    ]
+
+    curr_row = 1
+    for text, size, is_bold, color_hex in header_lines:
+        ws.merge_cells(f"A{curr_row}:{max_col_letter}{curr_row}")
+        cell = ws[f"A{curr_row}"]
+        cell.value = text
+        cell.font = Font(name="Calibri", size=size, bold=is_bold, color=color_hex)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[curr_row].height = 18
+        curr_row += 1
+
+    curr_row += 1
+
+    # Report Title and Subtitle
+    ws.merge_cells(f"A{curr_row}:{max_col_letter}{curr_row}")
+    t_cell = ws[f"A{curr_row}"]
+    t_cell.value = payload.title.upper()
+    t_cell.font = Font(name="Calibri", size=14, bold=True, color="047857")
+    t_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[curr_row].height = 24
+    curr_row += 1
+
+    if payload.subtitle:
+        ws.merge_cells(f"A{curr_row}:{max_col_letter}{curr_row}")
+        s_cell = ws[f"A{curr_row}"]
+        s_cell.value = payload.subtitle
+        s_cell.font = Font(name="Calibri", size=10, bold=True, color="334155")
+        s_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[curr_row].height = 18
+        curr_row += 1
+
+    curr_row += 1
+
+    # 2. Key Metrics Cards
+    if metrics:
+        card_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        card_border = thin_border
+
+        for idx, item in enumerate(metrics):
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                m_label, m_val = item[0], item[1]
+            else:
+                m_label, m_val = str(item), ""
+
+            col_pos = (idx % num_cols) + 1
+            metric_row = curr_row + (idx // num_cols) * 3
+
+            lbl_cell = ws.cell(row=metric_row, column=col_pos, value=str(m_label).upper())
+            lbl_cell.font = Font(name="Calibri", size=8, bold=True, color="64748B")
+            lbl_cell.alignment = Alignment(horizontal="center", vertical="center")
+            lbl_cell.fill = card_fill
+            lbl_cell.border = card_border
+
+            n_val, is_num = _clean_num_val(m_val)
+            val_cell = ws.cell(row=metric_row + 1, column=col_pos, value=n_val)
+            val_cell.font = Font(name="Calibri", size=12, bold=True, color="0F172A")
+            val_cell.alignment = Alignment(horizontal="center", vertical="center")
+            val_cell.fill = card_fill
+            val_cell.border = card_border
+            if is_num:
+                val_cell.number_format = r'"PHP "#,##0.00'
+
+        num_metric_rows = ((len(metrics) - 1) // num_cols + 1) * 3
+        curr_row += num_metric_rows + 1
+
+    # 3. Main Data Table
+    table_header_fill = PatternFill(start_color="047857", end_color="047857", fill_type="solid")
+    table_header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+
+    for col_idx, h_text in enumerate(headers, 1):
+        cell = ws.cell(row=curr_row, column=col_idx, value=h_text)
+        cell.font = table_header_font
+        cell.fill = table_header_fill
+        cell.alignment = Alignment(horizontal="left" if col_idx == 1 else "right", vertical="center")
+        cell.border = thin_border
+    ws.row_dimensions[curr_row].height = 24
+    curr_row += 1
+
+    # Data Rows
+    for r_idx, r_data in enumerate(rows):
+        is_alt = (r_idx % 2 == 1)
+        row_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid") if is_alt else PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+        ws.row_dimensions[curr_row].height = 20
+
+        for col_idx in range(1, len(headers) + 1):
+            val = r_data[col_idx - 1] if col_idx - 1 < len(r_data) else ""
+            num_val, is_num = _clean_num_val(val)
+            cell = ws.cell(row=curr_row, column=col_idx, value=num_val)
+            cell.fill = row_fill
+            cell.border = thin_border
+
+            if col_idx == 1:
+                cell.font = Font(name="Calibri", size=10, bold=True, color="1E293B")
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                cell.font = Font(name="Calibri", size=10, bold=False, color="334155")
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                if is_num:
+                    cell.number_format = r'"PHP "#,##0.00'
+
+        curr_row += 1
+
+    # 4. Signatories block
+    curr_row += 3
+    prep_lbl = ws.cell(row=curr_row, column=1, value="Prepared by:")
+    prep_lbl.font = Font(name="Calibri", size=9, bold=True, color="475569")
+    appr_lbl = ws.cell(row=curr_row, column=len(headers), value="Approved by:")
+    appr_lbl.font = Font(name="Calibri", size=9, bold=True, color="475569")
+    appr_lbl.alignment = Alignment(horizontal="right")
+
+    curr_row += 2
+    prep_line = ws.cell(row=curr_row, column=1, value="____________________________")
+    prep_line.font = Font(name="Calibri", size=9, bold=True, color="1E293B")
+    appr_line = ws.cell(row=curr_row, column=len(headers), value="____________________________")
+    appr_line.font = Font(name="Calibri", size=9, bold=True, color="1E293B")
+    appr_line.alignment = Alignment(horizontal="right")
+
+    curr_row += 1
+    prep_role = ws.cell(row=curr_row, column=1, value="Canteen Teacher / In-Charge")
+    prep_role.font = Font(name="Calibri", size=8, color="64748B")
+    appr_role = ws.cell(row=curr_row, column=len(headers), value="School Principal")
+    appr_role.font = Font(name="Calibri", size=8, color="64748B")
+    appr_role.alignment = Alignment(horizontal="right")
+
+    # Column Widths
+    for col in ws.columns:
+        col_letter = get_column_letter(col[0].column)
+        max_len = 0
+        for cell in col:
+            if cell.row < 10:
+                continue
+            v_str = str(cell.value or '')
+            if len(v_str) > max_len:
+                max_len = len(v_str)
+        ws.column_dimensions[col_letter].width = max(max_len + 5, 18)
+
+    export_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    export_path = export_file.name
+    export_file.close()
+    wb.save(export_path)
+    return export_path
+
+
+def _generate_custom_report_pdf(payload: GeneratedReportExportPayload) -> str:
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf_path = pdf_file.name
+    pdf_file.close()
+
+    headers = payload.headers if payload.headers else ["Particulars", "Amount"]
+    rows = payload.rows or []
+    metrics = payload.metrics or []
+
+    page_orientation = landscape(letter) if len(headers) > 4 else letter
+    page_width, _ = page_orientation
+    content_width = page_width - 72
+
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=page_orientation,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=25,
+        bottomMargin=25,
+    )
+
+    styles = getSampleStyleSheet()
+
+    header_style = ParagraphStyle(
+        'DepEdHdr',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8,
+        alignment=1,
+        leading=11,
+        textColor=colors.HexColor('#475569')
+    )
+    bold_header_style = ParagraphStyle(
+        'DepEdBoldHdr',
+        parent=header_style,
+        fontName='Helvetica-Bold',
+        fontSize=8.5,
+        leading=12,
+        textColor=colors.HexColor('#1E293B')
+    )
+    school_style = ParagraphStyle(
+        'DepEdSchoolHdr',
+        parent=header_style,
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor('#0F172A')
+    )
+    title_style = ParagraphStyle(
+        'RepTitle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=13,
+        alignment=1,
+        leading=17,
+        textColor=colors.HexColor('#047857')
+    )
+    subtitle_style = ParagraphStyle(
+        'RepSub',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        alignment=1,
+        leading=12,
+        textColor=colors.HexColor('#334155')
+    )
+    cell_left = ParagraphStyle(
+        'CellLeft',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.HexColor('#1E293B')
+    )
+    cell_left_bold = ParagraphStyle(
+        'CellLeftBold',
+        parent=cell_left,
+        fontName='Helvetica-Bold'
+    )
+    cell_right = ParagraphStyle(
+        'CellRight',
+        parent=styles['Normal'],
+        fontName='Courier',
+        fontSize=8.5,
+        leading=11,
+        alignment=2,
+        textColor=colors.HexColor('#334155')
+    )
+    th_left = ParagraphStyle(
+        'THLeft',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.white
+    )
+    th_right = ParagraphStyle(
+        'THRight',
+        parent=th_left,
+        alignment=2
+    )
+
+    story = [
+        Paragraph('Republic of the Philippines', header_style),
+        Paragraph('Department of Education', bold_header_style),
+        Paragraph('REGION IV-A CALABARZON', header_style),
+        Paragraph('SCHOOLS DIVISION OFFICE OF LAGUNA', header_style),
+        Paragraph('BAY SUB-OFFICE &bull; BAY CENTRAL ELEMENTARY SCHOOL', school_style),
+        Paragraph('CANTEEN OPERATIONS MANAGEMENT', header_style),
+        Spacer(1, 10),
+        Paragraph(payload.title.upper(), title_style),
+    ]
+
+    if payload.subtitle:
+        story.append(Paragraph(payload.subtitle, subtitle_style))
+    story.append(Spacer(1, 12))
+
+    # Metrics table
+    if metrics:
+        m_headers = []
+        m_vals = []
+        col_w = content_width / len(metrics)
+        for item in metrics:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                lbl, val = item[0], item[1]
+            else:
+                lbl, val = str(item), ""
+            n_val, is_num = _clean_num_val(val)
+            val_formatted = f"PHP {n_val:,.2f}" if is_num else str(val)
+            m_headers.append(Paragraph(f"<b>{str(lbl).upper()}</b>", ParagraphStyle('MLbl', parent=header_style, fontSize=7.5, leading=9)))
+            m_vals.append(Paragraph(f"<b>{val_formatted}</b>", ParagraphStyle('MVal', parent=styles['Normal'], fontName='Courier-Bold', fontSize=10, leading=12, alignment=1, textColor=colors.HexColor('#0F172A'))))
+
+        metrics_table = Table([m_headers, m_vals], colWidths=[col_w] * len(metrics))
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+            ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#CBD5E1')),
+            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ]))
+        story.append(metrics_table)
+        story.append(Spacer(1, 14))
+
+    # Main table
+    t_headers = [Paragraph(h, th_left if idx == 0 else th_right) for idx, h in enumerate(headers)]
+    t_rows = [t_headers]
+
+    num_cols = len(headers)
+    if num_cols == 2:
+        col_widths = [content_width * 0.65, content_width * 0.35]
+    elif num_cols == 4:
+        col_widths = [content_width * 0.34, content_width * 0.22, content_width * 0.22, content_width * 0.22]
+    else:
+        col_widths = [content_width / num_cols] * num_cols
+
+    for r_idx, r in enumerate(rows):
+        row_cells = []
+        for c_idx in range(num_cols):
+            val = r[c_idx] if c_idx < len(r) else ""
+            n_val, is_num = _clean_num_val(val)
+            val_str = f"PHP {n_val:,.2f}" if (is_num and c_idx > 0) else str(val)
+            p_style = cell_left_bold if c_idx == 0 else cell_right
+            row_cells.append(Paragraph(val_str, p_style))
+        t_rows.append(row_cells)
+
+    main_table = Table(t_rows, colWidths=col_widths, repeatRows=1)
+    table_styles = [
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#047857')),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+    ]
+    for r_idx in range(1, len(t_rows)):
+        if r_idx % 2 == 0:
+            table_styles.append(('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#F8FAFC')))
+    main_table.setStyle(TableStyle(table_styles))
+    story.append(main_table)
+    story.append(Spacer(1, 25))
+
+    # Signatures block
+    sig_data = [
+        [Paragraph("<b>Prepared by:</b>", cell_left), Paragraph("<b>Approved by:</b>", cell_left)],
+        [Spacer(1, 20), Spacer(1, 20)],
+        [Paragraph("____________________________", cell_left), Paragraph("____________________________", cell_left)],
+        [Paragraph("Canteen Teacher / In-Charge", header_style), Paragraph("School Principal", header_style)],
+    ]
+    sig_table = Table(sig_data, colWidths=[content_width * 0.5, content_width * 0.5])
+    sig_table.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('TOPPADDING', (0,0), (-1,-1), 2),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+    ]))
+    story.append(sig_table)
+
+    doc.build(story)
+    return pdf_path
+
+
+def _build_backend_report_payload(
+    db: Session,
+    school_year: models.SchoolYear,
+    report_type: str = "monthly",
+    report_id: Optional[int] = None,
+) -> GeneratedReportExportPayload:
+    school_year_data = _serialize_school_year_detail(db, school_year)
+    reports = school_year_data.get("reports", [])
+    active_report = next((r for r in reports if r["id"] == report_id), reports[0] if reports else {})
+    school_year_name = school_year.name
+
+    type_labels = {
+        "monthly": "Monthly Report",
+        "quarterly": "Quarterly Report",
+        "annual": "Annual Report",
+        "school-year": "School Year Report",
+        "sales": "Sales Report",
+        "expense": "Expense Report",
+        "cash-flow": "Cash Flow Report",
+        "profit": "Profit Report",
+    }
+    title = type_labels.get(report_type, "Financial Report")
+
+    if report_type == "monthly":
+        subtitle = f"{school_year_name} / {active_report.get('month_label', 'Selected Month')}"
+        metrics = [
+            ["Sales", active_report.get("current_sales", 0)],
+            ["Expenses", active_report.get("total_expenses", 0)],
+            ["Net Profit", active_report.get("net_profit", 0)],
+            ["Ending Balance", active_report.get("fund_current_balance_total", active_report.get("ending_cash", 0))],
+        ]
+        headers = ["Particulars", "Amount"]
+        rows = [
+            ["Beginning Cash", active_report.get("beginning_cash_on_hand", 0)],
+            ["Current Sales", active_report.get("current_sales", 0)],
+            ["Cost of Sales", active_report.get("cost_of_sales", 0)],
+            ["Gross Income", active_report.get("gross_income", 0)],
+            ["Operating Expenses", active_report.get("total_operating_expenses", 0)],
+            ["Over All Net Profit", active_report.get("net_profit", 0)],
+            ["Current Balance", active_report.get("fund_current_balance_total", active_report.get("ending_cash", 0))],
+        ]
+    elif report_type == "quarterly":
+        sel_idx = max(0, int(active_report.get("month_index", 0)))
+        q_start = (sel_idx // 3) * 3
+        q_reports = reports[q_start:q_start + 3]
+        q_label = f"{q_reports[0].get('month_short', '')}-{q_reports[-1].get('month_short', '')}" if q_reports else "Quarter"
+        subtitle = f"{school_year_name} / {q_label}"
+        metrics = [
+            ["Quarter Sales", sum(float(r.get("current_sales", 0) or 0) for r in q_reports)],
+            ["Quarter Expenses", sum(float(r.get("total_expenses", 0) or 0) for r in q_reports)],
+            ["Quarter Profit", sum(float(r.get("net_profit", 0) or 0) for r in q_reports)],
+        ]
+        headers = ["Month", "Sales", "Expenses", "Net Profit"]
+        rows = [
+            [r.get("month_label", ""), r.get("current_sales", 0), r.get("total_expenses", 0), r.get("net_profit", 0)]
+            for r in q_reports
+        ]
+    elif report_type == "sales":
+        subtitle = school_year_name
+        metrics = [["Total Sales", sum(float(r.get("current_sales", 0) or 0) for r in reports)]]
+        headers = ["Month", "Current Sales"]
+        rows = [[r.get("month_label", ""), r.get("current_sales", 0)] for r in reports]
+    elif report_type == "expense":
+        subtitle = school_year_name
+        cat_map = {}
+        for r in reports:
+            for exp in r.get("expenses", []):
+                cat = exp.get("category") or "Other expenses"
+                cat_map[cat] = cat_map.get(cat, 0.0) + float(exp.get("amount", 0) or 0)
+        metrics = [["Total Expenses", sum(cat_map.values())]]
+        headers = ["Expense Category", "Total Expenses"]
+        sorted_cats = sorted(cat_map.items(), key=lambda x: x[1], reverse=True)
+        rows = [[cat, amt] for cat, amt in sorted_cats]
+    elif report_type == "cash-flow":
+        subtitle = school_year_name
+        metrics = [
+            ["Opening Cash", reports[0].get("beginning_cash_on_hand", 0) if reports else 0],
+            ["Final Balance", reports[-1].get("fund_current_balance_total", reports[-1].get("ending_cash", 0)) if reports else 0],
+        ]
+        headers = ["Month", "Beginning Cash", "Net Profit", "Ending Balance"]
+        rows = [
+            [r.get("month_label", ""), r.get("beginning_cash_on_hand", 0), r.get("net_profit", 0), r.get("fund_current_balance_total", r.get("ending_cash", 0))]
+            for r in reports
+        ]
+    elif report_type == "profit":
+        subtitle = school_year_name
+        metrics = [
+            ["Gross Income", sum(float(r.get("gross_income", 0) or 0) for r in reports)],
+            ["Operating Expenses", sum(float(r.get("total_operating_expenses", 0) or 0) for r in reports)],
+            ["Net Profit", sum(float(r.get("net_profit", 0) or 0) for r in reports)],
+        ]
+        headers = ["Month", "Gross Income", "Operating Expenses", "Net Profit"]
+        rows = [
+            [r.get("month_label", ""), r.get("gross_income", 0), r.get("total_operating_expenses", 0), r.get("net_profit", 0)]
+            for r in reports
+        ]
+    else:  # annual or school-year
+        subtitle = school_year_name
+        metrics = [
+            ["Total Sales", sum(float(r.get("current_sales", 0) or 0) for r in reports)],
+            ["Total Expenses", sum(float(r.get("total_expenses", 0) or 0) for r in reports)],
+            ["Net Profit", sum(float(r.get("net_profit", 0) or 0) for r in reports)],
+            ["Ending Balance", reports[-1].get("fund_current_balance_total", reports[-1].get("ending_cash", 0)) if reports else 0],
+        ]
+        headers = ["Month", "Sales", "Expenses", "Net Profit"]
+        rows = [
+            [r.get("month_label", ""), r.get("current_sales", 0), r.get("total_expenses", 0), r.get("net_profit", 0)]
+            for r in reports
+        ]
+
+    return GeneratedReportExportPayload(
+        title=title,
+        subtitle=subtitle,
+        school_year_name=school_year_name,
+        school_year_id=school_year.id,
+        report_type=report_type,
+        report_id=report_id,
+        metrics=metrics,
+        headers=headers,
+        rows=rows,
+    )
+
+
+@router.post("/api/financial-reports/generate-report/export-excel")
+def export_generated_report_excel(
+    payload: GeneratedReportExportPayload,
+    _: models.User = Depends(require_financial_report_user),
+):
+    export_path = _generate_custom_report_excel(payload)
+    clean_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', payload.title).strip('_')
+    clean_sub = re.sub(r'[^a-zA-Z0-9_\-]', '_', payload.subtitle or "").strip('_')
+    filename_base = f"{clean_title}_{clean_sub}" if clean_sub else clean_title
+    return FileResponse(
+        export_path,
+        filename=f"{filename_base}.xlsx",
+        media_type=EXCEL_MEDIA_TYPE,
+        background=BackgroundTask(_remove_file_if_exists, export_path),
+    )
+
+
+@router.post("/api/financial-reports/generate-report/export-pdf")
+def export_generated_report_pdf(
+    payload: GeneratedReportExportPayload,
+    _: models.User = Depends(require_financial_report_user),
+):
+    export_path = _generate_custom_report_pdf(payload)
+    clean_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', payload.title).strip('_')
+    clean_sub = re.sub(r'[^a-zA-Z0-9_\-]', '_', payload.subtitle or "").strip('_')
+    filename_base = f"{clean_title}_{clean_sub}" if clean_sub else clean_title
+    return FileResponse(
+        export_path,
+        filename=f"{filename_base}.pdf",
+        media_type="application/pdf",
+        background=BackgroundTask(_remove_file_if_exists, export_path),
+    )
+
+
+@router.get("/api/financial-reports/school-years/{school_year_id}/generate-report/export-excel")
+def export_school_year_generated_report_excel(
+    school_year_id: int,
+    report_type: str = "monthly",
+    report_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_financial_report_user),
+):
+    school_year = _ensure_and_reload_school_year(db, school_year_id)
+    payload = _build_backend_report_payload(db, school_year, report_type, report_id)
+    return export_generated_report_excel(payload)
+
+
+@router.get("/api/financial-reports/school-years/{school_year_id}/generate-report/export-pdf")
+def export_school_year_generated_report_pdf(
+    school_year_id: int,
+    report_type: str = "monthly",
+    report_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_financial_report_user),
+):
+    school_year = _ensure_and_reload_school_year(db, school_year_id)
+    payload = _build_backend_report_payload(db, school_year, report_type, report_id)
+    return export_generated_report_pdf(payload)
 
 
 @router.get("/api/financial-reports/template")

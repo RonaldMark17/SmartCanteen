@@ -17,8 +17,9 @@ This folder contains pre-compiled Windows executable binaries for the **MEALS De
 
 ## 📦 Available Distribution Files
 
-1. **`MEALS Setup.exe`** (Recommended): Full NSIS Windows installer that creates Desktop and Start Menu shortcuts, sets up file associations, and includes an uninstaller.
-2. **`MEALS.exe`**: Standalone portable single executable that can run directly without installation.
+1. **`MEALS Setup.exe`** (Recommended for Windows): Full NSIS Windows installer that creates Desktop and Start Menu shortcuts, sets up file associations, and includes an uninstaller.
+2. **`MEALS.exe`**: Standalone portable single executable for Windows that can run directly without installation.
+3. **`MEALS-Mobile.apk`**: Android installation package for mobile phones and tablets (also available in `MEALS/Android/`).
 
 ---
 

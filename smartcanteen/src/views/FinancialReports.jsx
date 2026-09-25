@@ -931,10 +931,12 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
   const activeReport = selectedReport || reports[0] || {};
   const metrics = [];
   let rows = [];
+  let headers = [];
   let subtitle = schoolYearName;
 
   if (type === 'monthly') {
     subtitle = `${schoolYearName} / ${activeReport.month_label || 'Selected month'}`;
+    headers = ['Financial Statement Particulars', 'Amount'];
     metrics.push(
       ['Sales', activeReport.current_sales],
       ['Expenses', activeReport.total_expenses],
@@ -955,6 +957,7 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
     const quarterStart = Math.floor(selectedIndex / 3) * 3;
     const quarterReports = reports.slice(quarterStart, quarterStart + 3);
     subtitle = `${schoolYearName} / ${quarterReports[0]?.month_short || 'Quarter'}-${quarterReports.at(-1)?.month_short || ''}`;
+    headers = ['Month', 'Current Sales', 'Total Expenses', 'Net Profit'];
     metrics.push(
       ['Quarter Sales', quarterReports.reduce((sum, report) => sum + toMoney(report.current_sales), 0)],
       ['Quarter Expenses', quarterReports.reduce((sum, report) => sum + toMoney(report.total_expenses), 0)],
@@ -967,9 +970,11 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
       formatCurrency(report.net_profit),
     ]);
   } else if (type === 'sales') {
+    headers = ['Month', 'Current Sales'];
     metrics.push(['Total Sales', reports.reduce((sum, report) => sum + toMoney(report.current_sales), 0)]);
     rows = reports.map((report) => [report.month_label, formatCurrency(report.current_sales)]);
   } else if (type === 'expense') {
+    headers = ['Expense Category', 'Total Amount'];
     const categoryTotals = new Map();
     reports.forEach((report) => {
       (report.expenses || []).forEach((expense) => {
@@ -984,6 +989,7 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
       .sort((left, right) => right[1] - left[1])
       .map(([category, amount]) => [category, formatCurrency(amount)]);
   } else if (type === 'cash-flow') {
+    headers = ['Month', 'Beginning Cash', 'Net Profit', 'Ending Balance'];
     metrics.push(
       ['Opening Cash', reports[0]?.beginning_cash_on_hand || 0],
       ['Final Balance', reports.at(-1)?.fund_current_balance_total ?? reports.at(-1)?.ending_cash ?? 0]
@@ -995,6 +1001,7 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
       formatCurrency(report.fund_current_balance_total ?? report.ending_cash),
     ]);
   } else if (type === 'profit') {
+    headers = ['Month', 'Gross Income', 'Operating Expenses', 'Net Profit'];
     metrics.push(
       ['Gross Income', reports.reduce((sum, report) => sum + toMoney(report.gross_income), 0)],
       ['Operation Expenses', reports.reduce((sum, report) => sum + toMoney(report.total_operating_expenses), 0)],
@@ -1007,6 +1014,7 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
       formatCurrency(report.net_profit),
     ]);
   } else {
+    headers = ['Month', 'Sales', 'Expenses', 'Net Profit'];
     metrics.push(
       ['Total Sales', reports.reduce((sum, report) => sum + toMoney(report.current_sales), 0)],
       ['Total Expenses', reports.reduce((sum, report) => sum + toMoney(report.total_expenses), 0)],
@@ -1024,23 +1032,34 @@ function buildGeneratedReportPayload(type, detail, selectedReport) {
   return {
     title: reportType.label,
     subtitle,
+    school_year_name: schoolYearName,
     metrics,
+    headers,
     rows,
   };
 }
 
 function buildGeneratedReportHtml(payload) {
-  const metrics = payload.metrics
+  const metrics = (payload.metrics || [])
     .map(
       ([label, value]) => `
         <div class="card">
           <div class="label">${label}</div>
-          <div class="value">${formatCurrency(value)}</div>
+          <div class="value">${typeof value === 'number' ? formatCurrency(value) : value}</div>
         </div>
       `
     )
     .join('');
-  const rows = payload.rows
+
+  const thead = payload.headers && payload.headers.length > 0
+    ? `<thead>
+        <tr>
+          ${payload.headers.map((h, i) => `<th${i > 0 ? ' style="text-align:right;"' : ''}>${h}</th>`).join('')}
+        </tr>
+      </thead>`
+    : '';
+
+  const rows = (payload.rows || [])
     .map(
       (row) => `
         <tr>
@@ -1075,20 +1094,24 @@ function buildGeneratedReportHtml(payload) {
             height: 75px;
             object-fit: contain;
           }
-          .header-title-1 { font-size: 12px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; }
-          .header-title-2 { font-size: 13px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; }
+          .header-title-1 { font-size: 11px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; color: #475569; }
+          .header-title-2 { font-size: 13px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; color: #0f172a; }
           .header-sub { font-size: 10px; font-weight: bold; color: #334155; margin-bottom: 1px; }
-          .report-main-title { font-size: 13px; font-weight: 900; text-transform: uppercase; margin-top: 10px; margin-bottom: 2px; text-decoration: underline; }
-          .report-month-title { font-size: 11px; font-weight: bold; margin-bottom: 14px; }
+          .report-main-title { font-size: 14px; font-weight: 900; text-transform: uppercase; margin-top: 10px; margin-bottom: 2px; color: #047857; letter-spacing: 0.05em; }
+          .report-month-title { font-size: 11px; font-weight: bold; margin-bottom: 14px; color: #334155; }
           
-          .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
-          .card { border: 1px solid #334155; border-radius: 6px; padding: 10px 12px; background: #f8fafc; }
-          .label { color: #475569; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-          .value { margin-top: 4px; font-size: 18px; font-weight: 800; font-family: monospace; }
+          .grid { display: grid; grid-template-columns: repeat(${Math.min(4, Math.max(1, (payload.metrics || []).length))}, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+          .card { border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 12px; background: #f8fafc; }
+          .label { color: #475569; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+          .value { margin-top: 4px; font-size: 16px; font-weight: 800; font-family: monospace; color: #0f172a; }
           
           table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          td, th { border: 1px solid #334155; padding: 6px 8px; font-size: 11px; }
-          th { background: #f1f5f9; font-weight: bold; text-align: left; }
+          td, th { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 11px; }
+          th { background: #047857; color: #ffffff; font-weight: bold; text-align: left; }
+
+          .signatures { margin-top: 40px; display: flex; justify-content: space-between; page-break-inside: avoid; }
+          .sig-box { text-align: center; width: 220px; }
+          .sig-line { border-bottom: 1px solid #334155; margin-bottom: 6px; height: 35px; }
 
           @media print {
             body { padding: 0; }
@@ -1109,11 +1132,67 @@ function buildGeneratedReportHtml(payload) {
           <div class="report-month-title">${payload.subtitle}</div>
         </div>
 
-        <div class="grid">${metrics}</div>
-        <table><tbody>${rows}</tbody></table>
+        ${metrics ? `<div class="grid">${metrics}</div>` : ''}
+        <table>
+          ${thead}
+          <tbody>${rows}</tbody>
+        </table>
+
+        <div class="signatures">
+          <div class="sig-box">
+            <div class="sig-line"></div>
+            <div style="font-weight: bold; font-size: 11px;">Prepared by:</div>
+            <div style="font-size: 10px; color: #64748b;">Canteen Teacher / In-Charge</div>
+          </div>
+          <div class="sig-box">
+            <div class="sig-line"></div>
+            <div style="font-weight: bold; font-size: 11px;">Approved by:</div>
+            <div style="font-size: 10px; color: #64748b;">School Principal</div>
+          </div>
+        </div>
       </body>
     </html>
   `;
+}
+
+function printGeneratedReport(payload) {
+  const html = buildGeneratedReportHtml(payload);
+  const printWindow = window.open('', '_blank', 'width=950,height=800');
+  if (printWindow) {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 400);
+  } else {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (err) {
+        console.error('Print failed:', err);
+      }
+      setTimeout(() => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      }, 60000);
+    }, 400);
+  }
 }
 
 async function printPdfReport(schoolYearId, reportId = null, allSheets = false, defaultFilename = 'DepEd-Canteen-Report') {
@@ -3532,42 +3611,54 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       window.showToast?.('Please select a school year first.', 'warning');
       return;
     }
+    printGeneratedReport(generatedReportPayload);
+  }
 
-    const isFullYear = reportType === 'school-year' || reportType === 'annual';
-    setPrintingPdf(true);
+  async function handleExportGeneratedExcel() {
+    if (!selectedSchoolYearId) {
+      window.showToast?.('Please select a school year first.', 'warning');
+      return;
+    }
+
+    setExportingWorkbook(true);
     try {
-      await printPdfReport(
-        selectedSchoolYearId,
-        selectedReportId,
-        isFullYear,
-        detail?.school_year?.name ? `CANTEEN-REPORT-${detail.school_year.name}` : 'DepEd Canteen Report'
-      );
+      const file = await API.downloadGeneratedReportExcel({
+        ...generatedReportPayload,
+        school_year_id: selectedSchoolYearId,
+        report_type: reportType,
+        report_id: selectedReportId,
+      });
+      if (file?.blob) {
+        downloadBlob(file.blob, file.filename);
+        window.showToast?.('Excel report exported.', 'success');
+      }
     } catch (error) {
       const backendMessage =
         error?.apiDetail?.message ||
         error?.apiDetail?.detail ||
         error?.message ||
         '';
-      const displayMessage = backendMessage || 'Unable to prepare the PDF report for printing.';
+      const displayMessage = backendMessage || 'Unable to export the Excel report.';
       window.showToast?.(displayMessage, 'error');
     } finally {
-      setPrintingPdf(false);
+      setExportingWorkbook(false);
     }
   }
 
   async function handleExportGeneratedPdf() {
     if (!selectedSchoolYearId) {
+      window.showToast?.('Please select a school year first.', 'warning');
       return;
     }
 
-    const isFullYear = reportType === 'school-year' || reportType === 'annual';
     setExportingPdf(true);
     try {
-      const file = await API.downloadFinancialSchoolYearPdf(
-        selectedSchoolYearId,
-        selectedReportId,
-        isFullYear
-      );
+      const file = await API.downloadGeneratedReportPdf({
+        ...generatedReportPayload,
+        school_year_id: selectedSchoolYearId,
+        report_type: reportType,
+        report_id: selectedReportId,
+      });
       if (file?.blob) {
         downloadBlob(file.blob, file.filename);
         window.showToast?.('PDF report exported.', 'success');
@@ -5324,7 +5415,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
             <>
               <button
                 type="button"
-                onClick={handleExportWorkbook}
+                onClick={handleExportGeneratedExcel}
                 disabled={exportingWorkbook || !selectedSchoolYearId}
                 className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
               >
@@ -5406,7 +5497,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               {generatedReportPayload.metrics.map(([label, value], idx) => {
                 const tones = ['emerald', 'rose', 'sky', 'teal'];
                 return (
-                  <MetricTile key={label} label={label} value={formatCurrency(value)} tone={tones[idx % tones.length]} />
+                  <MetricTile key={label} label={label} value={typeof value === 'number' ? formatCurrency(value) : value} tone={tones[idx % tones.length]} />
                 );
               })}
             </div>
@@ -5414,6 +5505,22 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
             <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
               <div className="overflow-x-auto custom-scrollbar">
                 <table className="w-full min-w-[650px] text-left text-sm">
+                  {generatedReportPayload.headers && generatedReportPayload.headers.length > 0 && (
+                    <thead className="border-b border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-800/60">
+                      <tr>
+                        {generatedReportPayload.headers.map((hdr, hIdx) => (
+                          <th
+                            key={hdr}
+                            className={`px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300 ${
+                              hIdx === 0 ? 'text-left' : 'text-right'
+                            }`}
+                          >
+                            {hdr}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                  )}
                   <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
                     {generatedReportPayload.rows.map((row, rowIndex) => (
                       <tr key={`${row[0]}-${rowIndex}`} className="transition hover:bg-slate-50/70 dark:hover:bg-slate-800/50">

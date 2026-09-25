@@ -12,11 +12,16 @@ This directory contains the production release artifacts, precompiled client bin
 
 ```text
 MEALS/
-├── Client/                     # Precompiled Windows Desktop Binaries
+├── Client/                     # Precompiled Windows Desktop Binaries & Mobile APK
 │   ├── MEALS Setup.exe         # 1-Click / Custom NSIS Windows Installer
 │   ├── MEALS.exe               # Standalone Portable Single Executable
+│   ├── MEALS-Mobile.apk        # Standalone Android Mobile Application Package
 │   ├── README.md               # Client installation & configuration guide
 │   └── README.txt              # Plain-text setup instructions
+│
+├── Android/                    # Android Mobile Application Package
+│   ├── MEALS-Mobile.apk        # Mobile APK for phones & tablets
+│   └── README.md               # Mobile installation & setup guide
 │
 ├── Server/                     # Production Server Deployment Configuration
 │   ├── DEPLOYMENT_GUIDE.md     # Comprehensive step-by-step VPS operations manual

@@ -22,7 +22,7 @@ const TRUSTED_DEVICE_STORAGE_KEY = 'sc_trusted_authenticator_devices';
 const BACKGROUND_ALERT_STORAGE_KEY = 'sc_background_alert_token';
 const REFRESH_TOKEN_STORAGE_KEY = 'sc_refresh_token';
 const REMEMBER_ME_STORAGE_KEY = 'sc_remember_me';
-const DEFAULT_REMOTE_API_ORIGIN = 'https://smartcanteen.duckdns.org';
+const DEFAULT_REMOTE_API_ORIGIN = 'http://3.91.7.109';
 const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
 const NATIVE_API_BASE = DEFAULT_REMOTE_API_BASE;
@@ -1045,7 +1045,7 @@ function request(method, path, body = null, options = {}) {
   return requestPromise;
 }
 
-async function requestFile(path) {
+async function requestFile(path, options = {}) {
   const token = getStoredToken();
   const offlineSession = isOfflineSessionActive() || isOfflineSessionToken(token);
 
@@ -1065,7 +1065,10 @@ async function requestFile(path) {
     const apiBase = apiBases[index];
     const hasFallback = index < apiBases.length - 1;
     const requestUrl = `${apiBase}${path}`;
-    const headers = getAuthorizedRequestHeaders();
+    const headers = {
+      ...getAuthorizedRequestHeaders(),
+      ...(options.headers || {}),
+    };
 
     if (isNgrokUrl(apiBase) || (typeof window !== 'undefined' && isNgrokUrl(window.location.origin))) {
       headers['ngrok-skip-browser-warning'] = 'true';
@@ -1074,9 +1077,10 @@ async function requestFile(path) {
     let res;
     try {
       res = await fetchWithTimeout(requestUrl, {
-        method: 'GET',
+        method: options.method || 'GET',
         credentials: 'include',
         headers,
+        body: options.body,
       });
     } catch (error) {
       lastConnectionBase = apiBase;
@@ -1678,6 +1682,18 @@ export const API = {
         all_sheets: allSheets ? true : undefined,
       })}`
     ),
+  downloadGeneratedReportExcel: (payload) =>
+    requestFile('/financial-reports/generate-report/export-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  downloadGeneratedReportPdf: (payload) =>
+    requestFile('/financial-reports/generate-report/export-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   uploadFinancialReceipt: (file) => {
     const formData = new FormData();
     formData.append('file', file);

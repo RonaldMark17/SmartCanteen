@@ -12,6 +12,7 @@
 [CmdletBinding()]
 param (
     [switch]$SkipClientBuild,
+    [switch]$SkipAndroidBuild,
     [switch]$CreateServerZip
 )
 
@@ -27,6 +28,7 @@ if (-not (Test-Path "$RootDir\MEALS")) {
 $SmartCanteenDir = Join-Path $RootDir "smartcanteen"
 $MealsDir = Join-Path $RootDir "MEALS"
 $ClientDistDir = Join-Path $MealsDir "Client"
+$AndroidDistDir = Join-Path $MealsDir "Android"
 $ServerDistDir = Join-Path $MealsDir "Server"
 $DistElectronDir = Join-Path $SmartCanteenDir "dist-electron"
 
@@ -58,11 +60,12 @@ Write-Host "`n[Target Version: v$appVersion]" -ForegroundColor Yellow
 
 # Ensure destination folders exist
 if (-not (Test-Path $ClientDistDir)) { New-Item -ItemType Directory -Path $ClientDistDir -Force | Out-Null }
+if (-not (Test-Path $AndroidDistDir)) { New-Item -ItemType Directory -Path $AndroidDistDir -Force | Out-Null }
 if (-not (Test-Path $ServerDistDir)) { New-Item -ItemType Directory -Path $ServerDistDir -Force | Out-Null }
 
 # 3. Build Client Executables
 if (-not $SkipClientBuild) {
-    Write-Host "`n==> Step 1/3: Building MEALS Desktop Client (Vite + Electron)..." -ForegroundColor Green
+    Write-Host "`n==> Step 1/4: Building MEALS Desktop Client (Vite + Electron)..." -ForegroundColor Green
     
     if (-not (Test-Path "$SmartCanteenDir\node_modules")) {
         Write-Host "Installing npm dependencies in smartcanteen..." -ForegroundColor Gray
@@ -85,7 +88,7 @@ if (-not $SkipClientBuild) {
     Write-Host "`n[Skipping Client build as requested]" -ForegroundColor DarkYellow
 }
 
-Write-Host "`n==> Step 2/3: Copying Client Binaries into MEALS/Client/..." -ForegroundColor Green
+Write-Host "`n==> Step 2/4: Copying Desktop Client Binaries into MEALS/Client/..." -ForegroundColor Green
 
 $setupSrc = Join-Path $DistElectronDir "MEALS Setup.exe"
 $portableSrc = Join-Path $DistElectronDir "MEALS.exe"
@@ -109,8 +112,56 @@ if (Test-Path $portableSrc) {
     Write-Warning "Could not find $portableSrc"
 }
 
-# 4. Synchronize Server Package
-Write-Host "`n==> Step 3/3: Synchronizing MEALS Server Configurations..." -ForegroundColor Green
+# 4. Build & Package Android Mobile Client (Capacitor + Gradle)
+if (-not $SkipAndroidBuild) {
+    Write-Host "`n==> Step 3/4: Building MEALS Android Client (Capacitor + Gradle)..." -ForegroundColor Green
+    
+    Push-Location $SmartCanteenDir
+    try {
+        Write-Host "Syncing Capacitor Android web assets and plugins..." -ForegroundColor Gray
+        & npx cap sync android
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Capacitor sync exited with code $LASTEXITCODE"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    $androidDir = Join-Path $SmartCanteenDir "android"
+    if (Test-Path "$androidDir\gradlew.bat") {
+        Push-Location $androidDir
+        try {
+            Write-Host "Compiling Android APK (gradlew.bat assembleDebug)..." -ForegroundColor Gray
+            & .\gradlew.bat assembleDebug
+            if ($LASTEXITCODE -ne 0) {
+                throw "Gradle build failed with exit code $LASTEXITCODE"
+            }
+        } finally {
+            Pop-Location
+        }
+
+        $apkSrc = Join-Path $androidDir "app\build\outputs\apk\debug\app-debug.apk"
+        $apkClientDest = Join-Path $ClientDistDir "MEALS-Mobile.apk"
+        $apkAndroidDest = Join-Path $AndroidDistDir "MEALS-Mobile.apk"
+
+        if (Test-Path $apkSrc) {
+            Copy-Item -Path $apkSrc -Destination $apkClientDest -Force
+            Copy-Item -Path $apkSrc -Destination $apkAndroidDest -Force
+            $apkSizeMb = [math]::Round((Get-Item $apkClientDest).Length / 1MB, 2)
+            Write-Host "  [OK] Updated: MEALS/Client/MEALS-Mobile.apk ($apkSizeMb MB)" -ForegroundColor Green
+            Write-Host "  [OK] Updated: MEALS/Android/MEALS-Mobile.apk ($apkSizeMb MB)" -ForegroundColor Green
+        } else {
+            Write-Warning "Could not find Android APK at $apkSrc"
+        }
+    } else {
+        Write-Warning "Android Gradle wrapper not found at $androidDir\gradlew.bat"
+    }
+} else {
+    Write-Host "`n[Skipping Android build as requested]" -ForegroundColor DarkYellow
+}
+
+# 5. Synchronize Server Package
+Write-Host "`n==> Step 4/4: Synchronizing MEALS Server Configurations..." -ForegroundColor Green
 
 $backendReq = Join-Path $RootDir "backend\requirements.txt"
 $serverReq = Join-Path $ServerDistDir "requirements.txt"
@@ -152,13 +203,19 @@ if ($CreateServerZip) {
     Write-Host "  [OK] Created: MEALS/Server/meals-backend.zip ($zipSizeMb MB)" -ForegroundColor Green
 }
 
-# 5. Write Release Metadata
+# 6. Write Release Metadata
 $releaseMeta = @{
     version = $appVersion
     updated_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     client = @{
         installer = if (Test-Path "$ClientDistDir\MEALS Setup.exe") { (Get-Item "$ClientDistDir\MEALS Setup.exe").Length } else { 0 }
         portable = if (Test-Path "$ClientDistDir\MEALS.exe") { (Get-Item "$ClientDistDir\MEALS.exe").Length } else { 0 }
+        mobile_apk = if (Test-Path "$ClientDistDir\MEALS-Mobile.apk") { (Get-Item "$ClientDistDir\MEALS-Mobile.apk").Length } else { 0 }
+    }
+    android = @{
+        apk = if (Test-Path "$AndroidDistDir\MEALS-Mobile.apk") { (Get-Item "$AndroidDistDir\MEALS-Mobile.apk").Length } else { 0 }
+        package = "com.smartcanteen.app"
+        version = $appVersion
     }
     server = @{
         requirements = Test-Path "$ServerDistDir\requirements.txt"
@@ -175,6 +232,7 @@ Write-Host "  [OK] Updated: MEALS/version.json" -ForegroundColor Green
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 Write-Host "     MEALS Folder Successfully Updated! (v$appVersion)     " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "Client Artifacts: $ClientDistDir" -ForegroundColor White
-Write-Host "Server Artifacts: $ServerDistDir" -ForegroundColor White
-Write-Host "Build Timestamp : $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor White
+Write-Host "Desktop Artifacts: $ClientDistDir" -ForegroundColor White
+Write-Host "Android Artifacts: $AndroidDistDir" -ForegroundColor White
+Write-Host "Server Artifacts : $ServerDistDir" -ForegroundColor White
+Write-Host "Build Timestamp  : $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor White

@@ -24,6 +24,24 @@ allprojects {
     }
 }
 
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty("android")) {
+            project.android {
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_22
+                    targetCompatibility JavaVersion.VERSION_22
+                }
+            }
+        }
+        if (project.plugins.hasPlugin("kotlin-android")) {
+            project.kotlin {
+                jvmToolchain(22)
+            }
+        }
+    }
+}
+
 task clean(type: Delete) {
     delete rootProject.buildDir
 }

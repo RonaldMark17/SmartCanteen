@@ -22,6 +22,9 @@
             document.documentElement.classList.add('dark');
           }
         } catch (e) {}
+        if (!window.MEALS_CONFIG) {
+          window.MEALS_CONFIG = { apiBaseUrl: 'http://3.91.7.109/api' };
+        }
       })();
     </script>
   </head>

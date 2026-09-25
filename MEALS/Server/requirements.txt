@@ -12,3 +12,4 @@ fastapi
 pydantic
 psycopg[binary]
 xgboost
+reportlab
