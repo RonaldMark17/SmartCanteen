@@ -1591,6 +1591,14 @@ export const API = {
 
   getProducts: (active_only = true) => request('GET', `/products${toQuery({ active_only })}`),
   getQuickSaleProducts: () => request('GET', '/products/quick-sale'),
+
+  // POS Standalone Menu Items (Decoupled from Inventory)
+  getPOSMenuItems: (active_only = true) => request('GET', `/pos/menu-items${toQuery({ active_only })}`),
+  getPOSQuickSaleItems: () => request('GET', '/pos/menu-items/quick-sale'),
+  createPOSMenuItem: (data) => request('POST', '/pos/menu-items', data),
+  updatePOSMenuItem: (id, data) => request('PUT', `/pos/menu-items/${id}`, data),
+  deletePOSMenuItem: (id) => request('DELETE', `/pos/menu-items/${id}`),
+
   getLowStock: () => request('GET', '/products/low-stock'),
   createProduct: (data) => request('POST', '/products', data),
   updateProduct: (id, data) => request('PUT', `/products/${id}`, data),
@@ -1599,7 +1607,13 @@ export const API = {
   deleteProductPermanently: (id) => request('DELETE', `/products/${id}?hard_delete=true`),
   replenishInventory: (data) => request('POST', '/inventory/replenish', data),
   adjustInventory: (data) => request('POST', '/inventory/adjust', data),
+  resetPerishableDay: (data) => request('POST', '/inventory/perishable/reset-day', data),
   getInventoryHistory: (params = {}) => request('GET', `/inventory/history${toQuery(params)}`),
+  getDailyPrepStatus: (params = {}) => request('GET', `/inventory/daily-prep/status${toQuery(params)}`),
+  submitDailyPrepBatch: (data) => request('POST', '/inventory/daily-prep/batch', data),
+  getDailyReconciliationStatus: (params = {}) => request('GET', `/inventory/daily-reconciliation/status${toQuery(params)}`),
+  submitDailyReconciliation: (data) => request('POST', '/inventory/daily-reconciliation/submit', data),
+  getPerishableInventorySummary: (params = {}) => request('GET', `/inventory/perishable-summary${toQuery(params)}`),
 
   createTransaction: (data) => request('POST', '/transactions', data),
   getTransactions: (startDate = '', endDate = '', { skip = 0, limit = 100 } = {}) =>

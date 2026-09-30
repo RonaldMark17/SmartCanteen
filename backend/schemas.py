@@ -190,20 +190,24 @@ class ProductCreate(BaseModel):
     name:         str
     category:     str   = "General"
     price:        float = 0.0
+    cost_price:   float = 0.0
     stock:        float = 0.0
     min_stock:    float = 5.0
     unit_type:    str   = "pcs"
     base_unit:    str   = "pcs"
+    is_perishable: bool = True
     is_favorite:  bool = False
 
 class ProductUpdate(BaseModel):
     name:         Optional[str]   = None
     category:     Optional[str]   = None
     price:        Optional[float] = None
+    cost_price:   Optional[float] = None
     stock:        Optional[float] = None
     min_stock:    Optional[float] = None
     unit_type:    Optional[str]   = None
     base_unit:    Optional[str]   = None
+    is_perishable: Optional[bool]  = None
     is_favorite:  Optional[bool]  = None
     is_active:    Optional[bool]  = None
 
@@ -212,10 +216,12 @@ class ProductResponse(BaseModel):
     name:         str
     category:     str
     price:        float
+    cost_price:   float = 0.0
     stock:        float
     min_stock:    float
     unit_type:    str = "pcs"
     base_unit:    str = "pcs"
+    is_perishable: bool = True
     is_favorite:  bool = False
     is_active:    bool
     class Config:
@@ -224,6 +230,35 @@ class ProductResponse(BaseModel):
 
 class BulkProductActionRequest(BaseModel):
     product_ids: List[int]
+
+
+# ── POS Menu Items (Standalone / Decoupled from Inventory) ────────────────────
+
+class POSMenuItemCreate(BaseModel):
+    name:        str
+    category:    str = "General"
+    price:       float = 0.0
+    barcode:     Optional[str] = None
+    is_favorite: bool = False
+
+class POSMenuItemUpdate(BaseModel):
+    name:        Optional[str] = None
+    category:    Optional[str] = None
+    price:       Optional[float] = None
+    barcode:     Optional[str] = None
+    is_favorite: Optional[bool] = None
+    is_active:   Optional[bool] = None
+
+class POSMenuItemResponse(BaseModel):
+    id:          int
+    name:        str
+    category:    str
+    price:       float
+    barcode:     Optional[str] = None
+    is_favorite: bool = False
+    is_active:   bool = True
+    class Config:
+        from_attributes = True
 
 
 class QuickSaleProductResponse(ProductResponse):
@@ -245,6 +280,97 @@ class InventoryAdjustRequest(BaseModel):
     quantity: float
     reason: str  # "Damaged", "Spoiled", "Missing", "Inventory Correction", "Other"
     remarks: Optional[str] = None
+
+
+class PerishableItemResetItem(BaseModel):
+    product_id: int
+    remaining_unsold: float = 0.0
+    disposition: str = "waste_spoiled"  # "waste_spoiled", "staff_meal", "donated"
+    remarks: Optional[str] = None
+
+
+class PerishableDayResetRequest(BaseModel):
+    items: List[PerishableItemResetItem]
+    date: Optional[str] = None
+
+
+class DailyPrepItemInput(BaseModel):
+    product_id: int
+    prepared_qty: float
+    planned_qty: Optional[float] = 0.0
+    notes: Optional[str] = None
+
+
+class DailyPrepBatchRequest(BaseModel):
+    date: Optional[str] = None
+    items: List[DailyPrepItemInput]
+
+
+class DailyPrepItemResponse(BaseModel):
+    product_id: int
+    product_name: str
+    category: str
+    unit_type: str
+    base_unit: str
+    price: float
+    cost_price: float
+    current_stock: float
+    is_perishable: bool
+    planned_qty: float
+    prepared_qty: float
+    added_midday_qty: float
+    total_available_qty: float
+    status: str
+    prep_log_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class DailyPrepStatusResponse(BaseModel):
+    date: str
+    is_confirmed: bool
+    total_products: int
+    items: List[DailyPrepItemResponse]
+
+
+class DailyReconciliationItemInput(BaseModel):
+    product_id: int
+    remaining_actual: float
+    disposition_type: str = "waste_spoiled"
+    remarks: Optional[str] = None
+
+
+class DailyReconciliationSubmitRequest(BaseModel):
+    date: Optional[str] = None
+    items: List[DailyReconciliationItemInput]
+
+
+class DailyReconciliationItemResponse(BaseModel):
+    id: Optional[int] = None
+    product_id: int
+    product_name: str
+    category: str
+    base_unit: str
+    cost_price: float
+    price: float
+    prepared_qty: float
+    sold_qty: float
+    system_remaining: float
+    remaining_actual: float
+    disposition_type: str
+    waste_cost: float
+    stockout_occurred: bool
+    stockout_time: Optional[datetime] = None
+    remarks: Optional[str] = None
+
+
+class DailyReconciliationStatusResponse(BaseModel):
+    date: str
+    is_closed: bool
+    total_prepared_units: float
+    total_sold_units: float
+    total_waste_units: float
+    total_waste_cost: float
+    items: List[DailyReconciliationItemResponse]
 
 
 class InventoryLogResponse(BaseModel):
@@ -270,10 +396,12 @@ class InventoryLogResponse(BaseModel):
 # ── Transaction ────────────────────────────────────────────────────────────────
 
 class TransactionItemCreate(BaseModel):
-    product_id: int
-    quantity:   float
-    unit_price: float
-    sale_unit:  Optional[str] = None
+    menu_item_id: Optional[int] = None
+    product_id:   Optional[int] = None
+    item_name:    Optional[str] = None
+    quantity:     float
+    unit_price:   float
+    sale_unit:    Optional[str] = None
 
 class TransactionCreate(BaseModel):
     items:        List[TransactionItemCreate]
@@ -283,11 +411,14 @@ class TransactionCreate(BaseModel):
 
 class TransactionItemResponse(BaseModel):
     product_id:    Optional[int] = None
+    menu_item_id:  Optional[int] = None
+    item_name:     Optional[str] = None
     quantity:      float = 0.0
     sale_quantity: Optional[float] = None
     sale_unit:     Optional[str] = None
     unit_price:    float = 0.0
     product:       Optional[ProductResponse] = None
+    menu_item:     Optional[POSMenuItemResponse] = None
     class Config:
         from_attributes = True
 

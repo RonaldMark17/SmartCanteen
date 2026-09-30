@@ -17,10 +17,13 @@ import {
   MagnifyingGlassIcon,
   MinusSmallIcon,
   PlusSmallIcon,
+  PencilSquareIcon,
+  PlusIcon,
   PrinterIcon,
   ShoppingBagIcon,
   ShoppingCartIcon,
   StarIcon,
+  TagIcon,
   TrashIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -171,31 +174,63 @@ export default function POS() {
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
 
+  // POS Selling Price Management State
+  const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
+  const [editingProductPrice, setEditingProductPrice] = useState(null);
+  const [priceDrafts, setPriceDrafts] = useState({});
+  const [priceUpdateLoading, setPriceUpdateLoading] = useState(false);
+  const [priceUpdateSuccess, setPriceUpdateSuccess] = useState('');
+  const [priceUpdateError, setPriceUpdateError] = useState('');
+  const [priceManagerSearch, setPriceManagerSearch] = useState('');
+
+  // New POS Menu Item Modal State
+  const [isNewMenuItemModalOpen, setIsNewMenuItemModalOpen] = useState(false);
+  const [newMenuItemForm, setNewMenuItemForm] = useState({
+    name: '',
+    category: 'General',
+    price: '',
+    is_favorite: false,
+  });
+  const [newMenuItemError, setNewMenuItemError] = useState('');
+  const [newMenuItemLoading, setNewMenuItemLoading] = useState(false);
+
   useEffect(() => {
     let isActive = true;
 
     async function loadProductCatalog() {
-      const [productsResult, quickSaleResult] = await Promise.allSettled([
-        API.getProducts(),
-        API.getQuickSaleProducts(),
+      const [posItemsResult, quickSaleResult] = await Promise.allSettled([
+        API.getPOSMenuItems(),
+        API.getPOSQuickSaleItems(),
       ]);
       if (!isActive) {
         return;
       }
 
-      const productRows = productsResult.status === 'fulfilled' && Array.isArray(productsResult.value)
-        ? productsResult.value
+      let productRows = posItemsResult.status === 'fulfilled' && Array.isArray(posItemsResult.value)
+        ? posItemsResult.value
         : [];
-      setProducts(productRows);
 
-      if (quickSaleResult.status === 'fulfilled' && Array.isArray(quickSaleResult.value)) {
-        setQuickSaleProducts(quickSaleResult.value);
-      } else {
-        setQuickSaleProducts(productRows);
+      if (productRows.length === 0) {
+        try {
+          const fallback = await API.getProducts();
+          if (Array.isArray(fallback) && fallback.length > 0) {
+            productRows = fallback;
+          }
+        } catch {
+          // ignore
+        }
       }
 
-      if (productsResult.status === 'rejected') {
-        console.error(productsResult.reason);
+      setProducts(productRows);
+
+      if (quickSaleResult.status === 'fulfilled' && Array.isArray(quickSaleResult.value) && quickSaleResult.value.length > 0) {
+        setQuickSaleProducts(quickSaleResult.value);
+      } else {
+        setQuickSaleProducts(productRows.filter((p) => p.is_favorite));
+      }
+
+      if (posItemsResult.status === 'rejected') {
+        console.error(posItemsResult.reason);
       }
     }
 
@@ -305,18 +340,12 @@ export default function POS() {
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
-        const nextInventoryQuantity = Number(existing.inventory_quantity || existing.qty) + nextCartItem.inventory_quantity;
-        if (nextInventoryQuantity > Number(product.stock || 0) + 0.000001) {
-          window.showToast('Max stock reached!', 'warning');
-          return prev;
-        }
-
         return prev.map((item) =>
           item.id === product.id
             ? {
                 ...item,
-                qty: Number(item.qty) + nextCartItem.inventory_quantity / item.inventory_multiplier,
-                inventory_quantity: nextInventoryQuantity,
+                qty: Number(item.qty) + (nextCartItem.qty || 1),
+                inventory_quantity: Number(existing.inventory_quantity || existing.qty) + (nextCartItem.inventory_quantity || 1),
               }
             : item
         );
@@ -351,10 +380,7 @@ export default function POS() {
     setCart((prev) => {
       const existing = prev.find((item) => item.id === id);
       const inventoryMultiplier = existing?.inventory_multiplier || 1;
-      const safeQty = Math.min(numericQty, Number(product.stock || 0) / inventoryMultiplier);
-      if (safeQty <= 0) {
-        return prev;
-      }
+      const safeQty = numericQty;
 
       if (!existing) {
         return [...prev, { ...buildCartItem(product), qty: safeQty, inventory_quantity: safeQty * inventoryMultiplier }];
@@ -398,11 +424,7 @@ export default function POS() {
     return portionInventoryQuantity / cartItem.inventory_multiplier || selectedQty;
   };
 
-  const getCartItemStep = (item) =>
-    getQuantityStep(products.find((product) => product.id === item.id) || item, item.qty);
-  const canIncreaseCartItem = (item) =>
-    Number(item.inventory_quantity || item.qty) + getCartItemStep(item) * Number(item.inventory_multiplier || 1)
-      <= Number(item.stock || 0) + 0.000001;
+  const canIncreaseCartItem = () => true;
 
   const clearCart = () => {
     if (window.confirm('Are you sure you want to clear the cart?')) {
@@ -447,8 +469,7 @@ export default function POS() {
   const hasSearch = Boolean(normalizedSearch);
   const matchesSearch = (product) =>
     String(product.name || '').toLowerCase().includes(normalizedSearch);
-  const isAvailableProduct = (product) =>
-    product.is_active !== false && Number(product.stock || 0) > 0;
+  const isAvailableProduct = (product) => product.is_active !== false;
   const filteredProducts = products.filter((product) =>
     isAvailableProduct(product) &&
     (hasSearch
@@ -569,6 +590,125 @@ export default function POS() {
     setShowOrderModal(false);
   };
 
+  const handleOpenEditSinglePrice = (product, e) => {
+    if (e) e.stopPropagation();
+    setEditingProductPrice({
+      id: product.id,
+      name: product.name,
+      category: product.category,
+      currentPrice: Number(product.price || 0),
+      newPrice: Number(product.price || 0).toString(),
+    });
+    setPriceUpdateSuccess('');
+    setPriceUpdateError('');
+  };
+
+  const handleSaveProductPrice = async (productId, newPriceValue) => {
+    const val = parseFloat(newPriceValue);
+    if (isNaN(val) || val < 0) {
+      setPriceUpdateError('Selling price must be a valid non-negative number.');
+      return;
+    }
+    setPriceUpdateLoading(true);
+    setPriceUpdateError('');
+    try {
+      try {
+        await API.updatePOSMenuItem(productId, { price: val });
+      } catch {
+        await API.updateProduct(productId, { price: val });
+      }
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, price: val } : p))
+      );
+      setQuickSaleProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, price: val } : p))
+      );
+      setCart((prev) =>
+        prev.map((item) => (item.id === productId ? { ...item, price: val } : item))
+      );
+      setPriceUpdateSuccess(`Price updated to PHP ${val.toFixed(2)}`);
+      setTimeout(() => {
+        setPriceUpdateSuccess('');
+        setEditingProductPrice(null);
+      }, 1000);
+    } catch (err) {
+      setPriceUpdateError(err.message || 'Failed to update selling price.');
+    } finally {
+      setPriceUpdateLoading(false);
+    }
+  };
+
+  const handleCreateMenuItem = async (e) => {
+    e.preventDefault();
+    if (!newMenuItemForm.name.trim()) {
+      setNewMenuItemError('Item name is required.');
+      return;
+    }
+    const priceVal = parseFloat(newMenuItemForm.price);
+    if (isNaN(priceVal) || priceVal < 0) {
+      setNewMenuItemError('Valid price is required.');
+      return;
+    }
+    setNewMenuItemLoading(true);
+    setNewMenuItemError('');
+    try {
+      const created = await API.createPOSMenuItem({
+        name: newMenuItemForm.name.trim(),
+        category: newMenuItemForm.category || 'General',
+        price: priceVal,
+        is_favorite: Boolean(newMenuItemForm.is_favorite),
+      });
+      setProducts((prev) => [...prev, created]);
+      if (created.is_favorite) {
+        setQuickSaleProducts((prev) => [...prev, created]);
+      }
+      setIsNewMenuItemModalOpen(false);
+      setNewMenuItemForm({ name: '', category: 'General', price: '', is_favorite: false });
+      window.showToast?.(`Added "${created.name}" to POS menu!`, 'success');
+    } catch (err) {
+      setNewMenuItemError(err.message || 'Failed to create menu item.');
+    } finally {
+      setNewMenuItemLoading(false);
+    }
+  };
+
+  const handleToggleFavorite = async (item) => {
+    const nextFav = !item.is_favorite;
+    try {
+      try {
+        await API.updatePOSMenuItem(item.id, { is_favorite: nextFav });
+      } catch {
+        await API.updateProduct(item.id, { is_favorite: nextFav });
+      }
+      setProducts((prev) =>
+        prev.map((p) => (p.id === item.id ? { ...p, is_favorite: nextFav } : p))
+      );
+      if (nextFav) {
+        setQuickSaleProducts((prev) => [...prev, { ...item, is_favorite: nextFav }]);
+      } else {
+        setQuickSaleProducts((prev) => prev.filter((p) => p.id !== item.id));
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleDeleteMenuItem = async (id, name) => {
+    if (!window.confirm(`Remove "${name}" from POS menu?`)) return;
+    try {
+      try {
+        await API.deletePOSMenuItem(id);
+      } catch {
+        await API.deleteProduct(id);
+      }
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+      setQuickSaleProducts((prev) => prev.filter((p) => p.id !== id));
+      setCart((prev) => prev.filter((item) => item.id !== id));
+    } catch (err) {
+      alert(err.message || 'Failed to remove menu item.');
+    }
+  };
+
   const categoryIcon = (cat) => {
     const map = {
       Staple: ArchiveBoxIcon,
@@ -652,19 +792,30 @@ export default function POS() {
               </button>
             </div>
 
-            <div className="relative">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-              <input
-                ref={productSearchRef}
-                type="search"
-                placeholder="Search products by name..."
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-base outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setCurrentPage(1);
-                }}
-              />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative flex-1">
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  ref={productSearchRef}
+                  type="search"
+                  placeholder="Search products by name..."
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-base outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPriceModalOpen(true)}
+                className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 text-sm font-bold text-emerald-800 transition hover:bg-emerald-100 hover:border-emerald-300"
+                title="Manage selling prices for products in POS"
+              >
+                <TagIcon className="h-4 w-4 text-emerald-600 stroke-[2.5]" />
+                <span>POS Selling Prices</span>
+              </button>
             </div>
 
             {posMode === 'full' ? (
@@ -705,19 +856,17 @@ export default function POS() {
                 <div
                   key={product.id}
                   className={`pos-product-card relative flex flex-col items-center rounded-xl border text-center transition-[border-color,box-shadow,transform] duration-200 ease-out ${posMode === 'quick' ? 'min-h-[14rem] p-4' : 'p-3'} ${
-                    product.stock === 0
-                      ? 'pos-product-card-disabled border-slate-200 bg-white opacity-50 grayscale shadow-none'
-                      : isSelected
-                        ? 'pos-product-card-selected border-primary bg-white shadow-[0_10px_24px_rgba(15,118,110,0.12)]'
-                        : 'pos-product-card-idle border-slate-200 bg-white shadow-sm'
+                    isSelected
+                      ? 'pos-product-card-selected border-primary bg-white shadow-[0_10px_24px_rgba(15,118,110,0.12)]'
+                      : 'pos-product-card-idle border-slate-200 bg-white shadow-sm'
                   }`}
                 >
                   <button
                     type="button"
                     onClick={() => addToCart(product)}
-                    disabled={product.stock === 0}
+                    
                     className={`flex w-full flex-1 flex-col items-center text-center ${
-                      product.stock === 0 ? 'cursor-not-allowed' : 'cursor-pointer'
+                      'cursor-pointer'
                     }`}
                   >
                   {posMode === 'quick' && !hasSearch && (
@@ -749,10 +898,22 @@ export default function POS() {
                   >
                     {product.name}
                   </div>
-                  <div className={`font-semibold text-primary ${posMode === 'quick' ? 'text-base' : 'text-sm'}`}>{formatCurrency(product.price)}</div>
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span className={`font-semibold text-primary ${posMode === 'quick' ? 'text-base' : 'text-sm'}`}>
+                      {formatCurrency(product.price)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => handleOpenEditSinglePrice(product, e)}
+                      title={`Edit POS selling price for ${product.name}`}
+                      className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 opacity-60 hover:bg-slate-100 hover:text-emerald-700 hover:opacity-100 transition"
+                    >
+                      <PencilSquareIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
 
                   <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
-                    <div
+                    <div className="hidden"
                       className={`pos-stock-chip max-w-full truncate rounded-md px-2 py-0.5 text-[10px] font-bold ${
                         isBelowMinimumStock(product)
                           ? 'bg-red-100 text-red-700'
@@ -814,7 +975,7 @@ export default function POS() {
                     <button
                       type="button"
                       onClick={() => addToCart(product)}
-                      disabled={product.stock === 0 || selectedInventoryQuantity + buildCartItem(product).inventory_quantity > Number(product.stock || 0) + 0.000001}
+
                       className={`pos-qty-button flex shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition-[background-color,color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:text-primary hover:shadow disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:hover:shadow-sm ${posMode === 'quick' ? 'h-12 w-12' : 'h-10 w-10'}`}
                       aria-label={`Increase ${product.name} quantity`}
                     >
@@ -1733,6 +1894,377 @@ export default function POS() {
                 Print
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ───────────────────────────────────────────────────────────────────
+          MODAL: QUICK SINGLE PRODUCT SELLING PRICE EDIT
+      ───────────────────────────────────────────────────────────────────── */}
+      {editingProductPrice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <TagIcon className="h-5 w-5 text-emerald-600" />
+                <h3 className="text-base font-bold text-slate-900">Set POS Selling Price</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingProductPrice(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveProductPrice(editingProductPrice.id, editingProductPrice.newPrice);
+              }}
+              className="space-y-4 p-5"
+            >
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">{editingProductPrice.category}</span>
+                <h4 className="text-base font-black text-slate-900">{editingProductPrice.name}</h4>
+                <div className="mt-1 text-xs text-slate-500">
+                  Current POS Selling Price: <span className="font-bold text-slate-700">{formatCurrency(editingProductPrice.currentPrice)}</span>
+                </div>
+              </div>
+
+              {priceUpdateSuccess && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700 flex items-center gap-2">
+                  <CheckCircleIcon className="h-4 w-4 shrink-0" />
+                  {priceUpdateSuccess}
+                </div>
+              )}
+
+              {priceUpdateError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-bold text-rose-700">
+                  {priceUpdateError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                  New POS Selling Price (₱) *
+                </label>
+                <div className="relative mt-1.5">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-slate-400">₱</span>
+                  <input
+                    type="number"
+                    step="0.25"
+                    min="0"
+                    required
+                    autoFocus
+                    value={editingProductPrice.newPrice}
+                    onChange={(e) => setEditingProductPrice({ ...editingProductPrice, newPrice: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-8 pr-3 text-base font-black text-slate-900 shadow-2xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {[10, 15, 20, 25, 30, 35, 40, 50].map((quick) => (
+                    <button
+                      key={quick}
+                      type="button"
+                      onClick={() => setEditingProductPrice({ ...editingProductPrice, newPrice: quick.toString() })}
+                      className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-100 active:scale-95"
+                    >
+                      ₱{quick}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingProductPrice(null)}
+                  className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={priceUpdateLoading}
+                  className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {priceUpdateLoading ? 'Saving...' : 'Save Selling Price'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────
+          MODAL: FULL POS MENU ITEMS & SELLING PRICES MANAGER
+      ───────────────────────────────────────────────────────────────────── */}
+      {isPriceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                  <TagIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">POS Menu Items & Selling Prices</h3>
+                  <p className="text-xs text-slate-500">Standalone menu items sold at the POS counter (independent from inventory)</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNewMenuItemModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 active:scale-95"
+                >
+                  <PlusIcon className="h-4 w-4 stroke-[2.5]" />
+                  <span>+ Add Menu Item</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPriceModalOpen(false)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 border-b border-slate-100 bg-white">
+              <div className="relative">
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="search"
+                  placeholder="Filter menu items..."
+                  value={priceManagerSearch}
+                  onChange={(e) => setPriceManagerSearch(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs font-semibold outline-none focus:border-emerald-500 focus:bg-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2.5">Menu Item</th>
+                    <th className="px-3 py-2.5">Category</th>
+                    <th className="px-3 py-2.5 text-center">Quick Sale ★</th>
+                    <th className="px-3 py-2.5 text-right">Selling Price (₱)</th>
+                    <th className="px-3 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {products
+                    .filter((p) => {
+                      if (!priceManagerSearch) return true;
+                      const q = priceManagerSearch.toLowerCase();
+                      return (
+                        (p.name || '').toLowerCase().includes(q) ||
+                        (p.category || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((p) => {
+                      const currentVal = priceDrafts[p.id] !== undefined ? priceDrafts[p.id] : Number(p.price || 0);
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-50/70 transition">
+                          <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
+                          <td className="px-3 py-2.5 text-slate-500">
+                            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                              {p.category || 'General'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleFavorite(p)}
+                              title={p.is_favorite ? 'Featured in Quick Sale (click to remove)' : 'Click to add to Quick Sale'}
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border transition ${
+                                p.is_favorite
+                                  ? 'border-amber-300 bg-amber-50 text-amber-500 hover:bg-amber-100'
+                                  : 'border-slate-200 text-slate-300 hover:text-amber-400 hover:border-amber-300'
+                              }`}
+                            >
+                              <StarIcon className={`h-4 w-4 ${p.is_favorite ? 'fill-amber-400' : ''}`} />
+                            </button>
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            <div className="inline-flex items-center gap-1">
+                              <span className="font-bold text-slate-400">₱</span>
+                              <input
+                                type="number"
+                                step="0.25"
+                                min="0"
+                                value={currentVal}
+                                onChange={(e) =>
+                                  setPriceDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                                }
+                                className="h-7 w-20 rounded border border-slate-200 px-1.5 text-right font-black text-slate-900 outline-none focus:border-emerald-500"
+                              />
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveProductPrice(p.id, currentVal)}
+                                className="rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100 transition active:scale-95"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMenuItem(p.id, p.name)}
+                                title={`Remove ${p.name} from POS`}
+                                className="rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                              >
+                                <TrashIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-between items-center border-t border-slate-200 bg-slate-50 px-6 py-3">
+              <span className="text-xs text-slate-500 font-medium">
+                POS menu items are separate from inventory stock and ready for fast counter sales.
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsPriceModalOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────
+          MODAL: ADD NEW POS MENU ITEM
+      ───────────────────────────────────────────────────────────────────── */}
+      {isNewMenuItemModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                  <PlusCircleIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Add POS Menu Item</h3>
+                  <p className="text-xs text-slate-500">Create a dish or product for checkout at the POS counter</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNewMenuItemModalOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateMenuItem} className="space-y-4 p-6">
+              {newMenuItemError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
+                  {newMenuItemError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Menu Item Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Chicken Adobo with Rice"
+                  value={newMenuItemForm.name}
+                  onChange={(e) => setNewMenuItemForm({ ...newMenuItemForm, name: e.target.value })}
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Category *
+                </label>
+                <select
+                  value={newMenuItemForm.category}
+                  onChange={(e) => setNewMenuItemForm({ ...newMenuItemForm, category: e.target.value })}
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                >
+                  <option value="Viand">Viand (Ulam)</option>
+                  <option value="Staple">Staple (Rice / Noodles)</option>
+                  <option value="Snacks">Snacks (Meryenda)</option>
+                  <option value="Drinks">Drinks (Beverages)</option>
+                  <option value="Dessert">Dessert</option>
+                  <option value="Bread">Bread / Pastries</option>
+                  <option value="Soup">Soup</option>
+                  <option value="General">General</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Selling Price (₱) *
+                </label>
+                <div className="relative mt-1.5">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-slate-400">₱</span>
+                  <input
+                    type="number"
+                    step="0.25"
+                    min="0"
+                    required
+                    placeholder="e.g. 35.00"
+                    value={newMenuItemForm.price}
+                    onChange={(e) => setNewMenuItemForm({ ...newMenuItemForm, price: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-8 pr-3 text-sm font-bold text-slate-900 shadow-2xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newMenuItemForm.is_favorite}
+                    onChange={(e) => setNewMenuItemForm({ ...newMenuItemForm, is_favorite: e.target.checked })}
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-900">Show on "Quick Sale" Bar</span>
+                    <p className="text-[11px] text-slate-500">Pin to the quick sale screen for fastest 1-tap checkout</p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsNewMenuItemModalOpen(false)}
+                  className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={newMenuItemLoading}
+                  className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {newMenuItemLoading ? 'Creating...' : 'Create Menu Item'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

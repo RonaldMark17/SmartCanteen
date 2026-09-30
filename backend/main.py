@@ -27,7 +27,13 @@ import struct
 import subprocess
 import threading
 import time
+import sys
+from pathlib import Path
 from urllib.parse import quote
+
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import backend.models as models
 import backend.schemas as schemas
@@ -36,7 +42,7 @@ import backend.analytics_helpers as analytics_helpers
 import backend.financial_reports as financial_reports
 import backend.ml_predictor as ml_predictor
 from backend.demo_data import seed_demo_canteen_database
-from backend.database import engine, get_db, Base
+from backend.database import engine, get_db, Base, SessionLocal
 from backend.time_utils import (
     build_ph_date_range_bounds,
     build_recent_ph_day_keys,
@@ -476,15 +482,21 @@ def _normalize_transaction_items(items) -> List[dict]:
     for item in items:
         try:
             if isinstance(item, dict):
+                mid = item.get("menu_item_id") or item.get("product_id")
                 normalized_items.append({
-                    "product_id": int(item["product_id"]),
+                    "menu_item_id": int(mid) if mid is not None else None,
+                    "product_id": int(item["product_id"]) if item.get("product_id") is not None else (int(mid) if mid is not None else None),
+                    "item_name": item.get("item_name") or item.get("name"),
                     "quantity": float(item["quantity"]),
                     "unit_price": float(item["unit_price"]),
                     "sale_unit": item.get("sale_unit"),
                 })
             else:
+                mid = getattr(item, "menu_item_id", None) or getattr(item, "product_id", None)
                 normalized_items.append({
-                    "product_id": int(item.product_id),
+                    "menu_item_id": int(mid) if mid is not None else None,
+                    "product_id": int(getattr(item, "product_id")) if getattr(item, "product_id", None) is not None else (int(mid) if mid is not None else None),
+                    "item_name": getattr(item, "item_name", None) or getattr(item, "name", None),
                     "quantity": float(item.quantity),
                     "unit_price": float(item.unit_price),
                     "sale_unit": getattr(item, "sale_unit", None),
@@ -518,32 +530,29 @@ def _persist_transaction(
         if not math.isfinite(sale_quantity) or sale_quantity <= 0:
             raise TransactionValidationError("Transaction item quantity must be greater than zero")
 
-        product = db.query(models.Product).filter(models.Product.id == item["product_id"]).first()
-        if not product or not product.is_active:
-            raise TransactionValidationError(
-                f"Product {item['product_id']} not found",
-                status_code=404,
-            )
-        sale_unit, unit_multiplier = _get_sale_unit_multiplier(product, item["sale_unit"])
-        if _normalize_unit_type(product.unit_type) == PCS_UNIT_TYPE and not sale_quantity.is_integer():
-            raise TransactionValidationError("PCS products must be sold in whole numbers")
+        menu_item_id = item.get("menu_item_id")
+        product_id = item.get("product_id")
+        menu_item = None
+        if menu_item_id:
+            menu_item = db.query(models.POSMenuItem).filter(models.POSMenuItem.id == menu_item_id).first()
+        if not menu_item and product_id:
+            menu_item = db.query(models.POSMenuItem).filter(models.POSMenuItem.id == product_id).first()
+        if not menu_item and product_id:
+            menu_item = db.query(models.Product).filter(models.Product.id == product_id).first()
 
-        inventory_quantity = round(sale_quantity * unit_multiplier, 6)
-        if inventory_quantity <= 0:
-            raise TransactionValidationError("Transaction item quantity must be greater than zero")
-        if float(product.stock or 0) + 0.000001 < inventory_quantity:
-            raise TransactionValidationError(
-                f"Insufficient stock for '{product.name}' "
-                f"(available: {product.stock}, requested: {inventory_quantity})",
-            )
+        item_name = item.get("item_name") or getattr(menu_item, "name", None) or f"Item #{menu_item_id or product_id or 'unknown'}"
+        if item.get("unit_price") is not None:
+            unit_price = round(float(item["unit_price"]), 2)
+        else:
+            unit_price = round(float(getattr(menu_item, "price", 0.0) or 0.0), 2)
 
-        unit_price = round(float(product.price or 0) * unit_multiplier, 2)
         resolved_items.append(
             {
-                "product": product,
+                "menu_item_id": menu_item.id if isinstance(menu_item, models.POSMenuItem) else menu_item_id,
+                "product_id": menu_item.id if isinstance(menu_item, models.Product) else product_id,
+                "item_name": item_name,
                 "sale_quantity": sale_quantity,
-                "sale_unit": sale_unit,
-                "inventory_quantity": inventory_quantity,
+                "sale_unit": item.get("sale_unit") or "pcs",
                 "unit_price": unit_price,
             }
         )
@@ -566,34 +575,15 @@ def _persist_transaction(
     db.flush()
 
     for item in resolved_items:
-        product = item["product"]
-        prev_stock = float(product.stock or 0)
-        deduction = float(item["inventory_quantity"])
-        new_stock = round(max(0.0, prev_stock - deduction), 6)
-        product.stock = new_stock
-
-        min_stock_val = float(product.min_stock or 0)
-        if float(prev_stock) >= min_stock_val and float(new_stock) < min_stock_val:
-            _resolve_product_low_stock_alerts(db, product.id, product.name)
-
         db.add(models.TransactionItem(
             transaction_id=txn.id,
-            product_id=product.id,
-            quantity=item["inventory_quantity"],
+            menu_item_id=item["menu_item_id"],
+            product_id=item["product_id"],
+            item_name=item["item_name"],
+            quantity=item["sale_quantity"],
             sale_quantity=item["sale_quantity"],
             sale_unit=item["sale_unit"],
             unit_price=item["unit_price"],
-        ))
-        db.add(models.InventoryLog(
-            product_id=product.id,
-            user_id=user_id,
-            movement_type="sale",
-            quantity=-deduction,
-            previous_stock=prev_stock,
-            new_stock=new_stock,
-            reason="POS Sale",
-            remarks=f"Sale #{txn.id}" if txn.id else "POS Sale",
-            created_at=txn.created_at if txn.created_at else utc_now_naive(),
         ))
 
     db.flush()
@@ -952,6 +942,64 @@ def _ensure_audit_logs_user_type_column():
             print(f"Audit log user_type column setup skipped: {exc}")
 
 
+def _ensure_perishable_inventory_columns():
+    column_statements = [
+        ("products", "is_perishable", "ALTER TABLE products ADD COLUMN is_perishable BOOLEAN DEFAULT TRUE"),
+        ("products", "cost_price", "ALTER TABLE products ADD COLUMN cost_price FLOAT DEFAULT 0.0"),
+    ]
+    try:
+        with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_perishable BOOLEAN DEFAULT TRUE"))
+                connection.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price FLOAT DEFAULT 0.0"))
+                return
+            existing_columns = {
+                row["name"]
+                for row in connection.execute(text("PRAGMA table_info(products)")).mappings()
+            }
+            for _table_name, column_name, statement in column_statements:
+                if column_name not in existing_columns:
+                    connection.execute(text(statement))
+    except Exception as exc:
+        print(f"Perishable inventory column setup skipped: {exc}")
+
+
+def _ensure_pos_menu_items_table():
+    try:
+        models.Base.metadata.create_all(bind=engine, tables=[models.POSMenuItem.__table__])
+        with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("ALTER TABLE transaction_items ADD COLUMN IF NOT EXISTS menu_item_id INTEGER REFERENCES pos_menu_items(id)"))
+                connection.execute(text("ALTER TABLE transaction_items ADD COLUMN IF NOT EXISTS item_name VARCHAR"))
+            else:
+                existing_cols = {
+                    row["name"]
+                    for row in connection.execute(text("PRAGMA table_info(transaction_items)")).mappings()
+                }
+                if "menu_item_id" not in existing_cols:
+                    connection.execute(text("ALTER TABLE transaction_items ADD COLUMN menu_item_id INTEGER REFERENCES pos_menu_items(id)"))
+                if "item_name" not in existing_cols:
+                    connection.execute(text("ALTER TABLE transaction_items ADD COLUMN item_name VARCHAR"))
+
+        # Seed from products if pos_menu_items is empty
+        with SessionLocal() as db:
+            count = db.query(models.POSMenuItem).count()
+            if count == 0:
+                products = db.query(models.Product).filter(models.Product.is_active == True).all()
+                for p in products:
+                    db.add(models.POSMenuItem(
+                        name=p.name,
+                        category=p.category or "General",
+                        price=float(p.price or 0.0),
+                        barcode=p.barcode,
+                        is_favorite=bool(p.is_favorite),
+                        is_active=True,
+                    ))
+                db.commit()
+    except Exception as exc:
+        print(f"POS menu items table setup skipped or error: {exc}")
+
+
 _ensure_user_authenticator_columns()
 _ensure_audit_logs_user_type_column()
 _ensure_analytics_indexes()
@@ -960,6 +1008,8 @@ _ensure_inventory_unit_columns()
 _ensure_financial_reporting_columns()
 _ensure_password_reset_request_columns()
 _ensure_authenticator_recovery_request_columns()
+_ensure_perishable_inventory_columns()
+_ensure_pos_menu_items_table()
 
 app = FastAPI(
     title="SmartCanteen",
@@ -4526,6 +4576,95 @@ def get_background_alert_summary(
     }
 
 
+# ── POS Menu Items (Standalone / Decoupled from Inventory) ────────────────────
+
+@app.get("/api/pos/menu-items", response_model=List[schemas.POSMenuItemResponse], tags=["POS"])
+def list_pos_menu_items(
+    active_only: bool = True,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.get_current_user),
+):
+    q = db.query(models.POSMenuItem)
+    if active_only:
+        q = q.filter(models.POSMenuItem.is_active == True)
+    return q.order_by(models.POSMenuItem.category, models.POSMenuItem.name).all()
+
+
+@app.get("/api/pos/menu-items/quick-sale", response_model=List[schemas.POSMenuItemResponse], tags=["POS"])
+def list_pos_quick_sale_items(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.get_current_user),
+):
+    return (
+        db.query(models.POSMenuItem)
+        .filter(models.POSMenuItem.is_active == True)
+        .order_by(models.POSMenuItem.is_favorite.desc(), models.POSMenuItem.name.asc())
+        .all()
+    )
+
+
+@app.post("/api/pos/menu-items", response_model=schemas.POSMenuItemResponse, status_code=201, tags=["POS"])
+def create_pos_menu_item(
+    payload: schemas.POSMenuItemCreate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_staff_or_admin),
+):
+    item = models.POSMenuItem(
+        name=payload.name.strip(),
+        category=payload.category.strip() if payload.category else "General",
+        price=max(0.0, float(payload.price or 0.0)),
+        barcode=payload.barcode,
+        is_favorite=bool(payload.is_favorite),
+        is_active=True,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.put("/api/pos/menu-items/{item_id}", response_model=schemas.POSMenuItemResponse, tags=["POS"])
+def update_pos_menu_item(
+    item_id: int,
+    payload: schemas.POSMenuItemUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_staff_or_admin),
+):
+    item = db.query(models.POSMenuItem).filter(models.POSMenuItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="POS Menu item not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"]:
+        item.name = data["name"].strip()
+    if "category" in data and data["category"]:
+        item.category = data["category"].strip()
+    if "price" in data and data["price"] is not None:
+        item.price = max(0.0, float(data["price"]))
+    if "barcode" in data:
+        item.barcode = data["barcode"]
+    if "is_favorite" in data and data["is_favorite"] is not None:
+        item.is_favorite = bool(data["is_favorite"])
+    if "is_active" in data and data["is_active"] is not None:
+        item.is_active = bool(data["is_active"])
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.delete("/api/pos/menu-items/{item_id}", status_code=204, tags=["POS"])
+def delete_pos_menu_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_admin),
+):
+    item = db.query(models.POSMenuItem).filter(models.POSMenuItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="POS Menu item not found")
+    item.is_active = False
+    db.commit()
+    return None
+
+
 @app.get("/api/products", response_model=List[schemas.ProductResponse], tags=["Products"])
 def list_products(
     active_only: bool = True,
@@ -5122,6 +5261,64 @@ def adjust_stock(
     }
 
 
+@app.post("/api/inventory/perishable/reset-day", tags=["Inventory"])
+def reset_perishable_inventory_day(
+    data: schemas.PerishableDayResetRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_staff_or_admin),
+):
+    results = []
+    for item in data.items:
+        prod = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+        if not prod:
+            continue
+        prev_stock = float(prod.stock or 0.0)
+        prod.stock = 0.0
+        prod.updated_at = utc_now_naive()
+
+        disp_label = {
+            "waste_spoiled": "Spoiled / Food Waste",
+            "staff_meal": "Staff Meal Consumed",
+            "donated": "Donated / Repurposed",
+        }.get(item.disposition, "Unsold Reset")
+
+        log_entry = models.InventoryLog(
+            product_id=prod.id,
+            user_id=current.id,
+            movement_type="adjustment",
+            quantity=-prev_stock,
+            previous_stock=prev_stock,
+            new_stock=0.0,
+            reason=f"Daily Food Waste: {disp_label}",
+            remarks=item.remarks or f"Cleared {prev_stock} unsold units at end of day",
+            created_at=utc_now_naive(),
+        )
+        db.add(log_entry)
+        results.append({
+            "product_id": prod.id,
+            "product_name": prod.name,
+            "cleared_qty": prev_stock,
+            "disposition": disp_label,
+        })
+
+    db.commit()
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="PERISHABLE_DAY_RESET",
+        details=f"Cleared unsold stock for {len(results)} perishable items at end of day",
+        request=req,
+    )
+    return {
+        "success": True,
+        "message": f"Successfully cleared {len(results)} perishable items for tomorrow.",
+        "count": len(results),
+        "items": results,
+    }
+
+
 @app.get("/api/inventory/history", tags=["Inventory"])
 def get_inventory_history(
     product_id: Optional[int] = None,
@@ -5162,6 +5359,475 @@ def get_inventory_history(
             "created_at": log.created_at.isoformat() if log.created_at else utc_now_naive().isoformat(),
         })
     return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERISHABLE DAILY BATCH & RECONCILIATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_target_date(date_str: Optional[str] = None):
+    if date_str:
+        try:
+            return datetime.strptime(date_str.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return get_ph_today()
+
+
+@app.get("/api/inventory/daily-prep/status", response_model=schemas.DailyPrepStatusResponse, tags=["Inventory"])
+def get_daily_prep_status(
+    date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_staff_or_admin),
+):
+    target_date = _get_target_date(date)
+    date_iso = target_date.isoformat()
+
+    products = (
+        db.query(models.Product)
+        .filter(models.Product.is_active == True)
+        .order_by(models.Product.name.asc())
+        .all()
+    )
+
+    prep_logs = {
+        log.product_id: log
+        for log in db.query(models.DailyPrepLog).filter(models.DailyPrepLog.date == target_date).all()
+    }
+
+    predictions_map = {}
+    try:
+        pred_res = ml_predictor.predict_tomorrow_sales(db)
+        if pred_res and "predictions" in pred_res:
+            for p in pred_res["predictions"]:
+                pid = p.get("id") or p.get("product_id")
+                if pid:
+                    predictions_map[int(pid)] = float(p.get("predicted_units") or p.get("recommended_prep_qty") or 0.0)
+    except Exception:
+        pass
+
+    items = []
+    is_any_confirmed = False
+
+    for prod in products:
+        is_perish = getattr(prod, "is_perishable", True)
+        if is_perish is None:
+            is_perish = True
+
+        log = prep_logs.get(prod.id)
+        if log:
+            if log.status == "confirmed":
+                is_any_confirmed = True
+            planned_qty = log.planned_qty
+            prepared_qty = log.prepared_qty
+            added_midday = log.added_midday_qty
+            total_avail = log.total_available_qty
+            status = log.status
+            prep_log_id = log.id
+            notes = log.notes
+        else:
+            pred_qty = predictions_map.get(prod.id)
+            if pred_qty is not None and pred_qty > 0:
+                planned_qty = round(pred_qty, 0 if prod.unit_type != "bulk" else 2)
+            else:
+                planned_qty = float(prod.min_stock or 10.0)
+            prepared_qty = planned_qty
+            added_midday = 0.0
+            total_avail = planned_qty
+            status = "draft"
+            prep_log_id = None
+            notes = None
+
+        items.append(schemas.DailyPrepItemResponse(
+            product_id=prod.id,
+            product_name=prod.name,
+            category=prod.category,
+            unit_type=prod.unit_type or "pcs",
+            base_unit=prod.base_unit or "pcs",
+            price=float(prod.price or 0.0),
+            cost_price=float(getattr(prod, "cost_price", 0.0) or 0.0),
+            current_stock=float(prod.stock or 0.0),
+            is_perishable=bool(is_perish),
+            planned_qty=float(planned_qty),
+            prepared_qty=float(prepared_qty),
+            added_midday_qty=float(added_midday),
+            total_available_qty=float(total_avail),
+            status=status,
+            prep_log_id=prep_log_id,
+            notes=notes,
+        ))
+
+    return schemas.DailyPrepStatusResponse(
+        date=date_iso,
+        is_confirmed=is_any_confirmed,
+        total_products=len(items),
+        items=items,
+    )
+
+
+@app.post("/api/inventory/daily-prep/batch", tags=["Inventory"])
+def submit_daily_prep_batch(
+    data: schemas.DailyPrepBatchRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_staff_or_admin),
+):
+    target_date = _get_target_date(data.date)
+    now = utc_now_naive()
+    updated_items = []
+
+    for item in data.items:
+        prod = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+        if not prod:
+            continue
+
+        prep_qty = max(0.0, float(item.prepared_qty))
+        if prod.unit_type != "bulk":
+            prep_qty = round(prep_qty, 0)
+        else:
+            prep_qty = round(prep_qty, 4)
+
+        prev_stock = float(prod.stock or 0.0)
+        prod.stock = prep_qty
+        prod.updated_at = now
+
+        prep_log = (
+            db.query(models.DailyPrepLog)
+            .filter(models.DailyPrepLog.date == target_date, models.DailyPrepLog.product_id == prod.id)
+            .first()
+        )
+        if not prep_log:
+            prep_log = models.DailyPrepLog(
+                date=target_date,
+                product_id=prod.id,
+                planned_qty=float(item.planned_qty or prep_qty),
+                prepared_qty=prep_qty,
+                added_midday_qty=0.0,
+                total_available_qty=prep_qty,
+                prepared_by_user_id=current.id,
+                status="confirmed",
+                notes=item.notes,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(prep_log)
+        else:
+            prep_log.prepared_qty = prep_qty
+            prep_log.total_available_qty = prep_qty + float(prep_log.added_midday_qty or 0.0)
+            prep_log.status = "confirmed"
+            prep_log.prepared_by_user_id = current.id
+            prep_log.notes = item.notes or prep_log.notes
+            prep_log.updated_at = now
+
+        db.add(models.InventoryLog(
+            product_id=prod.id,
+            user_id=current.id,
+            movement_type="replenishment",
+            quantity=prep_qty,
+            previous_stock=prev_stock,
+            new_stock=prep_qty,
+            reason="Daily Prep Batch",
+            remarks=f"Morning prep batch for {target_date.isoformat()}: {prep_qty} {prod.base_unit or 'pcs'}",
+            created_at=now,
+        ))
+
+        updated_items.append({"product_id": prod.id, "name": prod.name, "prepared_qty": prep_qty})
+
+    db.commit()
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="DAILY_PREP_CONFIRMED",
+        details=f"Confirmed daily prep batch for {target_date.isoformat()} ({len(updated_items)} items)",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Successfully confirmed daily preparation for {len(updated_items)} products on {target_date.isoformat()}",
+        "date": target_date.isoformat(),
+        "items": updated_items,
+    }
+
+
+@app.get("/api/inventory/daily-reconciliation/status", response_model=schemas.DailyReconciliationStatusResponse, tags=["Inventory"])
+def get_daily_reconciliation_status(
+    date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_staff_or_admin),
+):
+    target_date = _get_target_date(date)
+    start_utc, end_utc = get_ph_day_bounds_utc_naive(target_date)
+
+    sales_query = (
+        db.query(
+            models.TransactionItem.product_id,
+            func.sum(models.TransactionItem.quantity).label("sold_qty")
+        )
+        .join(models.Transaction, models.TransactionItem.transaction_id == models.Transaction.id)
+        .filter(models.Transaction.created_at >= start_utc, models.Transaction.created_at < end_utc)
+        .group_by(models.TransactionItem.product_id)
+        .all()
+    )
+    sold_map = {row[0]: float(row[1] or 0.0) for row in sales_query if row[0] is not None}
+
+    prep_logs = {
+        log.product_id: log
+        for log in db.query(models.DailyPrepLog).filter(models.DailyPrepLog.date == target_date).all()
+    }
+
+    recon_logs = {
+        log.product_id: log
+        for log in db.query(models.DailyReconciliationLog).filter(models.DailyReconciliationLog.date == target_date).all()
+    }
+
+    products = (
+        db.query(models.Product)
+        .filter(models.Product.is_active == True)
+        .order_by(models.Product.name.asc())
+        .all()
+    )
+
+    items = []
+    total_prep = 0.0
+    total_sold = 0.0
+    total_waste = 0.0
+    total_waste_cost = 0.0
+    is_closed = len(recon_logs) > 0
+
+    for prod in products:
+        is_perish = getattr(prod, "is_perishable", True)
+        if is_perish is False:
+            continue
+
+        prep_log = prep_logs.get(prod.id)
+        prep_qty = float(prep_log.total_available_qty if prep_log else 0.0)
+        sold_qty = sold_map.get(prod.id, 0.0)
+        system_remaining = max(0.0, float(prod.stock or 0.0))
+
+        cost_price = float(getattr(prod, "cost_price", 0.0) or 0.0)
+        price = float(prod.price or 0.0)
+
+        recon = recon_logs.get(prod.id)
+        if recon:
+            rem_actual = float(recon.remaining_actual or 0.0)
+            disposition = recon.disposition_type
+            waste_cost = float(recon.waste_cost or 0.0)
+            stockout = bool(recon.stockout_occurred)
+            stockout_time = recon.stockout_time
+            remarks = recon.remarks
+            recon_id = recon.id
+        else:
+            rem_actual = system_remaining
+            disposition = "waste_spoiled" if rem_actual > 0 else "none"
+            waste_cost = round(rem_actual * cost_price, 2)
+            stockout = (prep_qty > 0 and system_remaining <= 0 and sold_qty >= prep_qty)
+            stockout_time = None
+            remarks = None
+            recon_id = None
+
+        total_prep += prep_qty
+        total_sold += sold_qty
+        if disposition in {"waste_spoiled", "donated", "staff_meal"}:
+            total_waste += rem_actual
+            total_waste_cost += waste_cost
+
+        items.append(schemas.DailyReconciliationItemResponse(
+            id=recon_id,
+            product_id=prod.id,
+            product_name=prod.name,
+            category=prod.category,
+            base_unit=prod.base_unit or "pcs",
+            cost_price=cost_price,
+            price=price,
+            prepared_qty=prep_qty,
+            sold_qty=sold_qty,
+            system_remaining=system_remaining,
+            remaining_actual=rem_actual,
+            disposition_type=disposition,
+            waste_cost=waste_cost,
+            stockout_occurred=stockout,
+            stockout_time=stockout_time,
+            remarks=remarks,
+        ))
+
+    return schemas.DailyReconciliationStatusResponse(
+        date=target_date.isoformat(),
+        is_closed=is_closed,
+        total_prepared_units=round(total_prep, 2),
+        total_sold_units=round(total_sold, 2),
+        total_waste_units=round(total_waste, 2),
+        total_waste_cost=round(total_waste_cost, 2),
+        items=items,
+    )
+
+
+@app.post("/api/inventory/daily-reconciliation/submit", tags=["Inventory"])
+def submit_daily_reconciliation(
+    data: schemas.DailyReconciliationSubmitRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: models.User = Depends(auth.require_staff_or_admin),
+):
+    target_date = _get_target_date(data.date)
+    start_utc, end_utc = get_ph_day_bounds_utc_naive(target_date)
+    now = utc_now_naive()
+
+    sales_query = (
+        db.query(
+            models.TransactionItem.product_id,
+            func.sum(models.TransactionItem.quantity).label("sold_qty")
+        )
+        .join(models.Transaction, models.TransactionItem.transaction_id == models.Transaction.id)
+        .filter(models.Transaction.created_at >= start_utc, models.Transaction.created_at < end_utc)
+        .group_by(models.TransactionItem.product_id)
+        .all()
+    )
+    sold_map = {row[0]: float(row[1] or 0.0) for row in sales_query if row[0] is not None}
+
+    prep_logs = {
+        log.product_id: log
+        for log in db.query(models.DailyPrepLog).filter(models.DailyPrepLog.date == target_date).all()
+    }
+
+    processed = []
+    total_waste_val = 0.0
+
+    for item in data.items:
+        prod = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+        if not prod:
+            continue
+
+        prep_log = prep_logs.get(prod.id)
+        prepared_qty = float(prep_log.total_available_qty if prep_log else prod.stock or 0.0)
+        sold_qty = sold_map.get(prod.id, 0.0)
+        rem_actual = max(0.0, float(item.remaining_actual))
+        prev_stock = float(prod.stock or 0.0)
+
+        cost_price = float(getattr(prod, "cost_price", 0.0) or 0.0)
+        waste_cost = round(rem_actual * cost_price, 2)
+        total_waste_val += waste_cost
+
+        stockout_occurred = (prepared_qty > 0 and rem_actual <= 0 and sold_qty >= prepared_qty)
+
+        prod.stock = 0.0
+        prod.updated_at = now
+
+        recon = (
+            db.query(models.DailyReconciliationLog)
+            .filter(models.DailyReconciliationLog.date == target_date, models.DailyReconciliationLog.product_id == prod.id)
+            .first()
+        )
+        if not recon:
+            recon = models.DailyReconciliationLog(
+                date=target_date,
+                product_id=prod.id,
+                prepared_qty=prepared_qty,
+                sold_qty=sold_qty,
+                remaining_actual=rem_actual,
+                disposition_type=item.disposition_type,
+                stockout_occurred=stockout_occurred,
+                cost_price=cost_price,
+                waste_cost=waste_cost,
+                remarks=item.remarks,
+                closed_by_user_id=current.id,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(recon)
+        else:
+            recon.prepared_qty = prepared_qty
+            recon.sold_qty = sold_qty
+            recon.remaining_actual = rem_actual
+            recon.disposition_type = item.disposition_type
+            recon.stockout_occurred = stockout_occurred
+            recon.cost_price = cost_price
+            recon.waste_cost = waste_cost
+            recon.remarks = item.remarks or recon.remarks
+            recon.closed_by_user_id = current.id
+            recon.updated_at = now
+
+        if prev_stock > 0 or rem_actual > 0:
+            db.add(models.InventoryLog(
+                product_id=prod.id,
+                user_id=current.id,
+                movement_type="adjustment",
+                quantity=-prev_stock,
+                previous_stock=prev_stock,
+                new_stock=0.0,
+                reason=f"Day Closing: {item.disposition_type}",
+                remarks=f"End of day reconciliation: {rem_actual} {prod.base_unit or 'pcs'} remaining logged as {item.disposition_type} (PHP {waste_cost:.2f} cost)",
+                created_at=now,
+            ))
+
+        processed.append({"product_id": prod.id, "name": prod.name, "remaining": rem_actual, "waste_cost": waste_cost})
+
+    db.commit()
+
+    _add_audit_log(
+        db,
+        user_id=current.id,
+        action="DAILY_RECONCILIATION_CLOSED",
+        details=f"Closed day {target_date.isoformat()}: {len(processed)} items reconciled, PHP {total_waste_val:.2f} total spoilage cost",
+        request=req,
+    )
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Successfully finalized day closing and zeroed out perishable stock for {len(processed)} items",
+        "date": target_date.isoformat(),
+        "total_waste_cost": total_waste_val,
+        "items": processed,
+    }
+
+
+@app.get("/api/inventory/perishable-summary", tags=["Inventory"])
+def get_perishable_inventory_summary(
+    period: str = "today",
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.require_staff_or_admin),
+):
+    today = get_ph_today()
+    if period == "week":
+        start_date = today - timedelta(days=6)
+    elif period == "month":
+        start_date = today - timedelta(days=29)
+    else:
+        start_date = today
+
+    logs = (
+        db.query(models.DailyReconciliationLog)
+        .filter(models.DailyReconciliationLog.date >= start_date, models.DailyReconciliationLog.date <= today)
+        .all()
+    )
+
+    total_prepared = sum(float(l.prepared_qty or 0.0) for l in logs)
+    total_sold = sum(float(l.sold_qty or 0.0) for l in logs)
+    total_waste = sum(float(l.remaining_actual or 0.0) for l in logs if l.disposition_type in {"waste_spoiled", "staff_meal", "donated"})
+    total_waste_cost = sum(float(l.waste_cost or 0.0) for l in logs if l.disposition_type in {"waste_spoiled", "staff_meal", "donated"})
+    stockouts_count = sum(1 for l in logs if l.stockout_occurred)
+
+    waste_rate_pct = round((total_waste / total_prepared * 100), 1) if total_prepared > 0 else 0.0
+    prep_accuracy_pct = round((total_sold / total_prepared * 100), 1) if total_prepared > 0 else 100.0
+
+    return {
+        "period": period,
+        "start_date": start_date.isoformat(),
+        "end_date": today.isoformat(),
+        "total_prepared": round(total_prepared, 2),
+        "total_sold": round(total_sold, 2),
+        "total_waste": round(total_waste, 2),
+        "total_waste_cost": round(total_waste_cost, 2),
+        "waste_rate_pct": waste_rate_pct,
+        "prep_accuracy_pct": prep_accuracy_pct,
+        "stockouts_count": stockouts_count,
+        "records_count": len(logs),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -5223,7 +5889,8 @@ def list_transactions(
 ):
     """Fulfills Research Objective: Date-filtered transaction logs for audit."""
     query = db.query(models.Transaction).options(
-        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product)
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.menu_item),
     )
 
     # Apply Date Filtering if dates are provided

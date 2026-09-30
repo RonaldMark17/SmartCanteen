@@ -206,8 +206,14 @@ export default function Inventory() {
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [stockStatusFilter, setStockStatusFilter] = useState('All'); // 'All' | 'in_stock' | 'low_stock' | 'out_of_stock'
   const [unitTypeFilter, setUnitTypeFilter] = useState('All'); // 'All' | 'pcs' | 'bulk'
-  const [sortBy, setSortBy] = useState('name_asc'); // 'name_asc' | 'name_desc' | 'stock_asc' | 'stock_desc' | 'price_asc' | 'price_desc'
+  const [perishableFilter, setPerishableFilter] = useState('All'); // 'All' | 'perishable' | 'non_perishable'
+  const [sortBy, setSortBy] = useState('name_asc'); // 'name_asc' | 'name_desc' | 'stock_asc' | 'stock_desc'
   const [currentPage, setCurrentPage] = useState(1);
+
+  // Perishable Day Reset Modal state
+  const [isPerishableResetModalOpen, setIsPerishableResetModalOpen] = useState(false);
+  const [perishableResetDraft, setPerishableResetDraft] = useState([]);
+  const [savingPerishableReset, setSavingPerishableReset] = useState(false);
 
   // Inactive Tab Page
   const [inactivePage, setInactivePage] = useState(1);
@@ -270,12 +276,13 @@ export default function Inventory() {
       id: null,
       name: '',
       category: 'General',
-      price: 0,
       stock: 0,
       min_stock: 5,
       unit_type: 'pcs',
       base_unit: 'pcs',
+      is_perishable: true,
       is_favorite: false,
+      _existing_price: 0,
     };
   }
 
@@ -393,6 +400,14 @@ export default function Inventory() {
     return activeProducts.filter((p) => isOutOfStock(p) || isLowStock(p));
   }, [activeProducts]);
 
+  const perishableProducts = useMemo(() => {
+    return activeProducts.filter((p) => p.is_perishable !== false);
+  }, [activeProducts]);
+
+  const perishableWithStock = useMemo(() => {
+    return perishableProducts.filter((p) => Number(p.stock || 0) > 0);
+  }, [perishableProducts]);
+
   const categories = useMemo(() => {
     const all = [...activeProducts, ...inactiveProducts];
     const unique = new Set(all.map((p) => p.category).filter(Boolean));
@@ -435,6 +450,13 @@ export default function Inventory() {
       result = result.filter((p) => getProductUnitType(p) === BULK_UNIT_TYPE);
     }
 
+    // Perishable food filter
+    if (perishableFilter === 'perishable') {
+      result = result.filter((p) => p.is_perishable !== false);
+    } else if (perishableFilter === 'non_perishable') {
+      result = result.filter((p) => p.is_perishable === false);
+    }
+
     // Sorting
     result.sort((a, b) => {
       if (sortBy === 'name_asc') {
@@ -448,12 +470,6 @@ export default function Inventory() {
       }
       if (sortBy === 'stock_desc') {
         return Number(b.stock || 0) - Number(a.stock || 0);
-      }
-      if (sortBy === 'price_asc') {
-        return Number(a.price || 0) - Number(b.price || 0);
-      }
-      if (sortBy === 'price_desc') {
-        return Number(b.price || 0) - Number(a.price || 0);
       }
       return 0;
     });
@@ -470,7 +486,7 @@ export default function Inventory() {
     }
 
     return result;
-  }, [activeProducts, searchQuery, categoryFilter, stockStatusFilter, unitTypeFilter, sortBy, notificationFocus]);
+  }, [activeProducts, searchQuery, categoryFilter, stockStatusFilter, unitTypeFilter, perishableFilter, sortBy, notificationFocus]);
 
   const paginatedActiveProducts = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -485,7 +501,7 @@ export default function Inventory() {
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, categoryFilter, stockStatusFilter, unitTypeFilter, sortBy]);
+  }, [searchQuery, categoryFilter, stockStatusFilter, unitTypeFilter, perishableFilter, sortBy]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // History Filter
@@ -530,12 +546,13 @@ export default function Inventory() {
       id: product.id,
       name: product.name || '',
       category: product.category || 'General',
-      price: product.price ?? '',
       stock: product.stock ?? 0,
       min_stock: product.min_stock ?? 5,
       unit_type: getProductUnitType(product),
       base_unit: getProductBaseUnit(product),
+      is_perishable: product.is_perishable !== false,
       is_favorite: Boolean(product.is_favorite),
+      _existing_price: Number(product.price ?? 0),
     });
     setProductFormError('');
     setIsAddEditModalOpen(true);
@@ -572,18 +589,9 @@ export default function Inventory() {
     const baseUnit = isBulk ? (productForm.base_unit || 'kg') : 'pcs';
     const stock = Number(productForm.stock);
     const minStock = Number(productForm.min_stock);
-    const rawPrice = productForm.price;
-    const price = rawPrice !== '' && rawPrice !== null && !isNaN(Number(rawPrice))
-      ? parseFloat(rawPrice)
-      : 0.0;
 
     if (!productForm.name.trim()) {
       setProductFormError('Product name is required.');
-      return;
-    }
-
-    if (!Number.isFinite(price) || price < 0) {
-      setProductFormError('Price must be a valid positive number.');
       return;
     }
 
@@ -605,11 +613,12 @@ export default function Inventory() {
     const payload = {
       name: productForm.name.trim(),
       category: productForm.category,
-      price,
+      price: Number(productForm._existing_price ?? 0.0),
       stock: isBulk ? parseFloat(stock.toFixed(4)) : Math.round(stock),
       min_stock: isBulk ? parseFloat(minStock.toFixed(4)) : Math.round(minStock),
       unit_type: isBulk ? BULK_UNIT_TYPE : PCS_UNIT_TYPE,
       base_unit: baseUnit,
+      is_perishable: Boolean(productForm.is_perishable),
       is_favorite: Boolean(productForm.is_favorite),
     };
 
@@ -625,7 +634,7 @@ export default function Inventory() {
       details: [
         { label: 'Product Name', value: productForm.name.trim() },
         { label: 'Category', value: productForm.category },
-        { label: 'Selling Price', value: `₱${price.toFixed(2)}`, highlight: true },
+        { label: 'Item Type', value: productForm.is_perishable ? '🍲 Daily Perishable (Cooked / Fresh)' : '📦 Non-Perishable (Long-term)' },
         { label: isEdit ? 'Current Stock' : 'Initial Stock', value: `${stock} ${baseUnit}` },
         { label: 'Reorder Alert', value: `${minStock} ${baseUnit}` },
       ],
@@ -639,6 +648,71 @@ export default function Inventory() {
         }
       },
     });
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Handlers for End-of-Day Perishable Reset & Food Waste
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleOpenPerishableReset = () => {
+    const list = perishableWithStock.map((p) => ({
+      product_id: p.id,
+      name: p.name,
+      category: p.category,
+      current_stock: Number(p.stock || 0),
+      unit: formatUnit(getProductBaseUnit(p)),
+      disposition: 'waste_spoiled',
+      remarks: '',
+    }));
+    setPerishableResetDraft(list);
+    setIsPerishableResetModalOpen(true);
+  };
+
+  const handleQuickClearPerishable = (product) => {
+    setPerishableResetDraft([
+      {
+        product_id: product.id,
+        name: product.name,
+        category: product.category,
+        current_stock: Number(product.stock || 0),
+        unit: formatUnit(getProductBaseUnit(product)),
+        disposition: 'waste_spoiled',
+        remarks: 'Quick food waste reset',
+      },
+    ]);
+    setIsPerishableResetModalOpen(true);
+  };
+
+  const handleConfirmPerishableReset = async (e) => {
+    e.preventDefault();
+    if (perishableResetDraft.length === 0) {
+      setIsPerishableResetModalOpen(false);
+      return;
+    }
+
+    setSavingPerishableReset(true);
+    try {
+      const payload = {
+        date: getPhilippineDateKey(new Date()),
+        items: perishableResetDraft.map((item) => ({
+          product_id: Number(item.product_id),
+          remaining_unsold: Number(item.current_stock || 0),
+          disposition: item.disposition,
+          remarks: item.remarks || '',
+        })),
+      };
+
+      const res = await API.resetPerishableDay(payload);
+      window.showToast?.(res?.message || 'Daily perishable stock reset to zero successfully!', 'success');
+      setIsPerishableResetModalOpen(false);
+      requestAlertRefresh({ source: 'inventory', reason: 'perishable-reset' });
+      fetchProducts();
+      if (activeTab === 'history') fetchHistory();
+    } catch (err) {
+      console.error('Failed to reset perishable food:', err);
+      window.showToast?.(err.message || 'Failed to reset perishable stock.', 'error');
+    } finally {
+      setSavingPerishableReset(false);
+    }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -940,20 +1014,17 @@ export default function Inventory() {
     const headers = [
       'Product Name',
       'Category',
-      'Unit Type',
+      'Food Type',
+      'Count Type',
       'Unit',
       'Current Stock',
       'Reorder Level',
-      'Price (PHP)',
-      'Total Value (PHP)',
       'Status',
     ];
     const rows = [headers.join(',')];
 
     all.forEach((p) => {
-      const price = Number(p.price || 0);
       const stock = Number(p.stock || 0);
-      const value = price * stock;
       const status = !isProductActive(p)
         ? 'Inactive'
         : isOutOfStock(p)
@@ -961,16 +1032,16 @@ export default function Inventory() {
         : isLowStock(p)
         ? 'Low Stock'
         : 'In Stock';
+      const foodType = p.is_perishable !== false ? 'Daily Perishable' : 'Non-Perishable';
 
       rows.push([
         `"${String(p.name || '').replace(/"/g, '""')}"`,
         `"${String(p.category || '').replace(/"/g, '""')}"`,
+        foodType,
         getProductUnitType(p).toUpperCase(),
         formatUnit(getProductBaseUnit(p)),
         stock,
         p.min_stock,
-        price.toFixed(2),
-        value.toFixed(2),
         status,
       ].join(','));
     });
@@ -1043,6 +1114,21 @@ export default function Inventory() {
               >
                 <ScaleIcon className="h-4 w-4 text-sky-600 dark:text-sky-400" />
                 Adjust Stock
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenPerishableReset}
+                className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs font-bold text-amber-800 shadow-2xs transition hover:bg-amber-100 active:scale-95 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                title="Zero out unsold daily cooked food and record food waste at closing"
+              >
+                <ClockIcon className="h-4 w-4 text-amber-600 dark:text-amber-400 stroke-[2]" />
+                <span>End-of-Day Perishable Reset</span>
+                {perishableWithStock.length > 0 && (
+                  <span className="rounded-full bg-amber-600 px-1.5 py-0.2 text-[10px] font-black text-white dark:bg-amber-500">
+                    {perishableWithStock.length}
+                  </span>
+                )}
               </button>
             </>
           )}
@@ -1293,6 +1379,17 @@ export default function Inventory() {
                   ))}
                 </select>
 
+                {/* Perishable / Food Type Filter */}
+                <select
+                  value={perishableFilter}
+                  onChange={(e) => setPerishableFilter(e.target.value)}
+                  className="h-11 w-full min-w-0 xl:w-auto xl:min-w-[135px] rounded-xl border border-slate-200 bg-slate-50/50 px-3 text-xs font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                >
+                  <option value="All">All Food Types</option>
+                  <option value="perishable">🍲 Daily Perishable</option>
+                  <option value="non_perishable">📦 Non-Perishable</option>
+                </select>
+
                 {/* Stock Status Filter */}
                 <select
                   value={stockStatusFilter}
@@ -1409,16 +1506,27 @@ export default function Inventory() {
                                 {product.name}
                               </span>
                               {product.is_favorite && (
-                                <span title="Pinned to Quick Sale" className="inline-flex rounded-full bg-amber-50 p-1 text-amber-600 border border-amber-200/60 dark:bg-amber-950 dark:text-amber-400">
+                                <span title="Featured Item" className="inline-flex rounded-full bg-amber-50 p-1 text-amber-600 border border-amber-200/60 dark:bg-amber-950 dark:text-amber-400">
                                   <SparklesIcon className="h-3.5 w-3.5" />
                                 </span>
                               )}
                             </div>
-                            {lowStock && (
-                              <div className="mt-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-                                Reorder Level: {formatQuantity(product.min_stock, getProductBaseUnit(product), getProductUnitType(product))}
-                              </div>
-                            )}
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              {product.is_perishable !== false ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                  🍲 Daily Perishable
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-400">
+                                  📦 Non-Perishable
+                                </span>
+                              )}
+                              {lowStock && (
+                                <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                                  • Reorder: {formatQuantity(product.min_stock, getProductBaseUnit(product), getProductUnitType(product))}
+                                </span>
+                              )}
+                            </div>
                           </td>
 
                           {/* Category */}
@@ -1508,6 +1616,17 @@ export default function Inventory() {
                                     <ScaleIcon className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
                                     Adjust
                                   </button>
+
+                                  {product.is_perishable !== false && Number(product.stock || 0) > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickClearPerishable(product)}
+                                      title="End-of-day waste reset for this item"
+                                      className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-bold text-amber-700 shadow-2xs transition hover:bg-amber-100 active:scale-95 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+                                    >
+                                      Reset Waste
+                                    </button>
+                                  )}
 
                                   <button
                                     type="button"
@@ -1684,7 +1803,7 @@ export default function Inventory() {
                 { key: 'all', label: 'All Logs' },
                 { key: 'replenishment', label: 'Stock Deliveries' },
                 { key: 'adjustment', label: 'Damage / Adjustments' },
-                { key: 'sale', label: 'Canteen Sales' },
+                { key: 'sale', label: 'Stock Reductions' },
                 { key: 'correction', label: 'Manual Corrections' },
               ].map((btn) => (
                 <button
@@ -1748,7 +1867,7 @@ export default function Inventory() {
                           No history records found
                         </div>
                         <p className="mt-1 text-xs">
-                          Incoming deliveries, damage adjustments, and canteen sales will appear here automatically.
+                          Incoming deliveries, damage adjustments, and food waste resets will appear here automatically.
                         </p>
                       </td>
                     </tr>
@@ -1767,7 +1886,7 @@ export default function Inventory() {
                       const typeLabel = {
                         replenishment: 'Stock Delivery',
                         adjustment: 'Stock Adjustment',
-                        sale: 'Canteen Sale',
+                        sale: 'Stock Reduction',
                         correction: 'Product Edit',
                       }[movementType] || log.movement_type;
 
@@ -1848,7 +1967,7 @@ export default function Inventory() {
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">Archived / Hidden Products</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  These items are hidden from the canteen menu and POS. Admins can restore them anytime.
+                  These items are archived and hidden from the active inventory catalog. Admins can restore them anytime.
                 </p>
               </div>
             </div>
@@ -2290,6 +2409,26 @@ export default function Inventory() {
                 </select>
               </div>
 
+              {/* Perishable Food (Daily Cooked / Prepared) Checkbox */}
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3.5 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(productForm.is_perishable)}
+                    onChange={(e) => setProductForm({ ...productForm, is_perishable: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 dark:border-slate-700"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">
+                      Perishable Food (Daily Cooked / Prepared)
+                    </span>
+                    <p className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                      When checked, this item participates in morning batch preparation and resets to zero stock during afternoon closing reconciliation to track food waste.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
               {/* Unit Type & Base Unit */}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
@@ -2409,6 +2548,118 @@ export default function Inventory() {
                 >
                   {savingProduct ? 'Saving...' : productForm.id ? 'Save Changes' : 'Add Product'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────────
+          MODAL 4: END-OF-DAY PERISHABLE FOOD RESET & FOOD WASTE TRACKING
+      ─────────────────────────────────────────────────────────────────────── */}
+      {isPerishableResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95 dark:border dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/80 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/50">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>🍲 End-of-Day Perishable Food Reset</span>
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Zero out unsold daily cooked food portions at closing and record food waste
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPerishableResetModalOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-white"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmPerishableReset} className="p-6 space-y-4">
+              {perishableResetDraft.length === 0 ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center dark:border-emerald-900/60 dark:bg-emerald-950/40">
+                  <CheckCircleIcon className="mx-auto h-10 w-10 text-emerald-600 dark:text-emerald-400" />
+                  <h4 className="mt-2 text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                    All Perishable Stocks Are Already at Zero!
+                  </h4>
+                  <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+                    There are currently no daily cooked or prepared items with leftover stock on hand.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+                    <p className="font-bold">Closing Reconciliation:</p>
+                    <p className="mt-0.5">
+                      The following {perishableResetDraft.length} daily perishable item(s) have remaining stock. Confirming will reset their stock to 0 and record food waste logs.
+                    </p>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                    {perishableResetDraft.map((item, idx) => (
+                      <div key={item.product_id} className="p-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-bold text-slate-900 dark:text-white">
+                            {item.name}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            Unsold stock to clear: <span className="font-black text-rose-600 dark:text-rose-400">{item.current_stock} {item.unit}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={item.disposition}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setPerishableResetDraft((prev) =>
+                                prev.map((d, i) => (i === idx ? { ...d, disposition: val } : d))
+                              );
+                            }}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                          >
+                            <option value="waste_spoiled">Spoiled / Food Waste</option>
+                            <option value="staff_meal">Staff Meal Consumed</option>
+                            <option value="donated">Donated / Repurposed</option>
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPerishableResetDraft((prev) => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+                            title="Skip this item"
+                          >
+                            <XMarkIcon className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPerishableResetModalOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+                {perishableResetDraft.length > 0 && (
+                  <button
+                    type="submit"
+                    disabled={savingPerishableReset}
+                    className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    {savingPerishableReset ? 'Clearing Stock...' : `Reset ${perishableResetDraft.length} Item(s) to 0`}
+                  </button>
+                )}
               </div>
             </form>
           </div>

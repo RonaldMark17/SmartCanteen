@@ -165,10 +165,28 @@ class Product(Base):
     product_code: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_perishable: Mapped[bool] = mapped_column(Boolean, default=True)
+    cost_price: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     transaction_items: Mapped[List["TransactionItem"]] = relationship("TransactionItem", back_populates="product")
+
+
+class POSMenuItem(Base):
+    """Standalone retail menu items sold at the Point of Sale counter.
+    Completely decoupled from inventory stock so POS acts as an optional backup/sales system."""
+    __tablename__ = "pos_menu_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String, default="General")
+    price: Mapped[float] = mapped_column(Float, default=0.0)
+    barcode: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
 class Transaction(Base):
@@ -194,13 +212,16 @@ class TransactionItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id"), nullable=True)
     product_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("products.id"), nullable=True)
-    quantity: Mapped[float] = mapped_column(Float, nullable=False)  # quantity in the product's base unit
+    menu_item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("pos_menu_items.id"), nullable=True)
+    item_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
     sale_quantity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     sale_unit: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    unit_price: Mapped[float] = mapped_column(Float, nullable=False)  # price for one sale unit
+    unit_price: Mapped[float] = mapped_column(Float, nullable=False)
 
     transaction: Mapped[Optional["Transaction"]] = relationship("Transaction", back_populates="items")
     product: Mapped[Optional["Product"]] = relationship("Product", back_populates="transaction_items")
+    menu_item: Mapped[Optional["POSMenuItem"]] = relationship("POSMenuItem")
 
 
 class InventoryLog(Base):
@@ -400,4 +421,55 @@ class ExpenseReceipt(Base):
     file_data_base64: Mapped[str] = mapped_column(Text, nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+
+
+class DailyPrepLog(Base):
+    __tablename__ = "daily_prep_logs"
+    __table_args__ = (
+        UniqueConstraint("date", "product_id", name="uq_daily_prep_logs_date_product"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    planned_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    prepared_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    added_midday_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    total_available_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    prepared_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String, default="confirmed")  # "draft" | "confirmed"
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    product: Mapped[Optional["Product"]] = relationship("Product")
+    prepared_by: Mapped[Optional["User"]] = relationship("User")
+
+
+class DailyReconciliationLog(Base):
+    __tablename__ = "daily_reconciliation_logs"
+    __table_args__ = (
+        UniqueConstraint("date", "product_id", name="uq_daily_reconciliation_date_product"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    prepared_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    sold_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    remaining_actual: Mapped[float] = mapped_column(Float, default=0.0)
+    disposition_type: Mapped[str] = mapped_column(String, default="waste_spoiled")  # "waste_spoiled" | "staff_meal" | "donated" | "refrigerated" | "none"
+    stockout_occurred: Mapped[bool] = mapped_column(Boolean, default=False)
+    stockout_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cost_price: Mapped[float] = mapped_column(Float, default=0.0)
+    waste_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    unmet_demand_estimated: Mapped[float] = mapped_column(Float, default=0.0)
+    remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    closed_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    product: Mapped[Optional["Product"]] = relationship("Product")
+    closed_by: Mapped[Optional["User"]] = relationship("User")
+
 
