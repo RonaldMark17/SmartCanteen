@@ -2118,8 +2118,8 @@ export default function Inventory() {
                 </label>
                 <input
                   type="number"
-                  step={selectedReplenishProduct && getProductUnitType(selectedReplenishProduct) === BULK_UNIT_TYPE ? '0.01' : '1'}
-                  min="0.01"
+                  step={selectedReplenishProduct && getProductUnitType(selectedReplenishProduct) === BULK_UNIT_TYPE ? 'any' : '1'}
+                  min={selectedReplenishProduct && getProductUnitType(selectedReplenishProduct) === BULK_UNIT_TYPE ? '0.0001' : '1'}
                   required
                   value={replenishDraft.quantity}
                   onChange={(e) => setReplenishDraft({ ...replenishDraft, quantity: e.target.value })}
