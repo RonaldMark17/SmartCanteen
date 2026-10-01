@@ -1771,6 +1771,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     detail?.school_year ||
     schoolYears.find((schoolYear) => Number(schoolYear.id) === Number(selectedSchoolYearId)) ||
     null;
+  const schoolYearName = selectedSchoolYear?.name || detail?.school_year?.name || 'School Year';
   const selectedSchoolYearValidationMessage = getSchoolYearValidationMessage(
     selectedSchoolYear,
     schoolYearSuggestion
@@ -2503,8 +2504,9 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
 
     setPrintingPdf(true);
     try {
+      const reportAllocations = selectedReport?.allocations || detail?.school_year?.allocations || [];
       const fallbackHtml = selectedReport
-        ? buildPrintableHtml(schoolYearName, selectedReport, statement, allocations)
+        ? buildPrintableHtml(schoolYearName, selectedReport, statement, reportAllocations)
         : '';
       await printPdfReport(
         selectedSchoolYearId,
@@ -2544,7 +2546,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         try {
           const fallbackWindow = window.open('', '_blank');
           if (fallbackWindow) {
-            const html = buildPrintableHtml(schoolYearName, selectedReport, statement, allocations);
+            const reportAllocations = selectedReport?.allocations || detail?.school_year?.allocations || [];
+            const html = buildPrintableHtml(schoolYearName, selectedReport, statement, reportAllocations);
             fallbackWindow.document.open();
             fallbackWindow.document.write(html);
             fallbackWindow.document.close();
