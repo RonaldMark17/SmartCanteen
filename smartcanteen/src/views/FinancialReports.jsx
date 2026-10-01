@@ -498,7 +498,7 @@ function parseExpenseNotes(report) {
           reportId: report.id,
           type,
           typeLabel: type === 'monthly' ? 'Monthly Expense' : 'Daily Expense',
-          source: 'Entry',
+          source: type || 'daily',
           rawLine: line,
           noteIndex: index,
         };
@@ -530,7 +530,7 @@ function parseExpenseNotes(report) {
         reportId: report.id,
         type: 'daily',
         typeLabel: 'Daily Expense',
-        source: 'Entry',
+        source: 'daily',
         rawLine: line,
         noteIndex: index,
       };
@@ -1847,7 +1847,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         row.category.toLowerCase().includes(query) ||
         row.supplier.toLowerCase().includes(query) ||
         row.description.toLowerCase().includes(query) ||
-        row.monthLabel.toLowerCase().includes(query);
+        row.monthLabel.toLowerCase().includes(query) ||
+        (row.type || '').toLowerCase().includes(query);
       const matchesCategory = !expenseCategoryFilter || row.category === expenseCategoryFilter;
       const matchesDate = !expenseDateFilter || row.date.startsWith(expenseDateFilter);
       return matchesQuery && matchesCategory && matchesDate;
@@ -4576,51 +4577,56 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               };
             });
 
+            const cleanPercent = (val) =>
+              Number(val || 0) % 1 === 0
+                ? `${Number(val || 0)}%`
+                : `${Number(val || 0).toFixed(2)}%`;
+
             return (
-              <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-300/80 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-left text-xs sm:text-sm">
                     <thead>
-                      <tr className="border-b-2 border-slate-200 bg-slate-50/90 dark:border-slate-700 dark:bg-slate-800/80">
-                        <th className="px-4 py-3.5 text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 min-w-[190px]">
+                      <tr className="border-b-2 border-slate-300 bg-slate-100/90 dark:border-slate-700 dark:bg-slate-800">
+                        <th className="px-4 py-3.5 text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 min-w-[210px] w-[21%] border-r border-slate-200 dark:border-slate-700">
                           Particulars
                         </th>
                         {fundColumns.map((col) => (
                           <th
                             key={col.key}
-                            className="px-3 py-3 text-center min-w-[130px] border-l border-slate-200/80 dark:border-slate-700/80"
+                            className="px-3 py-3 text-center min-w-[130px] w-[11.5%] border-r border-slate-200 dark:border-slate-700 align-top"
                           >
                             <div className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white leading-tight">
                               {col.allocation.label}
                             </div>
-                            <span className="mt-1 inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700 border border-emerald-200/80 dark:border-emerald-800/80 dark:bg-emerald-950/60 dark:text-emerald-300">
-                              {formatPercent(col.allocation.percentage)}
+                            <span className="mt-1.5 inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800 border border-emerald-300/70 dark:border-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+                              {cleanPercent(col.allocation.percentage)}
                             </span>
                           </th>
                         ))}
-                        <th className="px-3 py-3 text-center min-w-[135px] border-l-2 border-slate-300 bg-slate-100/80 dark:border-slate-700 dark:bg-slate-800">
-                          <div className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                        <th className="px-3 py-3 text-center min-w-[135px] w-[12%] bg-slate-200/60 dark:bg-slate-750 align-top">
+                          <div className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white leading-tight">
                             Total
                           </div>
-                          <span className="mt-1 inline-flex items-center rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                          <span className="mt-1.5 inline-flex items-center rounded-md bg-slate-300/80 px-2 py-0.5 text-[10px] font-black text-slate-800 dark:bg-slate-700 dark:text-slate-200">
                             100%
                           </span>
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
                       {/* Row 1: Balance in previous month */}
-                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                      <tr className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800">
                           <div className="flex items-center gap-1.5">
-                            <span>Balance in previous month</span>
+                            <span className="whitespace-nowrap">Balance in previous month</span>
                             {!canEditFundOpeningBalance && (
                               <LockClosedIcon className="h-3.5 w-3.5 text-slate-400 shrink-0" title="Locked: Automatically carried forward from previous month" />
                             )}
                           </div>
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80">
+                          <td key={col.key} className="px-3 py-2.5 text-right border-r border-slate-200/70 dark:border-slate-800/80 whitespace-nowrap">
                             {canEditFundOpeningBalance ? (
                               <input
                                 type="text"
@@ -4629,7 +4635,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                                 disabled={!isAdmin || !canSaveSelectedSchoolYear}
                                 readOnly={!isAdmin}
                                 placeholder="0.00"
-                                className="h-9 w-full min-w-[95px] rounded-xl border border-emerald-300/80 bg-emerald-50/20 px-2.5 text-right font-mono text-xs sm:text-sm font-semibold transition focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-700 dark:bg-emerald-950/20 dark:text-white"
+                                className="h-9 w-full min-w-[100px] rounded-lg border border-emerald-300/80 bg-emerald-50/20 px-2.5 text-right font-mono text-xs sm:text-sm font-semibold transition focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-700 dark:bg-emerald-950/20 dark:text-white"
                               />
                             ) : (
                               <span className="font-mono text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
@@ -4638,55 +4644,56 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                             )}
                           </td>
                         ))}
-                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                        <td className="px-3 py-2.5 text-right bg-slate-50/70 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-black text-slate-900 dark:text-white whitespace-nowrap">
                           {formatCurrency(fundAllocationTotals.prevBal)}
                         </td>
                       </tr>
 
                       {/* Row 2: Interest on the bank */}
-                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                      <tr className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800 whitespace-nowrap">
                           Interest on the bank
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs text-slate-400 dark:text-slate-500">
+                          <td key={col.key} className="px-3 py-2.5 text-center border-r border-slate-200/70 dark:border-slate-800/80 font-mono text-xs text-slate-300 dark:text-slate-600 select-none">
                             —
                           </td>
                         ))}
-                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs text-slate-400 dark:text-slate-500">
+                        <td className="px-3 py-2.5 text-center bg-slate-50/70 dark:bg-slate-850/40 font-mono text-xs text-slate-300 dark:text-slate-600 select-none">
                           —
                         </td>
                       </tr>
 
                       {/* Row 3: Net Income for the Month */}
-                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                      <tr className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800 whitespace-nowrap">
                           Net Income for the Month
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                          <td key={col.key} className="px-3 py-2.5 text-right border-r border-slate-200/70 dark:border-slate-800/80 font-mono text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
                             {formatCurrency(col.netInc)}
                           </td>
                         ))}
-                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                        <td className="px-3 py-2.5 text-right bg-slate-50/70 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-black text-slate-900 dark:text-white whitespace-nowrap">
                           {formatCurrency(fundAllocationTotals.netInc)}
                         </td>
                       </tr>
 
                       {/* Row 4: Expenses for the Month */}
-                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors bg-rose-50/20 dark:bg-rose-950/10">
-                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
-                          <div className="flex items-center gap-1.5">
+                      <tr className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors bg-rose-50/20 dark:bg-rose-950/10">
+                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">
+                          <div className="flex items-center gap-1.5 whitespace-nowrap">
                             <span>Expenses for the Month</span>
                             {isAdmin && (
-                              <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-black text-rose-800 dark:bg-rose-900/60 dark:text-rose-200">
+                              <span className="inline-flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200/80 dark:bg-rose-950/50 dark:border-rose-900/60 dark:text-rose-300">
+                                <PencilSquareIcon className="h-2.5 w-2.5" />
                                 Editable
                               </span>
                             )}
                           </div>
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80">
+                          <td key={col.key} className="px-3 py-2 border-r border-slate-200/70 dark:border-slate-800/80">
                             <input
                               type="text"
                               value={col.draft.expenses ?? ''}
@@ -4694,82 +4701,82 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                               disabled={!isAdmin || !canSaveSelectedSchoolYear}
                               readOnly={!isAdmin}
                               placeholder="0.00"
-                              className={`h-9 w-full min-w-[95px] rounded-xl border px-2.5 text-right font-mono text-xs sm:text-sm font-semibold transition ${
+                              className={`h-9 w-full min-w-[95px] rounded-lg border px-2.5 text-right font-mono text-xs sm:text-sm font-semibold transition ${
                                 !isAdmin
                                   ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
-                                  : 'bg-white border-slate-200 hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white'
+                                  : 'bg-white border-slate-300 hover:border-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white'
                               }`}
                             />
                           </td>
                         ))}
-                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400">
+                        <td className="px-3 py-2 text-right bg-slate-50/70 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
                           {formatCurrency(fundAllocationTotals.expenses)}
                         </td>
                       </tr>
 
                       {/* Row 5: Others */}
-                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                      <tr className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800 whitespace-nowrap">
                           Others
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs text-slate-400 dark:text-slate-500">
+                          <td key={col.key} className="px-3 py-2.5 text-center border-r border-slate-200/70 dark:border-slate-800/80 font-mono text-xs text-slate-300 dark:text-slate-600 select-none">
                             —
                           </td>
                         ))}
-                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs text-slate-400 dark:text-slate-500">
+                        <td className="px-3 py-2.5 text-center bg-slate-50/70 dark:bg-slate-850/40 font-mono text-xs text-slate-300 dark:text-slate-600 select-none">
                           —
                         </td>
                       </tr>
 
                       {/* Row 6: Total Current Expenses */}
-                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                      <tr className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800 whitespace-nowrap">
                           Total Current Expenses
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400">
+                          <td key={col.key} className="px-3 py-2.5 text-right border-r border-slate-200/70 dark:border-slate-800/80 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
                             {formatCurrency(col.totalExpVal)}
                           </td>
                         ))}
-                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400">
+                        <td className="px-3 py-2.5 text-right bg-slate-50/70 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
                           {formatCurrency(fundAllocationTotals.totalExp)}
                         </td>
                       </tr>
 
                       {/* Row 7: Current Balance (Key Highlighted DepEd Row) */}
-                      <tr className="bg-emerald-50/90 dark:bg-emerald-950/40 border-y-2 border-emerald-500/40">
-                        <td className="px-4 py-3.5">
+                      <tr className="bg-emerald-50/90 dark:bg-emerald-950/50 border-y-2 border-emerald-500/50 font-black">
+                        <td className="px-4 py-3.5 border-r border-emerald-200 dark:border-emerald-800/80 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <span className="text-xs sm:text-sm font-black text-emerald-950 dark:text-emerald-100">
                               Current Balance
                             </span>
-                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-black text-white uppercase tracking-wider">
-                              Per Fund
+                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white uppercase tracking-wider whitespace-nowrap">
+                              Ending
                             </span>
                           </div>
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-3.5 text-right border-l border-emerald-200/80 dark:border-emerald-800/80 font-mono text-xs sm:text-base font-black text-emerald-700 dark:text-emerald-300">
+                          <td key={col.key} className="px-3 py-3.5 text-right border-r border-emerald-200 dark:border-emerald-800/80 font-mono text-xs sm:text-sm font-black text-emerald-800 dark:text-emerald-300 whitespace-nowrap">
                             {formatCurrency(col.currentBalVal)}
                           </td>
                         ))}
-                        <td className="px-3 py-3.5 text-right border-l-2 border-emerald-300 bg-emerald-100/60 dark:border-emerald-700 dark:bg-emerald-900/40 font-mono text-sm sm:text-base font-black text-emerald-800 dark:text-emerald-200">
+                        <td className="px-3 py-3.5 text-right bg-emerald-100/70 dark:bg-emerald-900/50 font-mono text-xs sm:text-sm font-black text-emerald-900 dark:text-emerald-200 whitespace-nowrap">
                           {formatCurrency(fundAllocationTotals.currentBal)}
                         </td>
                       </tr>
 
                       {/* Row 8: Cash on Bank */}
-                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                      <tr className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800 whitespace-nowrap">
                           Cash on Bank
                         </td>
                         {fundColumns.map((col) => (
-                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs text-slate-400 dark:text-slate-500">
+                          <td key={col.key} className="px-3 py-2.5 text-center border-r border-slate-200/70 dark:border-slate-800/80 font-mono text-xs text-slate-300 dark:text-slate-600 select-none">
                             —
                           </td>
                         ))}
-                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs text-slate-400 dark:text-slate-500">
+                        <td className="px-3 py-2.5 text-center bg-slate-50/70 dark:bg-slate-850/40 font-mono text-xs text-slate-300 dark:text-slate-600 select-none">
                           —
                         </td>
                       </tr>
@@ -4778,13 +4785,13 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                 </div>
 
                 {/* Reconciliation Footer Note */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-t border-slate-200/80 bg-slate-50/70 px-5 py-3 dark:border-slate-800 dark:bg-slate-850/60 text-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-t border-slate-200/90 bg-slate-50/90 px-5 py-3 dark:border-slate-800 dark:bg-slate-850/70 text-xs">
                   <div className="flex items-center gap-2">
-                    <CheckCircleIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <CheckCircleIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 stroke-[2.5]" />
                     <span className="font-bold text-slate-700 dark:text-slate-300">
                       Total Current Balance is the sum of all statutory fund allocations:
                     </span>
-                    <span className="font-mono font-black text-emerald-700 dark:text-emerald-300">
+                    <span className="font-mono font-black text-emerald-700 dark:text-emerald-300 text-sm">
                       {formatCurrency(fundAllocationTotals.currentBal)}
                     </span>
                   </div>
@@ -5037,12 +5044,12 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                           <td className="px-3 py-3 whitespace-nowrap">
                             <span
                               className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                                row.source === 'daily'
+                                row.type === 'daily' || row.source === 'daily'
                                   ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
                                   : 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
                               }`}
                             >
-                              {row.source === 'daily' ? 'Daily' : 'Monthly'}
+                              {row.type === 'daily' || row.source === 'daily' ? 'Daily' : 'Monthly'}
                             </span>
                           </td>
                           <td className="px-3 py-3 font-mono text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
@@ -5159,12 +5166,12 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                         <div className="flex items-center gap-2 min-w-0">
                           <span
                             className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase ${
-                              row.source === 'daily'
+                              row.type === 'daily' || row.source === 'daily'
                                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
                                 : 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
                             }`}
                           >
-                            {row.source === 'daily' ? 'Daily' : 'Monthly'}
+                            {row.type === 'daily' || row.source === 'daily' ? 'Daily' : 'Monthly'}
                           </span>
                           <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
                             {row.category}
@@ -6603,6 +6610,12 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
             </div>
 
             <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 space-y-2 text-xs dark:border-slate-800 dark:bg-slate-800/60">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400 font-bold">Type:</span>
+                <span className="font-bold text-slate-900 dark:text-white">
+                  {deletingExpense.type === 'daily' || deletingExpense.source === 'daily' ? 'Daily Expense' : 'Monthly Expense'}
+                </span>
+              </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-500 dark:text-slate-400 font-bold">Category:</span>
                 <span className="font-bold text-slate-900 dark:text-white">{deletingExpense.category}</span>
