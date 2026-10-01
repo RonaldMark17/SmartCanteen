@@ -1229,7 +1229,7 @@ function printGeneratedReport(payload) {
   }
 }
 
-async function printPdfReport(schoolYearId, reportId = null, allSheets = false, defaultFilename = 'DepEd-Canteen-Report') {
+async function printPdfReport(schoolYearId, reportId = null, allSheets = false, defaultFilename = 'DepEd-Canteen-Report', fallbackHtml = '') {
   const printWindow = window.open('', '_blank', 'width=1150,height=900');
   if (printWindow) {
     try {
@@ -1370,6 +1370,20 @@ async function printPdfReport(schoolYearId, reportId = null, allSheets = false, 
       }, 60000);
     }
   } catch (err) {
+    if (fallbackHtml && printWindow && !printWindow.closed) {
+      try {
+        printWindow.document.open();
+        printWindow.document.write(fallbackHtml);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+          try {
+            printWindow.print();
+          } catch (_) {}
+        }, 500);
+        return;
+      } catch (_) {}
+    }
     if (printWindow && !printWindow.closed) {
       printWindow.close();
     }
@@ -2489,11 +2503,15 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
 
     setPrintingPdf(true);
     try {
+      const fallbackHtml = selectedReport
+        ? buildPrintableHtml(schoolYearName, selectedReport, statement, allocations)
+        : '';
       await printPdfReport(
         selectedSchoolYearId,
         selectedReportId,
         false,
-        detail?.school_year?.name ? `CANTEEN-REPORT-${detail.school_year.name}` : 'DepEd Canteen Report'
+        detail?.school_year?.name ? `CANTEEN-REPORT-${detail.school_year.name}` : 'DepEd Canteen Report',
+        fallbackHtml
       );
     } catch (error) {
       const backendMessage =
@@ -2519,8 +2537,28 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       if (file?.blob) {
         downloadBlob(file.blob, file.filename);
         window.showToast?.('PDF report exported.', 'success');
+        return;
       }
     } catch (error) {
+      if (selectedReport) {
+        try {
+          const fallbackWindow = window.open('', '_blank');
+          if (fallbackWindow) {
+            const html = buildPrintableHtml(schoolYearName, selectedReport, statement, allocations);
+            fallbackWindow.document.open();
+            fallbackWindow.document.write(html);
+            fallbackWindow.document.close();
+            fallbackWindow.focus();
+            setTimeout(() => {
+              try {
+                fallbackWindow.print();
+              } catch (_) {}
+            }, 500);
+            window.showToast?.('Server export unavailable; opened printable report.', 'info');
+            return;
+          }
+        } catch (_) {}
+      }
       const backendMessage =
         error?.apiDetail?.message ||
         error?.apiDetail?.detail ||

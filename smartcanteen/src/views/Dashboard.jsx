@@ -523,9 +523,11 @@ export default function Dashboard() {
       if (file?.blob) {
         downloadBlob(file.blob, file.filename);
         window.showToast?.('PDF report exported.', 'success');
+        return;
       }
     } catch (error) {
-      window.showToast?.(error?.message || 'Unable to export the PDF report.', 'error');
+      console.warn('Backend PDF export failed, opening browser print view:', error);
+      window.print();
     } finally {
       setExportingPdf(false);
     }

@@ -2633,6 +2633,11 @@ def export_school_year_pdf(
     try:
         ok = convert_xlsx_to_pdf(xlsx_path, pdf_path, sheet_name=sheet_name)
         if not ok or not os.path.isfile(pdf_path) or os.path.getsize(pdf_path) == 0:
+            logger.warning("convert_xlsx_to_pdf failed; attempting pure python conversion fallback...")
+            from .excel_to_pdf import _convert_via_pure_python
+            ok = _convert_via_pure_python(xlsx_path, pdf_path, sheet_name=sheet_name)
+
+        if not ok or not os.path.isfile(pdf_path) or os.path.getsize(pdf_path) == 0:
             raise HTTPException(status_code=500, detail="Failed to convert Excel report to PDF")
     finally:
         _remove_file_if_exists(xlsx_path)
@@ -2847,15 +2852,109 @@ def _generate_custom_report_excel(payload: GeneratedReportExportPayload) -> str:
     return export_path
 
 
-def _generate_custom_report_pdf(payload: GeneratedReportExportPayload) -> str:
+def _generate_custom_report_pure_pdf(payload: GeneratedReportExportPayload, pdf_path: str) -> str:
+    from .excel_to_pdf import PurePdf
+    headers = payload.headers if payload.headers else ["Particulars", "Amount"]
+    rows = payload.rows or []
+    metrics = payload.metrics or []
+
+    is_landscape = len(headers) > 4
+    page_w = 792.0 if is_landscape else 612.0
+    page_h = 612.0 if is_landscape else 792.0
+    content_w = page_w - 72.0
+
+    pdf = PurePdf(width=page_w, height=page_h)
+
+    # Header block
+    cur_y = page_h - 40.0
+    pdf.text(36, cur_y, "Republic of the Philippines", bold=False, size=8, align="center", width=content_w)
+    cur_y -= 12.0
+    pdf.text(36, cur_y, "Department of Education", bold=True, size=10, align="center", width=content_w)
+    cur_y -= 11.0
+    pdf.text(36, cur_y, "REGION IV-A CALABARZON", bold=False, size=8, align="center", width=content_w)
+    cur_y -= 11.0
+    pdf.text(36, cur_y, "SCHOOLS DIVISION OFFICE OF LAGUNA", bold=False, size=8, align="center", width=content_w)
+    cur_y -= 11.0
+    pdf.text(36, cur_y, "BAY CENTRAL ELEMENTARY SCHOOL", bold=True, size=9, align="center", width=content_w)
+    cur_y -= 15.0
+    pdf.text(36, cur_y, payload.title.upper(), bold=True, size=11, align="center", width=content_w)
+    if payload.subtitle:
+        cur_y -= 12.0
+        pdf.text(36, cur_y, payload.subtitle, bold=False, size=8.5, align="center", width=content_w)
+    cur_y -= 16.0
+
+    # Metrics cards if any
+    if metrics:
+        num_m = len(metrics)
+        m_width = min(160.0, content_w / num_m)
+        m_start_x = 36.0 + max(0.0, (content_w - (num_m * m_width)) / 2.0)
+        card_h = 32.0
+        for i, m in enumerate(metrics):
+            cx = m_start_x + (i * m_width)
+            pdf.rect(cx, cur_y - card_h, m_width - 6.0, card_h, fill=(0.95, 0.97, 0.99), stroke=(0.8, 0.85, 0.9), line_width=0.5)
+            pdf.text(cx + 4, cur_y - 12.0, str(m.get("label", "")).upper(), bold=False, size=6.5, color=(0.4, 0.45, 0.5))
+            pdf.text(cx + 4, cur_y - 25.0, str(m.get("value", "")), bold=True, size=9.0, color=(0.02, 0.47, 0.34))
+        cur_y -= (card_h + 16.0)
+
+    # Data table
+    num_cols = len(headers)
+    col_w = content_w / num_cols
+    tbl_row_h = 16.0
+
+    # Draw Table Header
+    pdf.rect(36, cur_y - tbl_row_h, content_w, tbl_row_h, fill=(0.02, 0.47, 0.34), stroke=(0.02, 0.47, 0.34), line_width=0.5)
+    for col_idx, h_text in enumerate(headers):
+        hx = 36.0 + (col_idx * col_w)
+        pdf.text(hx + 6, cur_y - 11.0, str(h_text), bold=True, size=7.5, color=(1, 1, 1))
+    cur_y -= tbl_row_h
+
+    # Draw Table Rows
+    for r_idx, row in enumerate(rows):
+        if cur_y < 80.0:
+            pdf.new_page()
+            cur_y = page_h - 40.0
+            pdf.rect(36, cur_y - tbl_row_h, content_w, tbl_row_h, fill=(0.02, 0.47, 0.34), stroke=(0.02, 0.47, 0.34), line_width=0.5)
+            for col_idx, h_text in enumerate(headers):
+                hx = 36.0 + (col_idx * col_w)
+                pdf.text(hx + 6, cur_y - 11.0, str(h_text), bold=True, size=7.5, color=(1, 1, 1))
+            cur_y -= tbl_row_h
+
+        fill = (0.97, 0.98, 0.99) if r_idx % 2 == 1 else None
+        pdf.rect(36, cur_y - tbl_row_h, content_w, tbl_row_h, fill=fill, stroke=(0.85, 0.9, 0.95), line_width=0.5)
+        for col_idx, val in enumerate(row):
+            if col_idx >= num_cols:
+                break
+            cell_x = 36.0 + (col_idx * col_w)
+            is_num = col_idx > 0
+            align = "right" if is_num else "left"
+            align_w = (col_w - 12.0) if is_num else 0.0
+            pdf.text(cell_x + 6, cur_y - 11.0, str(val), bold=False, size=7.0, align=align, width=align_w)
+        cur_y -= tbl_row_h
+
+    # Signatures
+    cur_y -= 25.0
+    if cur_y < 60.0:
+        pdf.new_page()
+        cur_y = page_h - 60.0
+
+    pdf.text(70, cur_y, "Prepared by:", bold=True, size=7.5)
+    pdf.text(content_w - 140, cur_y, "Approved by:", bold=True, size=7.5)
+    cur_y -= 25.0
+    pdf.line(70, cur_y, 220, cur_y, stroke=(0, 0, 0), line_width=0.5)
+    pdf.line(content_w - 140, cur_y, content_w + 10, cur_y, stroke=(0, 0, 0), line_width=0.5)
+    cur_y -= 10.0
+    pdf.text(70, cur_y, "Canteen Teacher / In-Charge", size=7.0)
+    pdf.text(content_w - 140, cur_y, "School Principal", size=7.0)
+
+    pdf.build(pdf_path)
+    return pdf_path
+
+
+def _generate_custom_report_reportlab(payload: GeneratedReportExportPayload, pdf_path: str) -> bool:
     from reportlab.lib.pagesizes import letter, landscape
     from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-
-    pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdf_path = pdf_file.name
-    pdf_file.close()
 
     headers = payload.headers if payload.headers else ["Particulars", "Amount"]
     rows = payload.rows or []
@@ -3047,9 +3146,22 @@ def _generate_custom_report_pdf(payload: GeneratedReportExportPayload) -> str:
         ('BOTTOMPADDING', (0,0), (-1,-1), 2),
     ]))
     story.append(sig_table)
-
     doc.build(story)
-    return pdf_path
+    return os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 0
+
+
+def _generate_custom_report_pdf(payload: GeneratedReportExportPayload) -> str:
+    pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf_path = pdf_file.name
+    pdf_file.close()
+
+    try:
+        if _generate_custom_report_reportlab(payload, pdf_path):
+            return pdf_path
+    except Exception as exc:
+        logger.warning(f"ReportLab custom report export failed: {exc}; falling back to pure python PDF generator")
+
+    return _generate_custom_report_pure_pdf(payload, pdf_path)
 
 
 def _build_backend_report_payload(
