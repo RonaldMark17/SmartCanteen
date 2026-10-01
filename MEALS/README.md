@@ -60,5 +60,7 @@ For complete VPS setup instructions, see [MEALS Server Deployment Guide](file://
 ## 🔗 Related Documentation
 
 - [Root Repository README](../README.md)
+- [Capstone Defense Walkthrough & Testing Script](../smartcanteen/docu/MEALS_Capstone_Defense_Walkthrough_and_Testing_Script.md)
 - [Backend Development Guide](../backend/README.md)
 - [Frontend Client Guide](../smartcanteen/README.md)
+

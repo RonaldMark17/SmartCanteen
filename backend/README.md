@@ -33,24 +33,36 @@
 ## ✨ Key Features
 
 ### 1. 📊 DepEd-Compliant Financial Reporting & Excel Export
-- **School Year & Monthly Cycles**: Multi-year management with month-by-month financial accounting.
+- **School Year & Monthly Cycles**: Multi-year management with month-by-month financial accounting configured for **Bay Central Elementary School**.
 - **DepEd Canteen Fund Framework**: Computes Gross Sales, Cost of Goods Sold, Beginning/Ending Inventory balances, Operating Expenses, and Net Operating Income.
-- **Mandatory Allocation Tracking**: Manages DepEd standard canteen fund percentages (Supplementary Feeding 35%, Revolving/Operational Fund 25%, School Clinic 5%, Administrative Fund 20%, Faculty & Student Development 15%).
+- **Mandatory Allocation Tracking**: Manages DepEd standard canteen fund percentages (Supplementary Feeding 35%, Revolving/Operational Fund 25%, School Clinic 5%, Administrative Fund 20%, Faculty & Student Development 15%) with automated forward-balance rolls.
 - **Excel Spreadsheet Automation**: Injects live calculations into standard official workbook templates (`.xlsx`) while preserving formatting, formulas, cell styles, and institutional logos.
-- **Expense Receipt Storage**: Upload and manage expense attachments encoded with base64 storage and MIME typing.
+- **Expense Receipt Storage**: Upload and manage expense attachments encoded with base64 storage, MIME typing, and instant preview.
 
-### 2. 📦 Multi-Unit Inventory & Stock Management
+### 2. 🍲 Perishable Food Management & Food Waste Tracking
+- **Cooked Perishable Food Lifecycle**: Tracks items prepared daily that cannot be held over indefinitely.
+- **Morning Batch Prep API (`/api/inventory/daily-prep/batch`)**: Sets daily portion counts in the morning for kitchen preparation.
+- **End-of-Day Perishable Food Reset (`/api/inventory/perishable/reset-day`)**: Resets unsold perishable items to zero at closing and logs exact disposition (`waste_spoiled`, `staff_meal`, `donated`).
+- **Daily Reconciliation API (`/api/inventory/daily-reconciliation/submit`)**: Computes exact food waste cost and reconciles prepared vs sold quantities.
 - **Piece & Bulk Unit System**: Supports discrete items (`pcs`) and continuous bulk measures (`kg`, `g`, `l`, `ml`) with automatic unit conversions.
-- **Stock Tracking & Thresholds**: Real-time stock adjustments with configurable `min_stock` low-stock threshold alerts.
-- **Product Catalog**: Manage product categories, base units, barcodes, and cost/retail pricing.
 
-### 3. 🔐 Security, TOTP MFA & Account Recovery
-- **JWT Authentication**: Secure Bearer tokens with configurable expiration sessions.
-- **Time-based MFA (TOTP)**: Google Authenticator-compatible two-factor authentication with QR code provisioning and 30-day trusted device memory.
-- **Dual Recovery Mechanisms**: One-time backup recovery codes and administrative recovery/password reset review queues with formal appeal support.
+### 3. 🛍️ Point of Sale (POS) Counter & Offline Sync
+- **Cashier Transaction API (`/api/transactions`)**: High-throughput counter checkout recording sales, cash tendered, change, and receipt itemization.
+- **Offline Batch Sync API (`/api/transactions/sync`)**: Seamlessly commits transactions queued locally during network dropouts with deduplication.
+- **Transaction Ledger**: Searchable historical query interface with date filtering and audit trail.
+
+### 4. 🧠 Demand Forecasting with XGBoost Machine Learning (`ml_predictor.py`)
+- **Extreme Gradient Boosting (XGBoost) Regression**: Trains on historical sales data to predict tomorrow's portion demand for kitchen staff.
+- **Multi-Factor Feature Engineering**: Incorporates daily sales lags, day-of-week school schedules (Mon-Fri), weather conditions (Clear, Cloudy, Rainy, Stormy, Typhoon), and school events (Regular, Intramurals, Exams, Half Day, Holiday).
+- **Heuristic Baseline Fallback**: Automatic mathematical baseline ensuring continuous, realistic prep recommendations when historical records are sparse.
+
+### 5. 🔐 Security, TOTP MFA & Account Recovery
+- **JWT Authentication**: Secure Bearer tokens with configurable expiration sessions and bcrypt password hashing.
+- **Time-based MFA (TOTP)**: Google Authenticator-compatible two-factor authentication with QR code provisioning and single-use recovery codes.
+- **Administrative Recovery Queues**: Password reset and 2FA recovery review workflows with structured appeal channels.
 - **Comprehensive Audit Trail**: Automatically logs user actions, security modifications, IP addresses, and module changes.
 
-### 4. ⚡ Real-Time WebSockets & Timezone Alignment
+### 6. ⚡ Real-Time WebSockets & Timezone Alignment
 - **Real-Time Alert WebSocket**: Active broadcast channel (`/api/realtime/alerts`) notifying staff of stock dips and system events.
 - **Philippine Standard Time Awareness**: Built-in time normalization for `Asia/Manila` (PST/UTC+8) ensuring strict date alignment across daily reporting bounds.
 

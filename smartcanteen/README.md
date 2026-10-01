@@ -30,25 +30,38 @@
 ## ✨ Key Views & Features
 
 ### 1. 📊 DepEd Financial Reports (`src/views/FinancialReports.jsx`)
-- **DepEd Canteen Fund Framework**: Monthly financial statements calculating Gross Sales, Cost of Goods Sold, Operating Expenses, and Net Income.
-- **Statutory Fund Allocations**: Real-time distribution across mandatory DepEd percentage allocations (Feeding 35%, Operations 25%, Clinic 5%, Admin 5%, Faculty & Student Dev 15%).
+- **DepEd Canteen Fund Framework**: Monthly financial statements calculating Gross Sales, Cost of Goods Sold, Operating Expenses, and Net Income for **Bay Central Elementary School**.
+- **Statutory Fund Allocations**: Real-time distribution across mandatory DepEd percentage allocations (Feeding 35%, Operations 25%, Clinic 5%, Admin 5%, Faculty & Student Dev 15%) with automated forward-balance rolls.
 - **Live Excel Export**: One-click generation and download of official DepEd `.xlsx` workbooks with preserved formulas, cell styles, formatting, and institutional logos.
-- **Expense Voucher Proofs**: Upload, manage, and preview receipt photos for itemized operational expenses.
+- **Expense Voucher Proofs**: Upload, manage, and preview receipt photos for itemized operational expenses with zoomable modal.
 
-### 2. 📦 Inventory & Stock Control (`src/views/Inventory.jsx`)
+### 2. 🍲 Perishable Food & Inventory Control (`src/views/Inventory.jsx`)
 - **Live Stock Tracking**: Real-time stock counts with color-coded warning badges for items below `min_stock`.
+- **Perishable Cooked Food Workflow**: Dedicated flagging for daily-prepared food items that cannot carry over indefinitely.
+- **Morning Batch Prep & Stock Replenishment**: Direct morning recording of prepared food servings (e.g., arroz caldo, viands, pancit).
+- **End-of-Day Perishable Food Reset & Waste Tracking**: Clears unsold perishable stock down to zero at afternoon closing, recording exact food waste categories (`waste_spoiled`, `staff_meal`, `donated`).
 - **Multi-Unit Catalog**: Discrete pieces (`pcs`) and continuous bulk measures (`kg`, `g`, `l`, `ml`) with automatic unit conversions.
-- **Product Catalog Management**: Add, update, and archive products, define base units, barcodes, categories, and cost/retail prices.
-- **Stock Restock & Adjustments**: Direct stock level increments and deduction logging.
 
-### 3. 🔐 Security, TOTP MFA & Account Management (`src/views/Login.jsx`, `ManageAccounts.jsx`)
-- **Role-Based Guards**: Navigation and feature protection tailored for `admin` and `staff` roles.
-- **Time-based MFA (TOTP)**: Google Authenticator setup with QR code generation, backup recovery codes, and 30-day device trust.
+### 3. 🛍️ Point of Sale (POS) & Offline Checkout (`src/views/POS.jsx`, `TransactionHistory.jsx`)
+- **Fast Cashier Counter**: Rapid category filtering, instant cart addition, subtotal calculation, and exact change computation.
+- **Offline Transaction Queue (`offlineStore.js`)**: Caches cash transactions in browser storage if network disconnects, syncing automatically on reconnection.
+- **Thermal Receipt Preview & Printing**: Formatted digital receipts with transaction ID, cashier attribution, itemization, and printer styling.
+- **Transaction History**: Searchable audit ledger of past sales transactions with sync status and receipt review.
+
+### 4. 🧠 Demand Forecasting & AI Prep Planner (`src/views/Predictions.jsx`)
+- **XGBoost Machine Learning Inference**: Forecasts tomorrow's demand per product based on historical sales lags, day-of-week patterns, weather (Clear, Cloudy, Rainy, Stormy, Typhoon), and school events (Regular, Exams, Intramurals, Half Day).
+- **Actionable Kitchen Badges**: Guides staff with `Restock`, `Use First / Reduce Waste`, `Enough Stock`, and `Prep Light` recommendations.
+- **Heuristic Baseline Fallback**: Maintains intelligent predictions even during initial system deployment with limited historical data.
+
+### 5. 🔐 Security, TOTP MFA & Account Management (`src/views/Login.jsx`, `ManageAccounts.jsx`)
+- **Role-Based Access Control (RBAC)**: Tailored navigation and route guards for `admin`, `staff`, and `cashier` roles.
+- **Time-based MFA (TOTP)**: Google Authenticator setup with QR code generation, backup single-use recovery codes, and brute-force attempt lockout.
 - **Account & Reset Queue**: Administrative password reset approval and MFA recovery review.
 
-### 4. ⚙️ Settings & Dynamic Modules (`src/views/Settings.jsx`, `AuditLog.jsx`)
-- **Dynamic Feature Switches**: Toggle system modules on/off dynamically.
+### 6. ⚙️ Settings & Dynamic Modules (`src/views/Settings.jsx`, `AuditLog.jsx`)
+- **Dynamic Feature Switches**: Toggle optional system modules dynamically (`ModuleSettingsContext`).
 - **Audit Logs**: Query timestamped activity logs with IP addresses and user actions.
+- **Thesis & Capstone Documentation (`docu/`)**: Pre-compiled Word (`.docx`) and Markdown (`.md`) defense walkthrough scripts.
 
 ---
 
@@ -94,6 +107,9 @@ smartcanteen/
 ├── dist-electron/                 # Compiled Windows desktop executables
 │   ├── MEALS Setup.exe            # Windows NSIS installer
 │   └── MEALS.exe                  # Standalone portable executable
+├── docu/                          # Thesis & Capstone Defense Documentation
+│   ├── MEALS_Capstone_Defense_Walkthrough_and_Testing_Script.docx
+│   └── MEALS_Capstone_Defense_Walkthrough_and_Testing_Script.md
 ├── electron/                      # Electron main & preload scripts
 │   ├── config.json                # Runtime desktop API endpoint configuration
 │   ├── icon.png                   # Application desktop icon
@@ -103,22 +119,26 @@ smartcanteen/
 ├── src/                           # Application source code
 │   ├── assets/                    # Static image assets and logos
 │   ├── components/                # Reusable UI widgets, modals & navbar
-│   ├── config/                    # API client configurations
+│   ├── config/                    # API client configurations & route access
 │   ├── contexts/                  # React state context providers
 │   │   ├── AlertContext.jsx       # WebSocket live notification context
 │   │   ├── AuthContext.jsx        # JWT session & MFA state context
+│   │   ├── ModuleSettingsContext.jsx # Dynamic modular feature toggle context
 │   │   └── ThemeContext.jsx       # Theme state context
-│   ├── services/                  # Backend API HTTP & WebSocket clients
+│   ├── services/                  # Backend API HTTP, WebSocket & offline store
 │   │   ├── api.js                 # Primary Fetch/REST wrapper
+│   │   ├── offlineStore.js        # IndexedDB/LocalStorage offline transaction queue
 │   │   └── websocket.js           # Real-time WebSocket connection client
 │   ├── utils/                     # Formatters, currency & date utilities
 │   ├── views/                     # Main view pages
 │   │   ├── AuditLog.jsx           # Activity & security audit trails
 │   │   ├── Dashboard.jsx          # Role-tailored home dashboard
 │   │   ├── FinancialReports.jsx   # DepEd financial statements & Excel export
-│   │   ├── Inventory.jsx          # Product catalog & stock manager
+│   │   ├── Inventory.jsx          # Perishable product catalog & stock manager
 │   │   ├── Login.jsx              # Login, TOTP MFA & password reset
 │   │   ├── ManageAccounts.jsx     # User management & account review
+│   │   ├── POS.jsx                # Point of sale cashier counter & checkout
+│   │   ├── Predictions.jsx        # XGBoost AI demand planning & forecast
 │   │   ├── Settings.jsx           # Module toggles & preferences
 │   │   └── TransactionHistory.jsx # Transaction query & ledger
 │   ├── App.css                    # Component style adjustments

@@ -88,31 +88,37 @@ graph TB
 ## ✨ Key Features
 
 ### 📊 1. DepEd-Compliant Financial Reporting & Fund Management
-- **Statutory Canteen Operations Framework**: Built to strictly adhere to official Department of Education (DepEd) school canteen accounting guidelines.
+- **Statutory Canteen Operations Framework**: Built to strictly adhere to official Department of Education (DepEd) school canteen accounting guidelines for **Bay Central Elementary School**.
 - **Automated Statement Computation**: Automatically calculates Gross Sales, Cost of Goods Sold (COGS), Beginning/Ending Inventories, Operating Expenses, and Net Operating Income.
-- **Statutory Allocation Distribution**: Automatically computes mandatory percentage splits across statutory funds:
-  - Supplementary Feeding Program (**35%**)
-  - Canteen Revolving & Operations Fund (**25%**)
-  - Faculty & Student Development Fund (**15%**)
-  - School Clinic Fund (**5%**)
-  - Administrative Operations Fund (**20%**)
+- **Statutory Allocation Distribution**: Automatically computes mandatory percentage splits across statutory funds (Feeding 35%, Operations 25%, Clinic 5%, Admin 5%, Faculty & Student Dev 15%) with automated forward-balance carryover.
 - **Excel Spreadsheet Automation**: Injects live calculations into standard official workbook templates (`.xlsx`) while preserving cell formatting, formulas, styles, and institutional logos.
-- **Expense Voucher Proofs**: Attach and manage expense receipts with image storage and MIME type support.
+- **Expense Voucher Proofs**: Attach and manage expense receipts with image storage, MIME typing, and instant modal preview.
 
-### 📦 2. Multi-Unit Inventory & Stock Control
+### 🍲 2. Perishable Food Inventory & Closing Waste Reconciliation
+- **Cooked Food Perishable Tracking**: Specific identification for daily prepared items that cannot be held over indefinitely.
+- **Morning Batch Replenishment**: Direct morning recording of prepared batch servings (e.g., arroz caldo, pancit, viands).
+- **End-of-Day Food Waste Reset Protocol**: Clears unsold perishable stock down to zero at closing, automatically attributing and recording food waste categories (`waste_spoiled`, `staff_meal`, `donated`).
 - **Discrete & Bulk Measurement**: Supports countable items (`pcs`) and continuous bulk measures (`kg`, `g`, `l`, `ml`) with automatic conversions.
 - **Stock Threshold Alerts**: Real-time deduction tracking with configurable `min_stock` threshold warnings.
-- **Category & Catalog Management**: Organize products by category, manage cost/selling prices, barcodes, and favorite items.
 
-### 🔐 3. Enterprise Security & Multi-Factor Authentication
-- **Role-Based Access Control**: Strict privilege separation between `admin` and `staff` users.
-- **Time-based MFA (TOTP)**: Google Authenticator-compatible two-factor authentication with QR provisioning, backup recovery codes, and 30-day trusted device memory.
+### 🛍️ 3. Point of Sale (POS) Counter & Offline Queue
+- **High-Speed Cashier Counter**: Rapid category filtering, instant cart addition, subtotal calculation, and exact change computation.
+- **Offline Transaction Resilience**: Automatically caches counter sales in IndexedDB/LocalStorage during network outages, synchronizing silently when connectivity resumes.
+- **Thermal Receipt Preview & Printing**: Formatted digital receipts with transaction ID, cashier attribution, itemization, and printer styling.
+
+### 🧠 4. Demand Forecasting with XGBoost Machine Learning
+- **XGBoost Regression Model**: Analyzes historical sales patterns, day-of-week school schedules (Mon-Fri), weather conditions (Clear, Cloudy, Rainy, Stormy, Typhoon), and school events (Regular, Exams, Intramurals, Half Day).
+- **Kitchen Actionable Badges**: Recommends exact tomorrow cooking quantities (`Restock`, `Use First / Reduce Waste`, `Enough Stock`, `Prep Light`).
+- **Heuristic Baseline Fallback**: Maintains realistic prep guidance even during initial deployment before vast historical data is accumulated.
+
+### 🔐 5. Enterprise Security & Multi-Factor Authentication
+- **Role-Based Access Control (RBAC)**: Strict privilege separation between `admin`, `staff`, and `cashier` users.
+- **Time-based MFA (TOTP)**: Google Authenticator-compatible two-factor authentication with QR provisioning, backup recovery codes, and brute-force attempt lockout.
 - **Admin Recovery Queue**: Formal review workflow for user password resets and MFA recovery requests.
-- **Audit Logging**: Comprehensive activity tracking with timestamp and IP recording.
+- **Audit Logging**: Comprehensive activity tracking with timestamp, user ID, action type, and IP recording.
 
-### ⚡ 4. Real-Time WebSockets & Dynamic Modules
-- **WebSocket Broadcast Hub**: Live `/api/realtime/alerts` channel notifying staff of low stock levels and administrative events.
-- **Feature Module Toggles**: Enable or disable functional modules on the fly from Admin Settings.
+### 📚 6. Capstone Defense Documentation (`smartcanteen/docu/`)
+- Pre-compiled Word (`.docx`) and Markdown (`.md`) complete defense walkthrough, verification matrix, testing plan, and panel Q&A guide ready for capstone presentation.
 
 ---
 
@@ -126,6 +132,7 @@ SmartCanteen/
 │   ├── demo_data.py               # Demo datasets & database seeder
 │   ├── financial_reports.py       # DepEd financial calculations & Excel generator
 │   ├── main.py                    # Main FastAPI server, routes & WebSockets
+│   ├── ml_predictor.py            # XGBoost ML demand forecasting engine
 │   ├── models.py                  # Declarative SQLAlchemy ORM models
 │   ├── report_templates/          # Official DepEd Excel workbook templates & logos
 │   │   ├── CANTEEN-REPORT-2025-2026-2 (1).xlsx
@@ -135,6 +142,7 @@ SmartCanteen/
 │   └── time_utils.py              # Philippine Timezone (Asia/Manila) utilities
 │
 ├── smartcanteen/                  # Primary Desktop & Web Client (React 19 + Electron)
+│   ├── docu/                      # Capstone defense walkthrough & testing scripts (.docx & .md)
 │   ├── electron/                  # Electron main process & desktop configuration
 │   │   ├── config.json            # Desktop API endpoint configuration
 │   │   ├── main.cjs               # Electron main entry point
