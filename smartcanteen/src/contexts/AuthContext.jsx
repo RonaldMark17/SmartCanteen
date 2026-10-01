@@ -103,15 +103,6 @@ export function shouldRetainSessionOnStartup() {
     const refreshToken = getStoredRefreshToken();
     const token = getStoredToken();
 
-    console.log('[MEALS AUTH] shouldRetainSessionOnStartup check:', {
-      hasSessionToken: Boolean(sessionToken),
-      hasLocalToken: Boolean(localToken),
-      resolvedToken: Boolean(token),
-      tokenExpired: token ? isTokenExpired(token) : null,
-      hasRefreshToken: Boolean(refreshToken),
-      isRemembered: isRememberedSession(),
-    });
-
     if (token && !isTokenExpired(token)) {
       return true;
     }
@@ -160,7 +151,6 @@ export function AuthProvider({ children }) {
   });
 
   const logout = useCallback((reason = 'manual') => {
-    console.log('[MEALS AUTH] logout() called. Reason:', reason);
     const isSilentSessionExpiry =
       reason === 'http_unauthorized' ||
       reason === 'session_expired' ||
@@ -264,40 +254,32 @@ export function AuthProvider({ children }) {
   const refreshUser = useCallback(async () => {
     let token = getStoredToken();
     let dbUser = null;
-    console.log('[MEALS AUTH] refreshUser() executing, token present:', Boolean(token));
 
     try {
       if (!token || isTokenExpired(token)) {
-        console.log('[MEALS AUTH] Access token missing or expired, checking for refresh token...');
         const refreshToken = getStoredRefreshToken();
         if (!refreshToken) {
-          console.warn('[MEALS AUTH] No refresh token available to rotate -> calling logout()');
           logout('token_expired_no_refresh');
           return null;
         }
 
-        console.log('[MEALS AUTH] Rotating expired session with refresh token...');
         try {
           const refreshed = await API.refreshSession();
           token = refreshed?.access_token || getStoredToken();
           dbUser = refreshed?.user || null;
         } catch (refreshErr) {
-          console.warn('[MEALS AUTH] Session refresh failed -> clearing session:', refreshErr?.message || refreshErr);
           logout('session_expired');
           return null;
         }
       }
 
       if (!token || isTokenExpired(token)) {
-        console.warn('[MEALS AUTH] Token still missing/expired after refresh attempt -> calling logout()');
         logout('token_invalid_after_refresh');
         return null;
       }
 
       if (!dbUser) {
-        console.log('[MEALS AUTH] Validating session with GET /api/auth/me...');
         dbUser = await API.getCurrentUser();
-        console.log('[MEALS AUTH] /api/auth/me returned:', dbUser ? `${dbUser.username} (${dbUser.role})` : null);
       }
 
       if (dbUser && dbUser.role) {
@@ -335,16 +317,13 @@ export function AuthProvider({ children }) {
         return dbUser;
       }
 
-      console.warn('[MEALS AUTH] /api/auth/me did not return a valid user with role -> calling logout()');
       logout('invalid_user_response');
       return null;
     } catch (err) {
-      console.warn('[MEALS AUTH] refreshUser caught error:', err);
       if (err?.status === 401 || err?.status === 403) {
         // If an authenticated request to /auth/me failed with 401/403, try silent refresh
         if (token && getStoredRefreshToken()) {
           try {
-            console.log('[MEALS AUTH] 401/403 on getCurrentUser, trying API.refreshSession()...');
             const refreshed = await API.refreshSession();
             if (refreshed?.access_token && refreshed?.user) {
               setUser(refreshed.user);
@@ -352,18 +331,15 @@ export function AuthProvider({ children }) {
             }
           } catch {}
         }
-        console.warn('[MEALS AUTH] 401/403 unrecoverable -> calling logout()');
         logout('http_unauthorized');
         return null;
       }
       // A temporary network problem should not erase an otherwise valid local session.
       const cached = getStoredUser();
       if (cached && cached.role) {
-        console.log('[MEALS AUTH] Network issue, maintaining cached user session:', cached.username);
         setUser(cached);
         return cached;
       }
-      console.warn('[MEALS AUTH] Network error with no cached user session -> calling logout()');
       logout('network_no_cached_session');
       return null;
     } finally {
@@ -374,16 +350,13 @@ export function AuthProvider({ children }) {
   // Initial session verification on startup and page refresh
   useEffect(() => {
     const shouldRetain = shouldRetainSessionOnStartup();
-    console.log('[MEALS AUTH] Startup verification useEffect, shouldRetain:', shouldRetain);
     if (!shouldRetain) {
-      console.log('[MEALS AUTH] No session to restore -> unauthenticated state set');
       setUser(null);
       setLoading(false);
       return;
     }
 
     // Token exists and session is valid; verify with server to restore fresh role & permissions
-    console.log('[MEALS AUTH] Stored session detected -> restoring user & validating with server...');
     refreshUser();
   }, [refreshUser]);
 

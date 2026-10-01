@@ -163,14 +163,6 @@ function AppContent() {
     }
   });
 
-  console.log('[MEALS AUTH] AppContent render state:', {
-    loading,
-    splashFinished,
-    isAuthenticated,
-    role,
-    isTwoFactorVerified,
-    username: user?.username || null,
-  });
 
   if (loading || !splashFinished) {
     return <AppSplashScreen onFinished={() => setSplashFinished(true)} />;
@@ -186,9 +178,7 @@ function AppContent() {
     !user.two_factor_enabled &&
     !user.authenticator_mfa_enabled;
 
-  // Intercept navigation flow if 2FA setup is required/pending for an admin account
   if (pending2FASetup || isAdmin2FAMissing) {
-    console.log('[MEALS AUTH] Intercepting to AdminSetup2FA:', { pending2FASetup: Boolean(pending2FASetup), isAdmin2FAMissing });
     return (
       <>
         <Toaster />
@@ -217,13 +207,6 @@ function AppContent() {
   }
 
   if (!isAuthenticated || !isValidRole(role) || !isTwoFactorVerified) {
-    console.warn('[MEALS AUTH] Rendering Login view. Reason check:', {
-      isAuthenticated,
-      validRole: isValidRole(role),
-      isTwoFactorVerified,
-      role,
-      user: user ? user.username : null,
-    });
     return (
       <>
         <Toaster />

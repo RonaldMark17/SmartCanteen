@@ -491,8 +491,6 @@ function clearSession() {
 }
 
 function handleUnauthorizedSessionClear() {
-  console.warn('[MEALS AUTH] handleUnauthorizedSessionClear() triggered in api.js!');
-  console.trace('[MEALS AUTH] handleUnauthorizedSessionClear trace:');
   clearSession();
   if (typeof window !== 'undefined') {
     try {
