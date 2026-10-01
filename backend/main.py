@@ -570,6 +570,10 @@ def _persist_transaction(
     if created_at is not None:
         txn_kwargs["created_at"] = created_at
 
+    active_sy = db.query(models.SchoolYear).filter(models.SchoolYear.is_active == True).first()
+    if active_sy and "school_year_id" not in txn_kwargs:
+        txn_kwargs["school_year_id"] = active_sy.id
+
     txn = models.Transaction(**txn_kwargs)
     db.add(txn)
     db.flush()
@@ -750,6 +754,11 @@ def _ensure_financial_reporting_columns():
             "monthly_reports",
             "current_sales_manual_override",
             "ALTER TABLE monthly_reports ADD COLUMN current_sales_manual_override BOOLEAN NOT NULL DEFAULT FALSE",
+        ),
+        (
+            "transactions",
+            "school_year_id",
+            "ALTER TABLE transactions ADD COLUMN school_year_id INTEGER REFERENCES school_years(id)",
         ),
     ]
 

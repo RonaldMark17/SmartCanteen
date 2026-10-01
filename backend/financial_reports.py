@@ -19,7 +19,7 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import Session, joinedload
 from starlette.background import BackgroundTask
 
@@ -618,14 +618,37 @@ def _build_report_month_bounds(report: models.MonthlyReport) -> tuple[datetime, 
 
 
 def _get_report_transaction_sales(db: Session, report: models.MonthlyReport) -> float:
+    school_year = report.school_year
+    if not school_year and report.school_year_id:
+        school_year = db.query(models.SchoolYear).filter(models.SchoolYear.id == report.school_year_id).first()
+
+    # Inactive/historical school years cannot receive live POS transactions
+    if not school_year or not school_year.is_active:
+        return 0.0
+
     start_utc, end_utc = _build_report_month_bounds(report)
     # A transaction row is created only after POS checkout succeeds; this system does not retain
     # pending POS transactions in the transactions table.
-    total_sales = (
+    # Strictly isolate transactions so newly added school years never inherit old or unassigned transactions.
+    has_sy_id = hasattr(models.Transaction, "school_year_id")
+    query = (
         db.query(func.coalesce(func.sum(models.Transaction.total), 0.0))
         .filter(models.Transaction.created_at.between(start_utc, end_utc))
-        .scalar()
     )
+    if has_sy_id:
+        query = query.filter(
+            or_(
+                models.Transaction.school_year_id == report.school_year_id,
+                and_(
+                    models.Transaction.school_year_id.is_(None),
+                    models.Transaction.created_at >= school_year.created_at,
+                ),
+            )
+        )
+    else:
+        query = query.filter(models.Transaction.created_at >= school_year.created_at)
+
+    total_sales = query.scalar()
     return _round_money(total_sales)
 
 

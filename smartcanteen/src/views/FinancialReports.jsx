@@ -15,6 +15,7 @@ import {
   ArchiveBoxIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ArrowRightIcon,
   ArrowUpTrayIcon,
   BanknotesIcon,
   CalendarDaysIcon,
@@ -544,7 +545,8 @@ function buildDailySaleRows(detail) {
     const parsedTotal = parsed.reduce((sum, s) => sum + s.amount, 0);
     const reportSales = toMoney(report.current_sales);
     const diff = reportSales - parsedTotal;
-    if (diff > 0.005) {
+    // Only show fallback overview row if the monthly sales amount was explicitly manually overridden
+    if (diff > 0.005 && report.current_sales_manual_override) {
       const monthVal = getReportMonthValue(report);
       return [
         {
@@ -1757,6 +1759,61 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     reportDraft.current_sales,
     reportDraft.cost_of_sales
   );
+  const fundSummaryData = useMemo(() => {
+    const rawAllocations = selectedReport?.allocations || [];
+    const balance = toMoney(statement.currentBalance);
+    if (!rawAllocations.length) {
+      return {
+        items: [],
+        totalPercentage: 0,
+        totalAllocated: 0,
+        isReconciled: true,
+      };
+    }
+
+    const totalPercentage = rawAllocations.reduce(
+      (sum, a) => sum + toMoney(a.percentage),
+      0
+    );
+
+    // Compute distributed amount for each statutory fund based on configured percentage
+    const items = rawAllocations.map((alloc) => {
+      const pct = toMoney(alloc.percentage);
+      const allocatedAmount = Math.round((balance * (pct / 100)) * 100) / 100;
+      return {
+        ...alloc,
+        percentage: pct,
+        allocatedAmount,
+      };
+    });
+
+    // If total percentage equals 100%, eliminate any rounding drift on the last fund
+    // so sum of all allocated amounts EQUALS Current Balance exactly
+    if (Math.abs(totalPercentage - 100) < 0.01 && items.length > 0) {
+      const sumExceptLast = items
+        .slice(0, -1)
+        .reduce((sum, item) => sum + item.allocatedAmount, 0);
+      const lastIndex = items.length - 1;
+      items[lastIndex].allocatedAmount =
+        Math.round((balance - sumExceptLast) * 100) / 100;
+    }
+
+    // Explicitly SUM all allocated fund amounts
+    const totalAllocated = items.reduce(
+      (sum, item) => sum + item.allocatedAmount,
+      0
+    );
+
+    const isReconciled = Math.abs(totalAllocated - balance) < 0.01;
+
+    return {
+      items,
+      totalPercentage,
+      totalAllocated,
+      isReconciled,
+    };
+  }, [selectedReport?.allocations, statement.currentBalance]);
+
   const dailySalesRows = useMemo(() => buildDailySaleRows(detail), [detail]);
   const filteredDailySalesRows = useMemo(() => {
     const query = salesSearch.trim().toLowerCase();
@@ -1872,19 +1929,16 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
         const draft = fundMonitoringDraft[key] || {};
         const prevBal = getFundPrevBalance(allocation);
         const netInc = toMoney(allocation.amount);
-        const interestVal = toMoney(draft.interest);
         const expensesVal = toMoney(draft.expenses);
-        const othersVal = toMoney(draft.others);
-        const cashOnBankVal = toMoney(draft.cash_on_bank);
-        const totalExpVal = expensesVal + othersVal;
-        const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
+        const totalExpVal = expensesVal;
+        const currentBalVal = prevBal + netInc - totalExpVal;
 
         acc.prevBal += prevBal;
         acc.netInc += netInc;
         acc.expenses += expensesVal;
-        acc.interest += interestVal;
-        acc.others += othersVal;
-        acc.cashOnBank += cashOnBankVal;
+        acc.interest += 0;
+        acc.others += 0;
+        acc.cashOnBank += 0;
         acc.totalExp += totalExpVal;
         acc.currentBal += currentBalVal;
         return acc;
@@ -2487,10 +2541,10 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
           opening_balance: canEditFundOpeningBalance
             ? (parseNonNegativeMoney(itemDraft.opening_balance) ?? 0)
             : toMoney(alloc.opening_balance),
-          interest: parseNonNegativeMoney(itemDraft.interest) ?? 0,
+          interest: 0,
           expenses: parseNonNegativeMoney(itemDraft.expenses) ?? 0,
-          others: parseNonNegativeMoney(itemDraft.others) ?? 0,
-          cash_on_bank: parseNonNegativeMoney(itemDraft.cash_on_bank) ?? 0,
+          others: 0,
+          cash_on_bank: 0,
         };
       });
 
@@ -3751,13 +3805,18 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
             {/* Card Header */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
               <div className="min-w-0">
-                <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white truncate">
-                  {selectedReport?.month_label} Financial Statement
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white truncate">
+                    {selectedReport?.month_label} Financial Statement
+                  </h2>
+                  <span className="hidden sm:inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    DepEd Compliant
+                  </span>
+                </div>
                 <p className="text-[11px] sm:text-xs font-medium text-slate-500 dark:text-slate-400 truncate">
                   {isAdmin
-                    ? 'Edit Beginning Cash, Current Sales, and Cost of Sales then save.'
-                    : 'Review monthly beginning cash, sales, cost of sales, and balances in read-only mode.'}
+                    ? 'Enter monthly editable figures below. Financial statements and fund allocations calculate automatically.'
+                    : 'Review monthly statement calculations, expenses, and fund allocations in read-only mode.'}
                 </p>
               </div>
               {isAdmin ? (
@@ -3777,117 +3836,215 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               )}
             </div>
 
-            {/* Editable Inputs near top */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 px-5 py-3.5 bg-slate-50/50 dark:bg-slate-850/40 border-b border-slate-100 dark:border-slate-800">
-              <FormField
-                label="Beginning Cash"
-                value={reportDraft.beginning_cash_on_hand}
-                onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
-                disabled={!canSaveSelectedSchoolYear || !isAdmin}
-                min="0"
-                step="0.01"
-              />
-              <FormField
-                label="Current Sales"
-                value={reportDraft.current_sales}
-                onChange={(event) => updateReportDraft('current_sales', event.target.value)}
-                disabled={!canSaveSelectedSchoolYear || !isAdmin}
-                min="0"
-                step="0.01"
-              />
-              <FormField
-                label="Cost of Sales"
-                value={reportDraft.cost_of_sales}
-                onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
-                disabled={!canSaveSelectedSchoolYear || !isAdmin}
-                min="0"
-                step="0.01"
-              />
+            {/* ── SECTION 1: EDITABLE VALUES ── */}
+            <div className="border-b border-slate-200/80 bg-slate-50/60 p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-850/40">
+              <div className="flex items-center justify-between gap-2 mb-3.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    <PencilSquareIcon className="h-3.5 w-3.5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                      Editable Input Values
+                    </h3>
+                    <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                      Input parameters that dynamically feed the automated accounting equations below
+                    </p>
+                  </div>
+                </div>
+                <span className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 text-[10px] font-bold text-slate-600 border border-slate-200 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 shrink-0">
+                  {isAdmin ? 'Admin Editable' : 'Read-Only'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                  <FormField
+                    label="Beginning Cash"
+                    value={reportDraft.beginning_cash_on_hand}
+                    onChange={(event) => updateReportDraft('beginning_cash_on_hand', event.target.value)}
+                    disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                    min="0"
+                    step="0.01"
+                  />
+                  <div className="mt-1 text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                    Cash balance brought forward
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Current Sales</span>
+                    <button
+                      type="button"
+                      onClick={() => handleTabChange('daily-sales')}
+                      className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
+                    >
+                      Sales Ledger →
+                    </button>
+                  </div>
+                  <input
+                    type="number"
+                    value={reportDraft.current_sales}
+                    onChange={(event) => updateReportDraft('current_sales', event.target.value)}
+                    placeholder="0.00"
+                    disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                    readOnly={!canSaveSelectedSchoolYear || !isAdmin}
+                    min="0"
+                    step="0.01"
+                    className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-semibold text-slate-900 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                  <div className="mt-1 text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                    Gross monthly canteen receipts
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                  <FormField
+                    label="Cost of Sales"
+                    value={reportDraft.cost_of_sales}
+                    onChange={(event) => updateReportDraft('cost_of_sales', event.target.value)}
+                    disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                    min="0"
+                    step="0.01"
+                  />
+                  <div className="mt-1 text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                    Merchandise purchases & raw materials
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Financial Breakdown Rows */}
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {[
-                { label: 'Beginning Cash', amount: statement.beginningCash, isPrimary: true },
-                {
-                  label: 'Current Sales',
-                  amount: statement.currentSales,
-                  isPrimary: true,
-                  action: () => handleTabChange('daily-sales'),
-                  actionLabel: 'Sales →',
-                },
-                { label: 'Cost of Sales', amount: statement.costOfSales },
-                { label: 'Gross Income', amount: statement.grossIncome, isGross: true },
-                {
-                  label: 'Operation Expenses',
-                  amount: statement.operationExpenses,
-                  action: () => handleTabChange('expenses'),
-                  actionLabel: 'Manage →',
-                },
-                {
-                  label: 'Over All Net Profit',
-                  amount: statement.netProfit,
-                  isNetProfit: true,
-                  formula: '(Gross Income - Expenses)',
-                },
-                { label: 'Current Balance', amount: statement.currentBalance, isBalance: true },
-              ].map(({ label, amount, isPrimary, isGross, isNetProfit, isBalance, action, actionLabel, formula }) => (
-                <div
-                  key={label}
-                  className={`flex items-center justify-between gap-3 px-5 py-2.5 transition-colors ${
-                    isBalance
-                      ? 'bg-emerald-500/10 dark:bg-emerald-950/40 border-t border-emerald-500/20 dark:border-emerald-800/40'
-                      : isNetProfit || isGross
-                      ? 'bg-slate-50/70 dark:bg-slate-800/30'
-                      : 'hover:bg-slate-50/50 dark:hover:bg-slate-800/20'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className={`text-xs ${
-                        isBalance
-                          ? 'font-black text-emerald-900 dark:text-emerald-200'
-                          : isNetProfit || isGross
-                          ? 'font-black text-slate-900 dark:text-white'
-                          : isPrimary
-                          ? 'font-bold text-slate-800 dark:text-slate-200'
-                          : 'font-medium text-slate-600 dark:text-slate-400'
-                      }`}
-                    >
-                      {label}
-                    </span>
-                    {formula && (
-                      <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                        {formula}
-                      </span>
-                    )}
-                    {action && (
-                      <button
-                        type="button"
-                        onClick={action}
-                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
-                      >
-                        {actionLabel}
-                      </button>
-                    )}
+            {/* ── SECTION 2: AUTOMATICALLY CALCULATED VALUES ── */}
+            <div>
+              {/* Section Sub-Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/30 px-5 py-2.5 dark:border-slate-800 dark:bg-slate-850/20">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    <ScaleIcon className="h-3.5 w-3.5" />
                   </div>
-                  <span
-                    className={`font-mono shrink-0 ${
-                      isBalance
-                        ? 'text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-300'
-                        : isNetProfit
-                        ? `text-sm font-black ${amount < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`
-                        : isGross
-                        ? 'text-sm font-black text-slate-900 dark:text-white'
-                        : isPrimary
-                        ? 'text-sm font-bold text-slate-800 dark:text-slate-200'
-                        : 'text-sm font-semibold text-slate-700 dark:text-slate-300'
-                    }`}
-                  >
-                    {formatCurrency(amount)}
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                    Automatically Calculated Values
+                  </h3>
+                </div>
+                <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700 border border-emerald-200/80 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  DepEd Formula Calculations
+                </span>
+              </div>
+
+              {/* Rows */}
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {/* Gross Income */}
+                <div className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                      Gross Income
+                    </span>
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                      Current Sales − Cost of Sales
+                    </span>
+                  </div>
+                  <span className="font-mono text-sm sm:text-base font-black text-slate-900 dark:text-white shrink-0">
+                    {formatCurrency(statement.grossIncome)}
                   </span>
                 </div>
-              ))}
+
+                {/* Operating Expenses */}
+                <div className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                      Less: Operation Expenses
+                    </span>
+                    <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950/60 dark:text-rose-300">
+                      Sum of 7 DepEd Categories
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleTabChange('expenses')}
+                      className="text-[10px] font-bold text-rose-600 hover:text-rose-700 hover:underline dark:text-rose-400"
+                    >
+                      Manage Expenses →
+                    </button>
+                  </div>
+                  <span className="font-mono text-sm sm:text-base font-bold text-rose-600 dark:text-rose-400 shrink-0">
+                    - {formatCurrency(statement.operationExpenses)}
+                  </span>
+                </div>
+
+                {/* Over All Net Profit */}
+                <div className="flex items-center justify-between gap-3 px-5 py-3 bg-slate-50/70 dark:bg-slate-800/30 transition-colors">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                      Over All Net Profit
+                    </span>
+                    <span className="rounded bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                      Gross Income − Expenses
+                    </span>
+                  </div>
+                  <span
+                    className={`font-mono text-sm sm:text-base font-black shrink-0 ${
+                      statement.netProfit < 0
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-emerald-700 dark:text-emerald-400'
+                    }`}
+                  >
+                    {formatCurrency(statement.netProfit)}
+                  </span>
+                </div>
+
+                {/* Current Balance - Highly prominent highlighted section */}
+                <div className="bg-gradient-to-r from-emerald-50/90 via-emerald-50/50 to-emerald-100/40 p-4 sm:p-5 dark:from-emerald-950/40 dark:via-emerald-950/20 dark:to-emerald-900/30 border-t-2 border-emerald-500/30 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm sm:text-base font-black text-emerald-950 dark:text-emerald-100">
+                          Current Balance
+                        </span>
+                        <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white uppercase tracking-wider">
+                          Key Balance
+                        </span>
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200">
+                          = Total Fund Allocation
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-semibold text-emerald-800/90 dark:text-emerald-300">
+                        Formula: Beginning Cash ({formatCurrency(statement.beginningCash)}) + Net Profit ({formatCurrency(statement.netProfit)})
+                      </div>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <div className="font-mono text-xl sm:text-2xl font-black text-emerald-700 dark:text-emerald-300">
+                        {formatCurrency(statement.currentBalance)}
+                      </div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
+                        Ending Monthly Balance
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Explicit relationship callout to Fund Allocation Summary */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl border border-emerald-300/80 bg-white/95 p-3 text-xs font-semibold text-emerald-950 shadow-2xs dark:border-emerald-700/60 dark:bg-slate-900/90 dark:text-emerald-200">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
+                        <CheckCircleIcon className="h-3.5 w-3.5 stroke-[2.5]" />
+                      </div>
+                      <div className="min-w-0">
+                        <strong className="font-black text-emerald-900 dark:text-emerald-100">
+                          Sum of Fund Allocation Summary:
+                        </strong>{' '}
+                        Current Balance equals the sum of all {fundSummaryData.items.length} statutory fund amounts.
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto font-mono text-xs font-black">
+                      <span className="text-slate-500 dark:text-slate-400 font-sans font-medium text-[11px]">
+                        Total Fund Allocation:
+                      </span>
+                      <span className="text-emerald-700 dark:text-emerald-300">
+                        {formatCurrency(fundSummaryData.totalAllocated)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -3895,44 +4052,49 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
           <aside className="lg:col-span-4 min-w-0 flex flex-col gap-4">
 
             {/* 1. Operating Expenses Card */}
-            <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col gap-3">
+            <section className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col gap-3">
               {/* Header */}
-              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5 dark:border-slate-800">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-600 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-400">
-                    <ReceiptPercentIcon className="h-3.5 w-3.5" />
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-600 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-400">
+                    <ReceiptPercentIcon className="h-4 w-4" />
                   </div>
-                  <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
-                    Operating Expenses
-                  </h2>
+                  <div>
+                    <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
+                      Operating Expenses
+                    </h2>
+                    <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                      {selectedReport?.month_label} breakdown
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleTabChange('expenses')}
-                  className="shrink-0 text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:underline dark:text-rose-400"
+                  className="shrink-0 text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline dark:text-rose-400"
                 >
-                  View Details →
+                  Manage →
                 </button>
               </div>
 
               {/* Total Operational Expenses Box */}
-              <div className="flex items-center justify-between rounded-xl border border-rose-100 bg-gradient-to-r from-rose-50/80 to-amber-50/40 px-3 py-2 dark:border-rose-900/40 dark:from-rose-950/30 dark:to-slate-800/30">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
-                    Total
+              <div className="rounded-xl border border-rose-200/80 bg-gradient-to-r from-rose-50 to-amber-50/50 p-3 dark:border-rose-900/40 dark:from-rose-950/40 dark:to-slate-800/40">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                    Total Operating Expenses
                   </span>
-                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold text-rose-800 dark:bg-rose-900/70 dark:text-rose-200">
-                    {expenseSummary.length} {expenseSummary.length === 1 ? 'cat.' : 'cats.'}
+                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-900/70 dark:text-rose-200">
+                    {expenseSummary.length} of 7 categories
                   </span>
                 </div>
-                <span className="font-mono text-sm sm:text-base font-black text-rose-700 dark:text-rose-400">
+                <div className="mt-1 font-mono text-lg sm:text-xl font-black text-rose-700 dark:text-rose-400">
                   {formatCurrency(statement.operationExpenses)}
-                </span>
+                </div>
               </div>
 
               {/* Category Breakdown */}
               {expenseSummary.length > 0 ? (
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {expenseSummary.map((item) => {
                     const pct = statement.operationExpenses > 0
                       ? ((item.amount / statement.operationExpenses) * 100).toFixed(1)
@@ -3942,25 +4104,25 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                     return (
                       <div
                         key={item.category}
-                        className="rounded-lg border border-slate-200/70 bg-slate-50/60 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-800/50"
+                        className="rounded-lg border border-slate-200/70 bg-slate-50/60 p-2.5 dark:border-slate-800 dark:bg-slate-800/50"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-black text-slate-800 dark:text-slate-200 truncate">
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
                             {item.category}
                           </span>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <span className={`rounded px-1.5 py-0.2 text-[9px] font-bold ${theme.badge}`}>
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-black ${theme.badge}`}>
                               {pct}%
                             </span>
-                            <span className="font-mono text-[11px] font-black text-slate-900 dark:text-white">
+                            <span className="font-mono text-xs font-black text-slate-900 dark:text-white">
                               {formatCurrency(item.amount)}
                             </span>
                           </div>
                         </div>
-                        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700">
+                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700">
                           <div
                             className={`h-full rounded-full transition-all duration-300 ${theme.bar}`}
-                            style={{ width: `${Math.max(3, Math.min(100, numPct))}%` }}
+                            style={{ width: `${Math.max(4, Math.min(100, numPct))}%` }}
                           />
                         </div>
                       </div>
@@ -3968,72 +4130,133 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   })}
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed border-slate-200 py-3 text-center text-[11px] font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                  <ReceiptPercentIcon className="mx-auto h-4 w-4 text-slate-400 mb-0.5 opacity-60" />
-                  No operating expenses recorded.
+                <div className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400 space-y-1">
+                  <ReceiptPercentIcon className="mx-auto h-5 w-5 text-slate-400 opacity-60" />
+                  <div>No operating expenses recorded for this month.</div>
                   <button
                     type="button"
                     onClick={() => handleTabChange('expenses')}
-                    className="ml-1 font-bold text-rose-600 hover:underline dark:text-rose-400"
+                    className="font-bold text-rose-600 hover:underline dark:text-rose-400"
                   >
-                    Add →
+                    + Add Expense
                   </button>
                 </div>
               )}
+
+              <div className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                Operating expenses are automatically subtracted from Gross Income to determine Net Profit.
+              </div>
             </section>
 
             {/* 2. Fund Allocation Summary Card */}
-            <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col gap-2.5">
+            <section className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col gap-3">
               {/* Header */}
-              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5 dark:border-slate-800">
-                <div className="min-w-0">
-                  <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
-                    Fund Allocation Summary
-                  </h2>
-                  <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 truncate">
-                    Net income shares · {selectedReport?.month_label}
-                  </p>
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-900/60 dark:bg-emerald-950/60 dark:text-emerald-400">
+                    <ChartPieIcon className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
+                      Fund Allocation Summary
+                    </h2>
+                    <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 truncate">
+                      Statutory shares of Current Balance
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleTabChange('fund-allocation')}
-                  className="shrink-0 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
+                  className="shrink-0 text-xs font-bold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400"
                 >
                   View Details →
                 </button>
               </div>
 
-              {/* Allocation categories */}
-              <div className="space-y-1.5">
-                {(selectedReport?.allocations || []).length > 0 ? (
-                  (selectedReport?.allocations || []).map((allocation) => (
+              {/* Allocation Base Box (Prominently displaying Current Balance) */}
+              <div className="rounded-xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50 to-teal-50/50 p-3 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:to-slate-800/40">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                    Current Balance (Fund Pool)
+                  </span>
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                    100% Allocated
+                  </span>
+                </div>
+                <div className="mt-1 font-mono text-lg sm:text-xl font-black text-emerald-700 dark:text-emerald-300">
+                  {formatCurrency(statement.currentBalance)}
+                </div>
+                <div className="mt-0.5 text-[10px] font-semibold text-emerald-800/80 dark:text-emerald-400">
+                  Total of all fund allocation amounts equals this Current Balance.
+                </div>
+              </div>
+
+              {/* Allocation Categories based on Current Balance */}
+              <div className="space-y-2">
+                {fundSummaryData.items.length > 0 ? (
+                  fundSummaryData.items.map((allocation) => (
                     <div
                       key={allocation.category_key}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-slate-100/80 bg-slate-50/50 px-2.5 py-1.5 dark:border-slate-800/60 dark:bg-slate-800/40"
+                      className="rounded-lg border border-slate-100/90 bg-slate-50/60 p-2.5 dark:border-slate-800/80 dark:bg-slate-800/40"
                     >
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-black text-slate-800 dark:text-slate-200 truncate">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-black text-slate-800 dark:text-slate-200 truncate">
                           {allocation.label}
-                        </div>
-                        <div className="text-[9px] font-medium text-slate-500 dark:text-slate-400">
-                          Net Income Allocation
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            {formatPercent(allocation.percentage)}
+                          </span>
+                          <span className="font-mono text-xs font-black text-slate-900 dark:text-white">
+                            {formatCurrency(allocation.allocatedAmount)}
+                          </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[9px] font-black text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                          {formatPercent(allocation.percentage)}
+                      <div className="mt-1 flex items-center justify-between text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        <span>
+                          {formatPercent(allocation.percentage)} of Current Balance ({formatCurrency(statement.currentBalance)})
                         </span>
-                        <span className="font-mono text-[11px] font-black text-slate-900 dark:text-white">
-                          {formatCurrency(allocation.amount)}
-                        </span>
+                      </div>
+                      <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700">
+                        <div
+                          className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                          style={{ width: `${Math.max(2, Math.min(100, allocation.percentage))}%` }}
+                        />
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="py-3 text-center text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                  <div className="py-3 text-center text-xs font-medium text-slate-500 dark:text-slate-400">
                     No allocation data available for this month.
                   </div>
                 )}
+              </div>
+
+              {/* Reconciled Summary Block showing Total Fund Allocation = Current Balance */}
+              <div className="rounded-xl border border-emerald-300/80 bg-emerald-50/70 p-3 dark:border-emerald-800/60 dark:bg-emerald-950/40 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-700 dark:text-slate-300">
+                    Total Fund Allocation:
+                  </span>
+                  <span className="font-mono font-black text-emerald-800 dark:text-emerald-200">
+                    {formatCurrency(fundSummaryData.totalAllocated)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs border-t border-emerald-200/80 pt-1.5 dark:border-emerald-800/60">
+                  <span className="font-bold text-slate-700 dark:text-slate-300">
+                    Current Balance:
+                  </span>
+                  <span className="font-mono font-black text-emerald-800 dark:text-emerald-200">
+                    {formatCurrency(statement.currentBalance)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-lg bg-white/90 px-2 py-1.5 text-[11px] font-bold text-emerald-900 shadow-2xs dark:bg-slate-900/90 dark:text-emerald-200 border border-emerald-200/60 dark:border-emerald-800/60">
+                  <CheckCircleIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 stroke-[2.5]" />
+                  <span>
+                    Total Fund Allocation = Current Balance ({formatPercent(fundSummaryData.totalPercentage)})
+                  </span>
+                </div>
               </div>
             </section>
 
@@ -4330,180 +4553,257 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
             </div>
           )}
 
-          {fundMonitoringViewMode === 'table' ? (
-            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm border-collapse">
-                  <thead className="border-b border-slate-200 bg-slate-50/80 text-xs font-bold uppercase tracking-wider text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
-                    <tr>
-                      <th className="px-4 py-3.5 whitespace-nowrap min-w-[200px]">Fund Allocation</th>
-                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[170px]">
-                        <div className="inline-flex items-center justify-end gap-1.5">
-                          <span>Balance in previous month</span>
-                          {!canEditFundOpeningBalance && (
-                            <LockClosedIcon className="h-3.5 w-3.5 text-slate-400 shrink-0" title="Locked: Automatically carried forward from previous month" />
-                          )}
-                        </div>
-                      </th>
-                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[130px]">Net Income Share</th>
-                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Expenses</th>
-                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Interest</th>
-                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Others</th>
-                      <th className="px-3 py-3.5 text-right whitespace-nowrap min-w-[125px]">Cash on Bank</th>
-                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[135px]">Total Expenses</th>
-                      <th className="px-4 py-3.5 text-right whitespace-nowrap min-w-[135px]">Current Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {(selectedReport?.allocations || []).map((allocation) => {
-                      const key = allocation.category_key;
-                      const draft = fundMonitoringDraft[key] || {};
-                      const prevBal = getFundPrevBalance(allocation);
-                      const netInc = toMoney(allocation.amount);
-                      const interestVal = toMoney(draft.interest);
-                      const expensesVal = toMoney(draft.expenses);
-                      const othersVal = toMoney(draft.others);
-                      const cashOnBankVal = toMoney(draft.cash_on_bank);
-                      const totalExpVal = expensesVal + othersVal;
-                      const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
+          {fundMonitoringViewMode === 'table' ? (() => {
+            const allocations = selectedReport?.allocations || [];
+            const fundColumns = allocations.map((allocation) => {
+              const key = allocation.category_key;
+              const draft = fundMonitoringDraft[key] || {};
+              const prevBal = getFundPrevBalance(allocation);
+              const netInc = toMoney(allocation.amount);
+              const expensesVal = toMoney(draft.expenses);
+              const totalExpVal = expensesVal;
+              const currentBalVal = prevBal + netInc - totalExpVal;
 
-                      return (
-                        <tr key={key} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                          <td className="px-4 py-3.5">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900 dark:text-white whitespace-nowrap">{allocation.label}</span>
-                              <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-black text-emerald-700 border border-emerald-200/60 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-300">
-                                {formatPercent(allocation.percentage)}
-                              </span>
+              return {
+                allocation,
+                key,
+                draft,
+                prevBal,
+                netInc,
+                expensesVal,
+                totalExpVal,
+                currentBalVal,
+              };
+            });
+
+            return (
+              <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs sm:text-sm">
+                    <thead>
+                      <tr className="border-b-2 border-slate-200 bg-slate-50/90 dark:border-slate-700 dark:bg-slate-800/80">
+                        <th className="px-4 py-3.5 text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 min-w-[190px]">
+                          Particulars
+                        </th>
+                        {fundColumns.map((col) => (
+                          <th
+                            key={col.key}
+                            className="px-3 py-3 text-center min-w-[130px] border-l border-slate-200/80 dark:border-slate-700/80"
+                          >
+                            <div className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white leading-tight">
+                              {col.allocation.label}
                             </div>
-                          </td>
-                          <td className="px-3 py-2.5">
+                            <span className="mt-1 inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700 border border-emerald-200/80 dark:border-emerald-800/80 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              {formatPercent(col.allocation.percentage)}
+                            </span>
+                          </th>
+                        ))}
+                        <th className="px-3 py-3 text-center min-w-[135px] border-l-2 border-slate-300 bg-slate-100/80 dark:border-slate-700 dark:bg-slate-800">
+                          <div className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                            Total
+                          </div>
+                          <span className="mt-1 inline-flex items-center rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                            100%
+                          </span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {/* Row 1: Balance in previous month */}
+                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                          <div className="flex items-center gap-1.5">
+                            <span>Balance in previous month</span>
+                            {!canEditFundOpeningBalance && (
+                              <LockClosedIcon className="h-3.5 w-3.5 text-slate-400 shrink-0" title="Locked: Automatically carried forward from previous month" />
+                            )}
+                          </div>
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80">
                             {canEditFundOpeningBalance ? (
                               <input
                                 type="text"
-                                value={draft.opening_balance ?? ''}
-                                onChange={(e) => updateFundMonitoringDraft(key, 'opening_balance', e.target.value)}
+                                value={col.draft.opening_balance ?? ''}
+                                onChange={(e) => updateFundMonitoringDraft(col.key, 'opening_balance', e.target.value)}
                                 disabled={!isAdmin || !canSaveSelectedSchoolYear}
                                 readOnly={!isAdmin}
                                 placeholder="0.00"
-                                title="Enter manual starting balance for initial month"
-                                className={`h-10 w-full min-w-[120px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
-                                  !isAdmin
-                                    ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
-                                    : 'bg-emerald-50/20 border-emerald-300/80 hover:border-emerald-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-700 dark:bg-emerald-950/20 dark:focus:bg-slate-900 dark:text-white'
-                                }`}
+                                className="h-9 w-full min-w-[95px] rounded-xl border border-emerald-300/80 bg-emerald-50/20 px-2.5 text-right font-mono text-xs sm:text-sm font-semibold transition focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-700 dark:bg-emerald-950/20 dark:text-white"
                               />
                             ) : (
-                              <div
-                                className="flex items-center justify-end gap-1.5 px-1 py-1 font-mono font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap"
-                                title="Carried over from previous month current balance (locked)"
-                              >
-                                <LockClosedIcon className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                                <span>{formatCurrency(prevBal)}</span>
-                              </div>
+                              <span className="font-mono text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                                {formatCurrency(col.prevBal)}
+                              </span>
                             )}
                           </td>
-                          <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                            {formatCurrency(netInc)}
+                        ))}
+                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                          {formatCurrency(fundAllocationTotals.prevBal)}
+                        </td>
+                      </tr>
+
+                      {/* Row 2: Interest on the bank */}
+                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                          Interest on the bank
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs text-slate-400 dark:text-slate-500">
+                            —
                           </td>
-                          <td className="px-3 py-2.5">
+                        ))}
+                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs text-slate-400 dark:text-slate-500">
+                          —
+                        </td>
+                      </tr>
+
+                      {/* Row 3: Net Income for the Month */}
+                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                          Net Income for the Month
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                            {formatCurrency(col.netInc)}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                          {formatCurrency(fundAllocationTotals.netInc)}
+                        </td>
+                      </tr>
+
+                      {/* Row 4: Expenses for the Month */}
+                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors bg-rose-50/20 dark:bg-rose-950/10">
+                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
+                          <div className="flex items-center gap-1.5">
+                            <span>Expenses for the Month</span>
+                            {isAdmin && (
+                              <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-black text-rose-800 dark:bg-rose-900/60 dark:text-rose-200">
+                                Editable
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80">
                             <input
                               type="text"
-                              value={draft.expenses ?? ''}
-                              onChange={(e) => updateFundMonitoringDraft(key, 'expenses', e.target.value)}
+                              value={col.draft.expenses ?? ''}
+                              onChange={(e) => updateFundMonitoringDraft(col.key, 'expenses', e.target.value)}
                               disabled={!isAdmin || !canSaveSelectedSchoolYear}
                               readOnly={!isAdmin}
                               placeholder="0.00"
-                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
+                              className={`h-9 w-full min-w-[95px] rounded-xl border px-2.5 text-right font-mono text-xs sm:text-sm font-semibold transition ${
                                 !isAdmin
                                   ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
-                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
+                                  : 'bg-white border-slate-200 hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white'
                               }`}
                             />
                           </td>
-                          <td className="px-3 py-2.5">
-                            <input
-                              type="text"
-                              value={draft.interest ?? ''}
-                              onChange={(e) => updateFundMonitoringDraft(key, 'interest', e.target.value)}
-                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                              readOnly={!isAdmin}
-                              placeholder="0.00"
-                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
-                                !isAdmin
-                                  ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
-                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
-                              }`}
-                            />
+                        ))}
+                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400">
+                          {formatCurrency(fundAllocationTotals.expenses)}
+                        </td>
+                      </tr>
+
+                      {/* Row 5: Others */}
+                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                          Others
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs text-slate-400 dark:text-slate-500">
+                            —
                           </td>
-                          <td className="px-3 py-2.5">
-                            <input
-                              type="text"
-                              value={draft.others ?? ''}
-                              onChange={(e) => updateFundMonitoringDraft(key, 'others', e.target.value)}
-                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                              readOnly={!isAdmin}
-                              placeholder="0.00"
-                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
-                                !isAdmin
-                                  ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
-                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
-                              }`}
-                            />
+                        ))}
+                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs text-slate-400 dark:text-slate-500">
+                          —
+                        </td>
+                      </tr>
+
+                      {/* Row 6: Total Current Expenses */}
+                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                          Total Current Expenses
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400">
+                            {formatCurrency(col.totalExpVal)}
                           </td>
-                          <td className="px-3 py-2.5">
-                            <input
-                              type="text"
-                              value={draft.cash_on_bank ?? ''}
-                              onChange={(e) => updateFundMonitoringDraft(key, 'cash_on_bank', e.target.value)}
-                              disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                              readOnly={!isAdmin}
-                              placeholder="0.00"
-                              className={`h-10 w-full min-w-[105px] rounded-xl border px-3 text-right font-mono text-sm font-semibold transition ${
-                                !isAdmin
-                                  ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400'
-                                  : 'bg-slate-50/60 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:focus:bg-slate-900 dark:text-white'
-                              }`}
-                            />
+                        ))}
+                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs sm:text-sm font-bold text-rose-600 dark:text-rose-400">
+                          {formatCurrency(fundAllocationTotals.totalExp)}
+                        </td>
+                      </tr>
+
+                      {/* Row 7: Current Balance (Key Highlighted DepEd Row) */}
+                      <tr className="bg-emerald-50/90 dark:bg-emerald-950/40 border-y-2 border-emerald-500/40">
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs sm:text-sm font-black text-emerald-950 dark:text-emerald-100">
+                              Current Balance
+                            </span>
+                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-black text-white uppercase tracking-wider">
+                              Per Fund
+                            </span>
+                          </div>
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-3.5 text-right border-l border-emerald-200/80 dark:border-emerald-800/80 font-mono text-xs sm:text-base font-black text-emerald-700 dark:text-emerald-300">
+                            {formatCurrency(col.currentBalVal)}
                           </td>
-                          <td className="px-4 py-3.5 text-right font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                            {formatCurrency(totalExpVal)}
+                        ))}
+                        <td className="px-3 py-3.5 text-right border-l-2 border-emerald-300 bg-emerald-100/60 dark:border-emerald-700 dark:bg-emerald-900/40 font-mono text-sm sm:text-base font-black text-emerald-800 dark:text-emerald-200">
+                          {formatCurrency(fundAllocationTotals.currentBal)}
+                        </td>
+                      </tr>
+
+                      {/* Row 8: Cash on Bank */}
+                      <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">
+                          Cash on Bank
+                        </td>
+                        {fundColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2 text-right border-l border-slate-100 dark:border-slate-800/80 font-mono text-xs text-slate-400 dark:text-slate-500">
+                            —
                           </td>
-                          <td className="px-4 py-3.5 text-right font-mono font-black text-emerald-600 dark:text-emerald-400 text-base whitespace-nowrap">
-                            {formatCurrency(currentBalVal)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot className="border-t-2 border-slate-200 bg-slate-50/90 font-bold dark:border-slate-700 dark:bg-slate-800/80">
-                    <tr>
-                      <td className="px-4 py-3.5 text-slate-900 dark:text-white font-black uppercase text-xs">Total</td>
-                      <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.prevBal)}</td>
-                      <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.netInc)}</td>
-                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.expenses)}</td>
-                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.interest)}</td>
-                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.others)}</td>
-                      <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(fundAllocationTotals.cashOnBank)}</td>
-                      <td className="px-4 py-3.5 text-right font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">{formatCurrency(fundAllocationTotals.totalExp)}</td>
-                      <td className="px-4 py-3.5 text-right font-mono font-black text-emerald-600 dark:text-emerald-400 text-base whitespace-nowrap">{formatCurrency(fundAllocationTotals.currentBal)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
+                        ))}
+                        <td className="px-3 py-2 text-right border-l-2 border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-850/40 font-mono text-xs text-slate-400 dark:text-slate-500">
+                          —
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Reconciliation Footer Note */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-t border-slate-200/80 bg-slate-50/70 px-5 py-3 dark:border-slate-800 dark:bg-slate-850/60 text-xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircleIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      Total Current Balance is the sum of all statutory fund allocations:
+                    </span>
+                    <span className="font-mono font-black text-emerald-700 dark:text-emerald-300">
+                      {formatCurrency(fundAllocationTotals.currentBal)}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    Formula: Balance in previous month + Net Income for the Month − Total Current Expenses
+                  </div>
+                </div>
               </div>
-            </div>
-          ) : (
+            );
+          })() : (
             <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
               {(selectedReport?.allocations || []).map((allocation) => {
                 const key = allocation.category_key;
                 const draft = fundMonitoringDraft[key] || {};
                 const prevBal = getFundPrevBalance(allocation);
                 const netInc = toMoney(allocation.amount);
-                const interestVal = toMoney(draft.interest);
                 const expensesVal = toMoney(draft.expenses);
-                const othersVal = toMoney(draft.others);
-                const totalExpVal = expensesVal + othersVal;
-                const currentBalVal = prevBal + interestVal + netInc - totalExpVal;
+                const totalExpVal = expensesVal;
+                const currentBalVal = prevBal + netInc - totalExpVal;
 
                 return (
                   <div key={key} className="rounded-2xl border border-slate-200/90 bg-white p-5 space-y-5 shadow-2xs transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
@@ -4557,59 +4857,47 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                       </div>
 
                       <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
                           Interest on Bank
                         </label>
                         <input
                           type="text"
-                          value={draft.interest ?? ''}
-                          onChange={(e) => updateFundMonitoringDraft(key, 'interest', e.target.value)}
-                          disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                          readOnly={!isAdmin}
-                          placeholder="0.00"
-                          className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
-                            !isAdmin
-                              ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
-                              : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:focus:bg-slate-900 dark:text-white'
-                          }`}
+                          value={draft.interest || '0'}
+                          disabled
+                          readOnly
+                          tabIndex={-1}
+                          title="Not editable"
+                          className="field-control min-h-11 w-full text-base font-semibold rounded-xl border border-slate-200/60 bg-slate-100/80 text-slate-400 cursor-not-allowed select-none dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500 focus:outline-none focus:ring-0"
                         />
                       </div>
 
                       <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
                           Others
                         </label>
                         <input
                           type="text"
-                          value={draft.others ?? ''}
-                          onChange={(e) => updateFundMonitoringDraft(key, 'others', e.target.value)}
-                          disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                          readOnly={!isAdmin}
-                          placeholder="0.00"
-                          className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
-                            !isAdmin
-                              ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
-                              : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:focus:bg-slate-900 dark:text-white'
-                          }`}
+                          value={draft.others || '0'}
+                          disabled
+                          readOnly
+                          tabIndex={-1}
+                          title="Not editable"
+                          className="field-control min-h-11 w-full text-base font-semibold rounded-xl border border-slate-200/60 bg-slate-100/80 text-slate-400 cursor-not-allowed select-none dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500 focus:outline-none focus:ring-0"
                         />
                       </div>
 
                       <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
                           Cash on Bank
                         </label>
                         <input
                           type="text"
-                          value={draft.cash_on_bank ?? ''}
-                          onChange={(e) => updateFundMonitoringDraft(key, 'cash_on_bank', e.target.value)}
-                          disabled={!isAdmin || !canSaveSelectedSchoolYear}
-                          readOnly={!isAdmin}
-                          placeholder="0.00"
-                          className={`field-control min-h-11 w-full text-base font-semibold rounded-xl border ${
-                            !isAdmin
-                              ? 'bg-slate-100/80 text-slate-700 cursor-not-allowed border-slate-200 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 focus:outline-none focus:ring-0'
-                              : 'bg-slate-50/60 border-slate-200 focus:bg-white focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:focus:bg-slate-900 dark:text-white'
-                          }`}
+                          value={draft.cash_on_bank || '0'}
+                          disabled
+                          readOnly
+                          tabIndex={-1}
+                          title="Not editable"
+                          className="field-control min-h-11 w-full text-base font-semibold rounded-xl border border-slate-200/60 bg-slate-100/80 text-slate-400 cursor-not-allowed select-none dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500 focus:outline-none focus:ring-0"
                         />
                       </div>
                     </div>

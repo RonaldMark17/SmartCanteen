@@ -1,580 +1,577 @@
-# MEALS (Smart Canteen AI)
-## Comprehensive Capstone Defense Walkthrough & Live Testing Script
+# MEALS: Management of Expenses, Assets, and Logistics System
+## Capstone Defense Walkthrough & Live Testing Script
+**Focus Area:** Canteen Inventory Management & DepEd Financial Accounting  
 **Institution:** Bay Central Elementary School  
-**System Name:** MEALS (Smart Canteen AI)  
-**Document Purpose:** Official Thesis/Capstone Defense Demonstration Script, Verification Matrix, and Testing Plan
+**System Name:** MEALS (*Management of Expenses, Assets, and Logistics System*)  
+**Document Purpose:** Official Capstone Defense Script, Live Demonstration Guide, and Verification Test Matrix
 
 ---
 
-## 1. Actual MEALS Features
+## 1. System Profile & Core Academic Scope
 
-Based on direct inspection of the implemented frontend (`smartcanteen/src`), backend API (`backend/main.py`), and database models (`backend/models.py`), the following matrix identifies every functional module verified in the live code:
+### 1.1 Context and Problem Statement
+Public elementary school canteens operate under strict Department of Education (DepEd) operational and financial governance (**DepEd Order No. 8, s. 2007** — *Revised Implementing Guidelines on the Management and Operation of Public School Canteens*). Unlike standard commercial retail stores that stock pre-packaged barcoded merchandise, an elementary school canteen faces two interrelated core operational challenges:
 
-| Module / Feature | Where It Is Found | What It Does | User Who Can Access It | Implementation Status |
+1. **Daily Perishable Inventory & Food Waste Control:** The canteen prepares, cooks, and serves hot morning meals and snacks (e.g., *Arroz Caldo with Egg, Pancit Bihon, Champorado, Ginataang Halo-halo*). These perishable items are cooked fresh every morning and cannot be held over to the following school day. Manual systems struggle with stock tracking and closing reconciliation, leading to untracked food spoilage waste and lost school funds.
+2. **DepEd-Mandated Financial Accounting & Statutory Fund Monitoring:** Canteen financial tracking is structured on a strict **12-month academic school year cycle (June to May)**. Canteen administrators are legally required to prepare monthly financial statements categorizing expenses across seven standardized operational classifications, compute Cost of Goods Sold (COGS), derive Net Operational Surplus, and distribute profits across statutory school funds (Supplementary Feeding 35%, School Operating Fund 25%, Faculty/Student Development 15%, H.E. Instructional Fund 10%, Revolving Capital Fund 10%, and School Clinic 5%).
+
+### 1.2 Delimitation: Focus on Inventory & Financial Management
+The primary academic and engineering focus of this capstone defense is strictly centered on **Inventory Optimization and DepEd Financial Management**.
+
+The demonstration emphasizes:
+- Raw ingredient and cooked meal inventory tracking (Pieces vs. Bulk `kg/g/L/mL`).
+- Morning kitchen preparation batch replenishment and real-time safety reorder thresholds.
+- Afternoon perishable food waste reconciliation and waste cost attribution.
+- Categorized DepEd operating expense disbursements with digital receipt validation.
+- Automated monthly statement generation (Beginning Cash + Sales - Cost of Sales - Expenses = Net Surplus).
+- Statutory fund allocation with automatic month-to-month balance carry-forward.
+- Official multi-format exports (`.xlsx` Excel spreadsheets and signed official DepEd PDF reports).
+
+---
+
+## 2. Actual Implemented Features Matrix
+
+Based on direct inspection of the live source code (`smartcanteen/src/views/Inventory.jsx`, `smartcanteen/src/views/FinancialReports.jsx`, and backend modules `backend/financial_reports.py` and `backend/inventory.py`), every capability below is verified and fully functional:
+
+| Module / Subsystem | Where It Is Located | What It Does in the System | User Who Can Access It | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Authentication & Role Login** | `/login` | Authenticates username and password, enforces bcrypt hashing, issues session tokens, supports "Remember Me", and restricts account access by role. | All Registered Users (Admin, Staff, Cashier) | **IMPLEMENTED** |
-| **Two-Factor Authentication (TOTP 2FA)** | `/admin/setup-2fa`, `/login` | QR code scanning with Google Authenticator, TOTP 6-digit verification code, fallback single-use recovery codes, and brute-force attempt lockout. Mandatory for Admin. | Admin (Mandatory), Staff/Cashier (Optional via profile) | **IMPLEMENTED** |
-| **Self-Service Account Recovery** | `/login` (Modals) | Allows users who forgot passwords or lost 2FA devices to file structured recovery requests with administrative review and appeals. | All Users | **IMPLEMENTED** |
-| **Admin Financial Dashboard** | `/admin/dashboard` | Displays School Year KPI cards (Monthly Sales, Operating Expenses, Net Profit, Current Balance), previous month comparisons, interactive bar & donut charts, and quick export shortcuts. | Administrator | **IMPLEMENTED** |
-| **Operational Dashboard** | `/dashboard` | Displays live operational overview: products in stock count, low stock warnings, out-of-stock items, and recent inventory movement logs. | Staff, Cashier | **IMPLEMENTED** |
-| **School Year Management** | `/school-years` or `/financial-management` | Configures DepEd academic years (June to May, 12 months), activates current academic periods, sets starting cash-on-hand balances, and prevents cross-year record contamination. | Administrator | **IMPLEMENTED** |
-| **Product Catalog Management** | `/inventory` (Tab 1: Products & Stock) | Adds, views, edits, and archives canteen products. Configures selling price, cost price, unit type (PCS vs Bulk kg/g/L/mL), minimum reorder stock, and perishable classification. | Admin, Staff, Cashier (View-only for Cashier) | **IMPLEMENTED** |
-| **Stock Replenishment** | `/inventory` (`+ Replenish Stock` button) | Records incoming food batches, ingredients, or cooked items. Increases stock on hand and writes an immutable audit record to `inventory_logs`. | Admin, Staff | **IMPLEMENTED** |
-| **Stock Manual Adjustment** | `/inventory` (`Adjust Stock` button) | Manually corrects stock counts with designated reasons: damage, spoilage, shrinkage, kitchen prep spill, or audit recount. | Admin, Staff | **IMPLEMENTED** |
-| **End-of-Day Perishable Reset & Food Waste** | `/inventory` (`🍲 End-of-Day Perishable Food Reset`) | Identifies unsold perishable cooked items at closing, clears stock to zero, and logs waste dispositions (`waste_spoiled`, `staff_meal`, `donated`). | Admin, Staff | **IMPLEMENTED** |
-| **Morning Daily Prep & Recon API** | Backend API (`/api/inventory/daily-prep/batch`, `/api/inventory/daily-reconciliation/submit`) | Records morning batch preparation quantities and matches them against afternoon remaining quantities to compute exact food waste cost. | Admin, Staff | **IMPLEMENTED** |
-| **Stock Alerts & Monitoring** | `/inventory` (Tab 2: Alerts) & Top Header Bell | Real-time monitoring of Out of Stock and Low Stock items based on `min_stock` thresholds, with desktop notification sync. | Admin, Staff, Cashier | **IMPLEMENTED** |
-| **Inventory Audit History** | `/inventory` (Tab 3: Stock History) | Complete chronological audit log of all stock movements (replenishment, adjustment, perishable reset) with timestamps, quantities, and user attribution. | Admin, Staff | **IMPLEMENTED** |
-| **POS / Cashier Checkout** | `/pos` | Quick cashier counter interface with category filtering, search, quantity toggles, cash calculation, change computation, and printable thermal receipt modal. | Admin, Cashier | **IMPLEMENTED** |
-| **Offline Transaction Queue** | `/pos` (`offlineStore.js`) | Caches cash transactions in browser IndexedDB/LocalStorage when the internet or server connection drops, syncing automatically when reconnected. | Admin, Cashier | **IMPLEMENTED** |
-| **Transaction History** | `/transactions` | Detailed searchable ledger of all customer POS sales, displaying date/time, cashier name, itemized products, total, discount, and sync status. | Admin, Cashier | **IMPLEMENTED** |
-| **Financial Management Overview** | `/financial-management` (Tab: Overview) | Comprehensive monthly DepEd financial statement: Beginning Cash, Current Sales, Cost of Sales, Gross Profit, Operating Expenses breakdown, Net Profit, and Ending Cash. | Administrator | **IMPLEMENTED** |
-| **Daily Sales Ledger** | `/financial-management` (Tab: Daily Sales) | Records and tracks daily cash collections or monthly sales summaries, with date search, filtering, and manual override capabilities. | Administrator | **IMPLEMENTED** |
-| **Operating Expense Management** | `/financial-management` (Tab: Expenses) | Logs operational expenses categorized into 7 DepEd operational expense lines, supplier names, notes, and image receipt uploads with instant preview modal. | Administrator | **IMPLEMENTED** |
-| **Fund Allocation & Monitoring** | `/financial-management` (Tab: Fund Allocation) | Tracks DepEd prescribed canteen fund allocations (e.g., School Operations, Revolving Capital, Faculty Fund) with automatic forward-balance roll calculations. | Administrator | **IMPLEMENTED** |
-| **Demand Forecasting (AI/ML)** | `/predictions` | Predicts tomorrow's product demand using **XGBoost** machine learning (with heuristic fallback). Analyzes weekday patterns, historical sales, weather, and school events. | Administrator | **IMPLEMENTED** |
-| **Official Reports & Exports** | `/reports` | Generates 8 distinct financial reports (Monthly, Quarterly, Annual, School Year, Sales, Expense, Cash Flow, Profit). Direct export to `.xlsx` Excel, Official PDF, and Print. | Administrator | **IMPLEMENTED** |
-| **User Account Management** | `/accounts` | Administrative creation, editing, role assignment (`admin`, `staff`, `cashier`), password reset approval, and account deactivation. | Administrator | **IMPLEMENTED** |
-| **Audit Logs** | `/audit` | Immutable security log recording every administrative action, user login, product modification, 2FA change, and financial update with IP address and timestamp. | Administrator | **IMPLEMENTED** |
-| **System Settings & Module Toggles** | `/settings` | Configures workspace preferences, dark mode toggle, database backup download, and modular feature enabling/disabling (`ModuleSettingsContext`). | Administrator (Full), Staff (Partial) | **IMPLEMENTED** |
+| **DepEd School Year Manager** | `/school-years` or `/financial-management` | Configures 12-month June-to-May academic periods, activates the active school year, archives past years as read-only, and sets opening cash-on-hand balances. | Administrator | **IMPLEMENTED** |
+| **Product & Material Catalog** | `/inventory` (Tab 1: Products & Stock) | Manages food items and raw materials. Configures Unit Types (`PCS` vs Bulk `kg`, `g`, `L`, `mL`), Cost Price, Selling Price, Low Stock Safety Threshold (`min_stock`), and Perishable classification. | Administrator, Canteen Staff | **IMPLEMENTED** |
+| **Kitchen Batch Replenishment** | `/inventory` (`+ Replenish Stock`) | Logs incoming supplier shipments and morning cooking batches. Increases stock on hand and writes an immutable audit record to `inventory_logs`. | Administrator, Canteen Staff | **IMPLEMENTED** |
+| **Stock Manual Adjustment** | `/inventory` (`Adjust Stock`) | Records stock corrections with specific audit justifications: *Damaged, Spoilage, Shrinkage, Audit Recount, Kitchen Prep Spill*. | Administrator, Canteen Staff | **IMPLEMENTED** |
+| **Perishable Food Waste Reset** | `/inventory` (`🍲 End-of-Day Perishable Food Reset`) | Identifies unsold perishable items at closing, clears stock to zero, and records waste dispositions (*Spoiled / Food Waste*, *Staff Meal Consumed*, *Donated*) with calculated waste loss costs. | Administrator, Canteen Staff | **IMPLEMENTED** |
+| **Stock Alerts & Safety Levels** | `/inventory` (Tab 2: Alerts) & Header Bell | Real-time monitoring of Out-of-Stock and Low-Stock items below safety thresholds, offering 1-click replenishment shortcuts. | Administrator, Canteen Staff | **IMPLEMENTED** |
+| **Inventory Movement Audit Log** | `/inventory` (Tab 3: Stock History) | Chronological audit ledger recording every inventory modification, movement type (`replenishment`, `adjustment`, `sale`, `correction`), quantity delta, before/after values, and user attribution. | Administrator, Canteen Staff | **IMPLEMENTED** |
+| **7-Category Operating Expenses**| `/financial-management` (Tab: Expenses) | Logs operational disbursements categorized into the 7 official DepEd classifications (*Transportation/Freight, Gas, Supplies, Helpers, Repair, Looses of Tools, Other Expenses*) with vendor details and remarks. | Administrator | **IMPLEMENTED** |
+| **Receipt Upload & Sanitizer** | `/financial-management` (Expense Modal) | Uploads digital receipt images/PDFs. Validates MIME type, sanitizes filenames, stores in local storage/backend, and displays zoomable modal preview. | Administrator | **IMPLEMENTED** |
+| **Monthly Financial Statement** | `/financial-management` (Tab: Overview) | Computes complete monthly DepEd accounting statement: Beginning Cash, Gross Sales, Cost of Sales, Gross Income, Operating Expenses, Net Profit, and Current Balance. | Administrator | **IMPLEMENTED** |
+| **DepEd Statutory Fund Allocation**| `/financial-management` (Tab: Fund Allocation) | Distributes monthly net profit into DepEd statutory funds (Feeding 35%, Operating 25%, Dev 15%, HE 10%, Capital 10%, Clinic 5%) with automated month-to-month forward-balance rolling. | Administrator | **IMPLEMENTED** |
+| **DepEd Multi-Format Reporting** | `/reports` | Generates 8 distinct financial reports (Monthly, Quarterly, Annual, School Year, Sales, Expense, Cash Flow, Profit). Direct export to `.xlsx` Excel spreadsheets and signed official PDF format. | Administrator | **IMPLEMENTED** |
+| **Security & Two-Factor Auth** | `/login`, `/admin/setup-2fa`, `/audit` | Protects financial ledgers with bcrypt password hashing, mandatory TOTP 2FA for Admin, session timeout, and immutable security audit logs with IP addresses. | Administrator | **IMPLEMENTED** |
 
 ---
 
-## 2. Actual User Roles and Permissions
+## 3. User Roles and Access Control (RBAC)
 
-The system implements strict **Role-Based Access Control (RBAC)** defined in `smartcanteen/src/config/access.js` and enforced by FastAPI backend dependencies (`auth.require_admin`, `auth.require_staff_or_admin`, `auth.get_current_user`).
+The system enforces strict role-based separation between financial governance and kitchen stock custody:
+
+```text
+               ┌────────────────────────────────────────────────────────┐
+               │              Canteen Administrator (Admin)             │
+               │   • Full Financial Authority & DepEd Fund Allocations │
+               │   • Product Catalog, Costing & Inventory Auditing      │
+               │   • 12-Month Academic School Year & Reporting          │
+               │   • Security & User Access Control                     │
+               └───────────────────────────┬────────────────────────────┘
+                                           │
+                                           ▼
+               ┌────────────────────────────────────────────────────────┐
+               │                  Canteen Staff (Kitchen)               │
+               │   • Morning Batch Replenishment & Inward Receiving     │
+               │   • Stock Adjustment (Damage, Kitchen Prep Spills)     │
+               │   • Afternoon Perishable Food Waste Reconciliation     │
+               │   • Stock Alert & Low Inventory Monitoring             │
+               │   • NO ACCESS to Financial Statements or Allocations   │
+               └────────────────────────────────────────────────────────┘
+```
 
 ### Role-Permission Matrix
 
-| Functional Area / Route | Administrator (`admin`) | Canteen Staff (`staff`) | Cashier (`cashier`) |
-| :--- | :---: | :---: | :---: |
-| **Default Landing Route** | `/admin/dashboard` | `/inventory` | `/pos` |
-| **Financial Dashboard** | Full Access | No Access | No Access |
-| **Operational Dashboard** | Full Access | Full Access | Full Access |
-| **POS / Cashier Checkout** | Full Access | No Access | Full Access |
-| **View Product Inventory** | Full Access | Full Access | View Only |
-| **Add / Edit Products** | Full Access | Full Access | No Access |
-| **Stock Replenishment** | Full Access | Full Access | No Access |
-| **Stock Adjustment & Waste Reset** | Full Access | Full Access | No Access |
-| **View Stock History & Alerts** | Full Access | Full Access | Alerts Only |
-| **Transaction History** | Full Access | No Access | Full Access |
-| **Financial Management & Daily Sales** | Full Access | No Access | No Access |
-| **Operating Expenses & Receipt Upload** | Full Access | No Access | No Access |
-| **School Year Management** | Full Access | No Access | No Access |
-| **DepEd Financial Reports & Exports** | Full Access | No Access | No Access |
-| **Demand Forecast (AI / ML)** | Full Access | No Access | No Access |
-| **User Management & Password Approvals** | Full Access | No Access | No Access |
-| **Audit Logs** | Full Access | No Access | No Access |
-| **System Settings (Modules & Database)**| Full Access | Workspace Only | No Access |
-
-### Short Defense Line on Role-Based Access Control
-> *"Members of the panel, MEALS uses strict role-based access control so that each canteen worker can only access the tools necessary for their specific job. The Cashier focuses entirely on fast checkout at the counter without seeing sensitive school financial statements; the Canteen Staff manages kitchen preparation, stock replenishment, and daily food waste; while the School Canteen Administrator holds full authority over financial allocations, user accounts, DepEd reports, and AI demand forecasting."*
+| Functional Area / Route | Administrator (`admin`) | Canteen Staff (`staff`) | Reason for Permission Boundary |
+| :--- | :---: | :---: | :--- |
+| **Default Landing Route** | `/admin/dashboard` | `/inventory` | Staff is routed immediately to kitchen inventory; Admin to financial control. |
+| **Admin Financial Dashboard** | Full Access | No Access | Confidential school financial reserves must not be visible to kitchen staff. |
+| **Product Catalog & Costing** | Full Access | Full Access | Both need to view/edit portion sizes, unit types, and reorder levels. |
+| **Stock Replenishment & Adjust** | Full Access | Full Access | Kitchen staff record morning cooking batches and physical spoilage counts. |
+| **End-of-Day Perishable Reset**| Full Access | Full Access | Canteen kitchen staff physically verify and zero out unsold cooked portions. |
+| **Operating Expenses & Receipts**| Full Access | No Access | Disbursing school canteen funds and uploading expense vouchers is restricted to Admin. |
+| **School Year Configuration** | Full Access | No Access | Academic year boundaries and opening bank balances require administrative sign-off. |
+| **DepEd Financial Reports** | Full Access | No Access | Official statements submitted to the Principal and Division Office require Admin role. |
 
 ---
 
-## 3. Opening Defense Script
+## 4. Opening Defense Presentation Script
 
-*(To be delivered naturally and with confidence by the group leader and presenters)*
+*(To be delivered with authority and clarity by the capstone group leader and members)*
 
-> **Presenter 1 (Introduction):**  
-> *"Good morning, esteemed members of the panel, our research adviser, and guests. We are here today to present our capstone project entitled **MEALS: Smart Canteen Management and Demand Forecasting System** developed specifically for **Bay Central Elementary School**.*
+> **Group Leader:**  
+> *"Good morning, esteemed members of the panel, our research adviser, and academic colleagues. We are proud to present our capstone project: **MEALS — Management of Expenses, Assets, and Logistics System**, designed and implemented specifically for **Bay Central Elementary School**.*
 > 
-> *Public school elementary canteens operate under very unique operational conditions. Unlike standard retail convenience stores that stock non-perishable packaged goods with months of shelf life, the Bay Central Elementary School canteen prepares, cooks, and sells **perishable daily meals and cooked snacks** — such as cooked viands, arroz caldo, pancit, sandwiches, and fresh juices. These items must be prepared fresh in the morning and consumed within the school day.*
+> *Public elementary school canteens occupy a unique and challenging operational position. Unlike typical commercial businesses, elementary school canteens prepare and serve **freshly cooked perishable meals** — such as arroz caldo, sopas, pancit, and fresh snacks. These items have a shelf life of only a single school day.*
 > 
-> *In their manual system, the canteen faced three critical challenges:*  
-> 1. *First, **unpredictable daily student demand** leading to food waste when over-prepared, or lost sales when under-prepared.*  
-> 2. *Second, **tedious and prone-to-error manual record-keeping** for DepEd monthly financial statements, operating expenses, and fund allocations.*  
-> 3. *And third, **lack of real-time inventory visibility** to monitor remaining food portions before afternoon dismissal.*
+> *In our initial baseline study at Bay Central Elementary School, we discovered two major administrative bottlenecks:*  
+> 1. *First, **untracked daily food preparation and perishable spoilage**, where kitchen staff lacked a structured mechanism to record morning cooking batches, monitor remaining portions, and reconcile unsold food at dismissal, resulting in undocumented waste.*  
+> 2. *Second, **onerous, paper-based DepEd financial accounting**. Under DepEd Order No. 8, s. 2007, the canteen manager must manually calculate Cost of Sales, categorize operating expenses across seven line items, and distribute net income into six statutory school funds across a 12-month June-to-May school year. A single arithmetic error in September cascaded throughout the entire school year's balance sheet.*
 > 
-> **Presenter 2 (System Overview):**  
-> *To address these exact challenges, we developed MEALS. The system provides an end-to-end digital workflow: it tracks daily cooked food inventory with perishable waste reconciliation, provides an offline-capable POS counter checkout, automates DepEd-compliant monthly financial statements, and leverages an **XGBoost machine learning prediction engine** that factors in weekday demand, weather conditions, and school events to guide morning food preparation.*
+> **Co-Presenter:**  
+> *MEALS resolves both problems by integrating a responsive **Inventory Control System** with an automated **DepEd-Compliant Financial Management Platform**.*  
 > 
-> *Today, we will present a complete live demonstration of our actual, fully implemented system — from morning login, inventory preparation, and POS sales, to afternoon perishable food waste reconciliation, financial reporting, and AI demand forecasting. We will now begin our walkthrough."*
+> *Our system tracks stock from raw ingredients to cooked batches, enforces an afternoon perishable waste reconciliation protocol, automates all DepEd accounting formulas, guarantees forward-balance continuity across statutory funds, and provides real-time auditability across all stock movements and financial disbursements.*
+> 
+> *We will now walk you through the live system, demonstrating how inventory operations flow directly into verified DepEd financial statements."*
 
 ---
 
-## 4. Login and Authentication Walkthrough
+## 5. Walkthrough Phase 1: Security & Financial Data Governance
 
-### Step 4.1: Accessing the Login Portal
-* **ACTION:** Open the web browser and navigate to the application URL (`/login`).
-* **EXPLANATION:** Show the branded Bay Central Elementary School MEALS authentication portal. Explain the clean interface, clear security indicators, and accessibility options.
-* **EXPECTED RESULT:** The login screen appears with Username and Password fields, "Remember Me" checkbox, "Sign In" button, and links for "Forgot Password?" and "Lost Authenticator Device?".
-* **DEFENSE LINE:**  
-  > *"We begin at the MEALS authentication portal. The interface is clean, responsive, and secure, ensuring only authorized canteen personnel can access school operations."*
-
-### Step 4.2: Negative Test — Invalid Password Handling
-* **ACTION:** Enter username `admin` and type an incorrect password `wrongpassword`, then click **Sign In**.
-* **EXPLANATION:** Explain to the panel how the system prevents unauthorized entry and protects against brute-force attacks by verifying passwords against salted bcrypt hashes.
-* **EXPECTED RESULT:** An immediate red alert toast/banner appears stating: `"Invalid username or password"`. The system does not crash or expose server stack traces.
-* **DEFENSE LINE:**  
-  > *"As shown on screen, entering an incorrect credential immediately triggers a security warning without revealing whether the username or password was the cause, preventing account enumeration attacks."*
-
-### Step 4.3: Valid Authentication & Two-Factor Verification (2FA)
-* **ACTION:** Enter the correct credentials for the Administrator account and click **Sign In**. On the prompt, enter the 6-digit TOTP code from Google Authenticator (or use a valid recovery code).
-* **EXPLANATION:** Explain that for administrative accounts holding sensitive financial data, two-factor authentication (TOTP) is enforced to comply with school security standards.
-* **EXPECTED RESULT:** The two-factor challenge verifies the time-based token, generates a secure JWT session, and automatically redirects the administrator to the Admin Financial Dashboard (`/admin/dashboard`).
-* **DEFENSE LINE:**  
-  > *"Upon entering valid credentials and confirming the 6-digit authenticator code, the system validates the session and directs the Administrator straight to the financial control center."*
+### Step 5.1: Accessing the Admin Authentication Portal
+* **NAVIGATE TO:** `/login`
+* **PROCEDURE:** Enter the Administrator username and password. Click **Sign In**.
+* **SECURITY CHALLENGE:** The system prompts for a 6-digit Time-Based One-Time Password (TOTP) from Google Authenticator. Enter the active TOTP code.
+* **VERIFICATION:** Session token is issued, and the user is redirected to the Financial Control Center at `/admin/dashboard`.
+* **DEFENSE EXPLANATION:**  
+  > *"Because MEALS manages legal school funds and audited DepEd allocations, administrative accounts require mandatory Two-Factor Authentication. Even if a password is compromised, school financial statements and opening bank balances remain strictly protected."*
 
 ---
 
-## 5. Dashboard Walkthrough
+## 6. Walkthrough Phase 2: DepEd 12-Month Academic Structure
 
-### Step 5.1: Administrator Financial Dashboard Elements
-* **ACTION:** Focus on the main Dashboard view at `/admin/dashboard`. Point cursor to the header selectors, metric cards, and charts.
-* **EXPLANATION:** Break down each live dashboard element:
-  * **School Year & Month Selectors:** Dynamically loads active academic years and individual monthly financial periods.
-  * **Monthly Sales KPI Card:** Displays gross canteen sales for the selected month calculated directly from recorded daily transactions, featuring a comparison percentage against the preceding month.
-  * **Operating Expenses KPI Card:** Sums operational costs across transportation, gas, supplies, helpers, and repairs.
-  * **Net Profit KPI Card:** Displays net profit along with the operational profit margin percentage.
-  * **Current Balance KPI Card:** Reflects available cash reserves and revolving funds.
-  * **Monthly Sales & Profit Trend (Bar Chart):** Renders school-year performance month-by-month using Chart.js.
-  * **Operating Expense Breakdown (Donut Chart):** Visualizes the proportion of expenses spent per category.
-  * **Monthly Comparison Table:** Shows line-by-line differences with visual "Up", "Down", or "Even" status badges.
-* **EXPECTED RESULT:** All cards and charts populate accurately from the underlying SQLite database with formatted Philippine Peso (`PHP`) currency values.
-* **DEFENSE LINE:**  
-  > *"The Admin Dashboard provides the canteen manager with an executive overview. Every peso shown here is tied directly to verified operational data, eliminating guesswork in school canteen finances."*
+### Step 6.1: School Year Setup & Opening Balance Initialization
+* **NAVIGATE TO:** `/school-years` or `/financial-management` (Mode: `school-years`)
+* **DEMONSTRATE:**
+  1. Show the configured active school year: **S.Y. 2024–2025 (June to May)**.
+  2. Point out that the system automatically structures the academic year into 12 individual monthly financial periods starting in June and concluding in May.
+  3. Show the **Opening Beginning Cash on Hand** configuration (e.g., `PHP 11,834.59`).
+  4. Point out the **Add Historical Year** button and the **Archive School Year** safeguard.
+* **DEFENSE EXPLANATION:**  
+  > *"Under DepEd canteen guidelines, financial accountability follows the June-to-May academic calendar rather than the January-to-December fiscal calendar. MEALS isolates records by school year so that past years remain locked and immutable for auditor inspection, while opening balances seamlessly carry over."*
 
 ---
 
-## 6. School Year Walkthrough
+## 7. Walkthrough Phase 3: Product Catalog & Unit Configuration
 
-### Step 6.1: DepEd 12-Month Academic Structure
-* **ACTION:** Click **School Years** in the sidebar navigation (or open `/school-years`).
-* **EXPLANATION:** Explain to the panel how DepEd elementary canteens track finances on an academic year basis (running from June of the starting year to May of the ending year, comprising 12 monthly financial reports).
-* **EXPECTED RESULT:** The page displays configured school years (e.g., S.Y. 2024–2025, S.Y. 2025–2026), highlighting the currently active school year with an "Active" badge.
-* **DEFENSE LINE:**  
-  > *"Under DepEd canteen guidelines, financial records must not mix across different academic years. MEALS organizes all reports into a 12-month June-to-May structure. When a new school year is activated, past years remain archived and read-only for audit integrity."*
-
----
-
-## 7. Product Setup
-
-### Step 7.1: Opening Product Management
-* **ACTION:** Click **Inventory** in the sidebar and ensure the **Products & Stock** tab is active. Click the green `+ Add Product` button.
-* **EXPLANATION:** Show the product setup modal and explain the actual fields:
-  * **Product Name:** (e.g., *Arroz Caldo with Egg*)
-  * **Category Dropdown:** *Staple (Rice/Noodles), Viand (Main Dish), Soup, Snacks, Bread/Pastries, Drinks/Beverages, Dessert, General*.
-  * **Perishable Food Checkbox:** Specifically flags items prepared daily that cannot be held over indefinitely.
-  * **How is this item counted? (Unit Type):** Pieces (`PCS`) or Bulk (`kg`, `g`, `L`, `mL`).
-  * **Selling Price (PHP) & Cost Price (PHP):** Establishes profit margin per unit.
-  * **Current Stock on Hand & Low Stock Warning Level:** Determines automated alerts.
-* **EXPECTED RESULT:** The modal validates inputs in real time, preventing negative prices or empty names.
-* **DEFENSE LINE:**  
-  > *"When setting up a product, staff can flag the item as 'Perishable Food'. This tells MEALS that this product is prepared fresh daily and must undergo afternoon waste reconciliation."*
+### Step 7.1: Managing Food Items and Safety Thresholds
+* **NAVIGATE TO:** `/inventory` (Tab 1: **Products & Stock**)
+* **DEMONSTRATE:** Click `+ Add Product` (or inspect an existing item, e.g., *Arroz Caldo with Egg*):
+  * **Product Name:** `Arroz Caldo with Egg`
+  * **Category:** `Staple (Rice/Noodles)` or `Soup`
+  * **Unit Type:** Demonstrate the difference between **Pieces (`PCS`)** for cooked meal portions and **Bulk (`kg`, `g`, `L`, `mL`)** for kitchen raw ingredients (e.g., Rice, Cooking Oil, Sugar).
+  * **Perishable Food Toggle:** Check the `Perishable Food` checkbox.
+  * **Cost Price vs. Selling Price:** Cost Price = `PHP 15.00`, Selling Price = `PHP 25.00` (establishing a gross profit margin of PHP 10.00 per unit).
+  * **Low Stock Warning Level (`min_stock`):** Set to `10` units.
+* **DEFENSE EXPLANATION:**  
+  > *"Our inventory module explicitly distinguishes between non-perishable packaged items and daily cooked perishables. Marking an item as 'Perishable Food' signals the system that any remaining portions at closing must be reconciled as food waste rather than carried over on the shelf."*
 
 ---
 
-## 8. Perishable Inventory Walkthrough
+## 8. Walkthrough Phase 4: Morning Kitchen Batch Replenishment
 
-### Step 8.1: Morning Preparation & Stock Setup
-* **ACTION:** In the Inventory table, locate a cooked perishable item (e.g., *Arroz Caldo with Egg* with 0 stock). Click **Replenish Stock** (or prepare batch). Enter Quantity: `30` pieces, Date: Today, Remarks: *"Morning kitchen batch prep"*. Click **Confirm Replenishment**.
-* **EXPLANATION:** Explain that at 6:30 AM before school starts, the canteen kitchen prepares 30 bowls of hot Arroz Caldo. The staff records this batch in MEALS, setting the available inventory for morning recess and lunch.
-* **EXPECTED RESULT:** The item's stock increases from `0` to `30`. The badge updates from "Out of Stock" to a green "In Stock" badge. A new record is added to Stock History.
-* **DEFENSE LINE:**  
-  > *"In the morning, the kitchen prepares 30 servings of Arroz Caldo. By logging this batch, the stock on hand is immediately updated to 30 units, ready to be sold at the canteen counter."*
-
----
-
-## 9. Sales Walkthrough
-
-### Step 9.1: Counter Checkout via POS
-* **ACTION:** Navigate to **POS / Cashier** (`/pos`). Search for or click on *Arroz Caldo with Egg*. Set quantity to `5` bowls.
-* **EXPLANATION:** Simulate students purchasing 5 bowls during recess. Show the cart breakdown: unit price PHP 25.00 × 5 = PHP 125.00. Enter Amount Received: `PHP 200.00`.
-* **EXPECTED RESULT:** The POS computes Change: `PHP 75.00`. The "Complete Cash Sale" button activates.
-* **DEFENSE LINE:**  
-  > *"At recess, a cashier processes an order of 5 bowls. The POS calculates the subtotal and change instantly with zero mental math required from the cashier."*
-
-### Step 9.2: Completing Transaction & Receipt Generation
-* **ACTION:** Click **Complete Cash Sale** (or press Enter).
-* **EXPLANATION:** Show the generated electronic receipt modal containing transaction ID, timestamp, cashier name, itemized products, and cash tendered. Click Print to demonstrate receipt printer formatting, or Close to proceed.
-* **EXPECTED RESULT:** The sale is recorded into the database, audit logs record `TRANSACTION_CREATED`, and the transaction appears in Transaction History.
-* **DEFENSE LINE:**  
-  > *"Completing the sale generates an official transaction receipt, updates the cashier ledger, and records the sale in the daily cash tally."*
+### Step 8.1: Inward Stock Replenishment
+* **NAVIGATE TO:** `/inventory`
+* **PROCEDURE:**
+  1. Identify *Arroz Caldo with Egg* with current stock at `0.00`.
+  2. Click the green `+ Replenish Stock` button.
+  3. Select *Arroz Caldo with Egg*.
+  4. Input Quantity: `30` portions.
+  5. Date: Select today's date.
+  6. Remarks: *"Morning kitchen cooking batch — 30 bowls"*.
+  7. Click **Confirm Replenishment**.
+* **VERIFICATION:**
+  * The product's stock immediately increases from `0` to `30`.
+  * The status badge updates from a red **Out of Stock** badge to a green **In Stock** badge.
+  * Switch to **Tab 3: Stock History** and point out the new log entry: Movement Type = `replenishment`, Quantity = `+30.00`, User = `Admin`, Remarks recorded.
+* **DEFENSE EXPLANATION:**  
+  > *"Every morning at 6:30 AM, canteen kitchen staff record the number of cooked meal portions prepared for the day. This provides full accountability: we know exactly how many portions entered the kitchen before the recess bell rings."*
 
 ---
 
-## 10. Sales and Inventory Connection
+## 9. Walkthrough Phase 5: Stock Alerts & Manual Adjustments
 
-### Step 10.1: Explaining Actual System Architecture & Closing Reconciliation
-* **ACTION:** Open **Inventory** (`/inventory`) and highlight the stock count and then open **Closing Reconciliation** (`🍲 End-of-Day Perishable Food Reset`).
-* **EXPLANATION:**  
-  > *"Members of the panel, let us clarify how MEALS specifically handles the relationship between counter sales and perishable cooked inventory.  
-  > In a retail grocery, barcode scanners deduct rigid packages instantly. But in a busy elementary school canteen during a 20-minute recess rush, canteen staff serve varying portion sizes, combo plates, and student meal packages.  
-  > Therefore, MEALS incorporates an end-of-day **Closing Reconciliation Protocol**. At the end of the day, staff perform a physical count of unsold bowls and reconcile prepared units against sold units."*
-* **ACTION:** Open the **🍲 End-of-Day Perishable Food Reset** modal.
-* **EXPLANATION:** Explain that of the 30 prepared bowls, 26 were sold during the day, leaving 4 unsold bowls in the warmer. Because Arroz Caldo contains rice and egg, it cannot be safely held over to tomorrow.
-* **ACTION:** In the modal, review the 4 unsold units. Select disposition: `"Spoiled / Food Waste"` (or `"Staff Meal Consumed"`). Enter remarks: *"Unsold after lunch dismissal"*, then click **Confirm Reset**.
-* **EXPECTED RESULT:**  
-  1. The stock of Arroz Caldo resets cleanly to `0`.  
-  2. The system writes an adjustment entry to `inventory_logs` with movement type `"adjustment"` and quantity `-4.00`.  
-  3. The reason is explicitly recorded as `"Daily Food Waste: Spoiled / Food Waste"`.  
-  4. The food waste cost is calculated and archived to train future AI demand predictions.
-* **DEFENSE LINE:**  
-  > *"By clearing unsold perishable food to zero at closing, MEALS ensures tomorrow morning's staff starts with a clean slate, while simultaneously capturing exact food waste data."*
+### Step 9.1: Live Safety Reorder Alerts
+* **NAVIGATE TO:** `/inventory` (Tab 2: **Alerts**)
+* **DEMONSTRATE:**
+  * Show the two dedicated alert panels: **Out of Stock Items** and **Low Stock Warning Items**.
+  * Point out how items with stock below their configured `min_stock` threshold are prominently flagged with amber badges.
+  * Click the `Replenish` shortcut directly from the alert card.
 
----
-
-## 11. Actual Inventory Monitoring
-
-### Step 11.1: Stock Alerts & Minimum Stock Thresholds
-* **ACTION:** In **Inventory**, switch to **Tab 2: Alerts** (or click the header notification bell).
-* **EXPLANATION:** Demonstrate how MEALS flags inventory that is critically low or exhausted:
-  * **Out of Stock Section:** Items with `stock <= 0` requiring kitchen batch cooking.
-  * **Low Stock Warning Section:** Items whose stock is below their configured `min_stock` threshold.
-* **EXPECTED RESULT:** The alerts table cleanly highlights affected products with colored status tags and provides direct "Replenish" action buttons.
-* **DEFENSE LINE:**  
-  > *"Canteen staff do not need to guess what ingredients are running out. The Alerts module flags items falling below safety levels so supplies can be bought before stockouts occur."*
+### Step 9.2: Stock Adjustment with Cause Tracking
+* **PROCEDURE:**
+  1. Click **Adjust Stock** on an inventory item (e.g., *Bottled Calamansi Juice* or *Eggs*).
+  2. Select Adjustment Type: `Deduct`.
+  3. Enter Quantity: `2`.
+  4. Select Reason: Show the dropdown options — `Damaged`, `Spoilage`, `Shrinkage`, `Kitchen Prep Spill`, `Audit Recount`.
+  5. Select `Kitchen Prep Spill` and enter Remarks: *"Accidentally dropped during morning prep"*.
+  6. Click **Confirm Adjustment**.
+* **VERIFICATION:** Stock decreases by 2. The event is permanently etched into the audit ledger with the exact reason.
+* **DEFENSE EXPLANATION:**  
+  > *"In kitchen environments, accidental spills and cracked eggs are inevitable. Instead of fudging numbers at month-end, staff log the exact reason for the adjustment, creating transparency for school canteen audits."*
 
 ---
 
-## 12. Actual AI / Sales Prediction Feature
+## 10. Walkthrough Phase 6: Closing Perishable Food Waste Reconciliation
 
-### Step 12.1: Demonstrating the Demand Forecast View
-* **ACTION:** Navigate to **Demand Forecast** (`/predictions`).
-* **EXPLANATION:** Walk the panel through the AI forecasting module:
-  1. **Where It Is Found:** Located at `/predictions`, accessible by the Administrator.
-  2. **Prediction Engine:** Powered by **XGBoost (Extreme Gradient Boosting)** integrated in `backend/ml_predictor.py`.
-  3. **Input Features:**
-     * Historical daily sales lags and rolling moving averages.
-     * Day-of-the-week pattern (Monday through Friday school day weights).
-     * Daily weather forecast conditions (Clear, Cloudy, Rainy, Stormy, Typhoon).
-     * School calendar event types (Regular Day, Intramurals, Exams, Half Day, Holiday).
-  4. **Outputs Displayed:**
-     * **Recommended Prep Quantity:** Exact portions the kitchen should cook tomorrow.
-     * **Stock Gap:** Anticipated shortage based on currently available inventory.
-     * **Risk Classification:** `Low`, `Medium`, or `High` risk of over-preparation or stockout.
-     * **Actionable Badges:** `Restock`, `Use First / Reduce Waste`, `Enough Stock`, `Prep Light`.
-* **ACTION:** Switch the simulation scenario from *"Regular Day / Clear"* to *"Rainy Day"*.
-* **EXPLANATION:** Point out how the forecast for hot soup increases while cold beverages decrease based on trained category weather coefficients.
-* **EXPECTED RESULT:** The interactive table and Chart.js forecast curves update dynamically to reflect the simulated environmental condition.
-* **DEFENSE LINE:**  
-  > *"MEALS does not use arbitrary guesses. The XGBoost model examines past sales together with weather and school events to recommend exact cooking batches, directly cutting down food waste."*
+### Step 10.1: Executing the End-of-Day Perishable Reset
+* **NAVIGATE TO:** `/inventory`
+* **PROCEDURE:**
+  1. Click the button: `🍲 End-of-Day Perishable Food Reset`.
+  2. The system scans all active products flagged as `is_perishable` that still hold remaining stock.
+  3. Show *Arroz Caldo with Egg*: of the 30 bowls cooked in the morning, 26 were consumed during the day, leaving **4 unsold bowls** in the food warmer.
+  4. For the 4 unsold bowls, select the Disposition:
+     * `waste_spoiled` (*Spoiled / Food Waste*)
+     * `staff_meal` (*Staff Meal Consumed*)
+     * `donated` (*Donated*)
+  5. Select `waste_spoiled` and enter Remarks: *"Unsold portions remaining at 3:30 PM dismissal"*.
+  6. Click **Confirm Reset**.
+* **VERIFICATION:**
+  * Stock of *Arroz Caldo with Egg* resets cleanly to `0.00`.
+  * In **Stock History**, an immutable entry is logged: Movement Type = `adjustment`, Quantity = `-4.00`, Reason = `"Daily Food Waste: Spoiled / Food Waste"`.
+  * The financial food waste loss (4 portions × PHP 15.00 cost price = PHP 60.00) is archived in the inventory waste log for administrative review, waste cost auditing, and operational optimization.
+* **DEFENSE EXPLANATION:**  
+  > *"This is a key innovation in MEALS. Standard inventory systems let perishable food sit in digital inventory indefinitely. MEALS enforces an end-of-day closing reconciliation protocol that resets perishable inventory to zero, captures exact food waste metrics, and calculates the true financial cost of unsold cooked meals."*
 
 ---
 
-## 13. Actual Expense Workflow
+## 11. Walkthrough Phase 7: 7-Category DepEd Operating Expenses & Receipt Audit
 
-### Step 13.1: Recording an Operating Expense with Receipt Upload
-* **ACTION:** Navigate to **Financial Management** (`/financial-management`) and click the **Expenses** tab. Click **Record Expense**.
-* **EXPLANATION:** Demonstrate recording a real canteen operational expense:
-  * **Expense Type:** Daily Expense
-  * **Category:** *Gas* (LPG cooking fuel)
-  * **Amount:** `PHP 1,100.00`
-  * **Supplier:** *Bay Central Gas Center*
-  * **Description:** *Refill of 11kg cooking gas tank for kitchen burner*
-  * **Receipt Attachment:** Click choose file and upload a receipt image (`sample_receipt.png`).
-* **ACTION:** Click **Save Expense**.
-* **EXPECTED RESULT:** The expense is saved into the database, tied to the current monthly report, and rendered in the expense table.
-* **ACTION:** Click the small thumbnail / eye icon next to the expense.
-* **EXPECTED RESULT:** The **Receipt Preview Modal** opens, displaying the sanitized receipt image with zoom and download capabilities.
-* **DEFENSE LINE:**  
-  > *"Every operational disbursement is categorized under standard DepEd expense titles with digital receipt image attachments, providing a completely auditable paper trail."*
-
----
-
-## 14. Actual Financial Workflow
-
-### Step 14.1: Monthly Financial Statement & Automatic Calculations
-* **ACTION:** In **Financial Management**, select the **Overview** tab.
-* **EXPLANATION:** Show the panel the automated monthly financial summary:
-  * **Gross Sales:** Derived automatically from recorded daily transactions.
-  * **Cost of Sales / Purchases:** Beginning inventory plus purchases minus ending inventory.
-  * **Gross Profit:** Gross Sales minus Cost of Sales.
-  * **Total Operating Expenses:** Automatically summed from the Expenses ledger.
-  * **Net Profit:** Gross Profit minus Operating Expenses.
-  * **Ending Cash on Hand:** Beginning cash + Net profit.
-* **ACTION:** Switch to the **Fund Allocation** tab.
-* **EXPLANATION:** Show how the system allocates net profit across DepEd prescribed funds (e.g., School Operations Fund, Revolving Fund). Show how ending balances from the previous month automatically carry forward as the opening balance of the next month.
-* **EXPECTED RESULT:** All calculations reflect mathematically verified accounting equations without manual calculator entry.
-* **DEFENSE LINE:**  
-  > *"MEALS eliminates manual computation errors by automatically cascading daily sales and expenses directly into the DepEd monthly financial statement and fund monitoring tables."*
+### Step 11.1: Recording an Operational Disbursement with Receipt Verification
+* **NAVIGATE TO:** `/financial-management` (Select Tab: **Expenses**)
+* **PROCEDURE:**
+  1. Click **+ Add Expense** (or use the inline Record Expense form).
+  2. Review the seven official DepEd operational expense categories:
+     * `Transportation/Freight`
+     * `Gas` (LPG cooking fuel)
+     * `Supplies` (Detergent, paper plates, food wrap)
+     * `Helpers` (Canteen utility labor)
+     * `Repair` (Stove, refrigerator maintenance)
+     * `Purchase from the looses of tools` (Replacement of ladles, knives, plates)
+     * `Other expenses`
+  3. Enter the test expense:
+     * **Expense Type:** `Daily Expense`
+     * **Category:** `Gas`
+     * **Amount:** `PHP 1,100.00`
+     * **Supplier:** `Bay Central LPG Gas Trading`
+     * **Description:** `11kg LPG cooking gas tank refill for kitchen burner`
+     * **Date:** Today's date
+  4. **Receipt Upload:** Click Choose File and attach a sample invoice/receipt image (`sample_receipt.png`). Show that the system sanitizes the file name, verifies the image, and uploads it.
+  5. Click **Add Daily Expense**.
+* **VERIFICATION:**
+  * The expense is recorded into the database and appears at the top of the paginated expense ledger.
+  * Click the **View Receipt / Eye Icon**: The **Receipt Preview Modal** opens, rendering the uploaded image with zoom and download capabilities.
+  * The monthly Operating Expenses total on the dashboard and overview increases by exactly `PHP 1,100.00`.
+* **DEFENSE EXPLANATION:**  
+  > *"DepEd auditors require physical proof for every operational disbursement. MEALS digitizes this paper trail: expenses are categorized into the 7 DepEd budget lines, linked to supplier vouchers, and accompanied by digital receipt images that can be reviewed in seconds."*
 
 ---
 
-## 15. Actual Reports
+## 12. Walkthrough Phase 8: DepEd Monthly Statement & Accounting Math
 
-### Report Identification Matrix
+### Step 12.1: Automated Financial Statement Calculations
+* **NAVIGATE TO:** `/financial-management` (Select Tab: **Overview**)
+* **EXPLANATION OF FORMULAS:** Show the panel how MEALS computes the complete DepEd financial equation without human manual intervention:
 
-| Report Type | What It Contains | DepEd / School Purpose | Primary User |
-| :--- | :--- | :--- | :--- |
-| **Monthly Report** | Complete statement of monthly sales, cost of goods, categorized expenses, and net profit. | Mandatory monthly submission to the School Principal and Division Office. | Administrator |
-| **Quarterly Report** | Consolidated 3-month financial summary of revenues, disbursements, and fund balances. | Periodic financial review and DepEd fiscal quarter auditing. | Administrator |
-| **Annual Report** | Full-year operational summary covering all operating months. | Year-end school liquidation and financial audit reporting. | Administrator |
-| **School Year Report** | 12-month June-to-May comprehensive financial balance sheet. | Formal turnover report between school years. | Administrator |
-| **Sales Report** | Itemized breakdown of daily and monthly counter revenue. | Evaluates student purchasing trends and best-selling menu items. | Administrator |
-| **Expense Report** | Itemized ledger of all operating disbursements across the 7 categories. | Monitors operational overhead (gas, transport, repairs). | Administrator |
-| **Cash Flow Report** | Cash inflows, outflows, starting reserves, and ending balances. | Ensures liquidity for daily market purchases. | Administrator |
-| **Profit Report** | Gross margin, operating expense ratio, and net surplus tracking. | Assesses financial sustainability of canteen operations. | Administrator |
+$$\text{Gross Income} = \text{Current Sales} - \text{Cost of Sales}$$
+$$\text{Total Operating Expenses} = \sum_{i=1}^{7} \text{Category Expenses}_i$$
+$$\text{Over All Net Profit} = \text{Gross Income} - \text{Total Operating Expenses}$$
+$$\text{Current Balance} = \text{Beginning Cash on Hand} + \text{Net Profit}$$
 
-### Step 15.1: Live Demonstration of Report Generation
-* **ACTION:** Click **Reports** in the sidebar (`/reports`). Select **Monthly Report**, choose the active School Year and Month, and click **Preview**.
-* **EXPLANATION:** Show the on-screen rendered statement formatted according to Bay Central Elementary School standards, complete with signature lines for the Canteen Manager and School Principal.
-* **ACTION:** Click **Export to Excel (`.xlsx`)**.
-* **EXPECTED RESULT:** The browser immediately downloads a formatted spreadsheet file (`.xlsx`) containing the structured accounting data.
-* **ACTION:** Click **Print / Official PDF**.
-* **EXPECTED RESULT:** The system generates a clean, printable DepEd report layout and opens the print dialog with zero UI clutter.
-* **DEFENSE LINE:**  
-  > *"With a single click, the canteen manager can preview, export to Excel, or print official DepEd financial statements ready for signature and submission to the Principal."*
+* **LIVE CALCULATION VERIFICATION:**
+  * Beginning Cash on Hand: `PHP 11,834.59`
+  * Current Sales: `PHP 39,840.00`
+  * Cost of Sales: `PHP 31,872.00`
+  * **Gross Income:** $39,840.00 - 31,872.00 = \mathbf{PHP\ 7,968.00}$
+  * Total Operating Expenses: Sum of recorded 7 expense lines = $\mathbf{PHP\ 2,450.00}$
+  * **Over All Net Profit:** $7,968.00 - 2,450.00 = \mathbf{PHP\ 5,518.00}$
+  * **Ending Current Balance:** $11,834.59 + 5,518.00 = \mathbf{PHP\ 17,352.59}$
+* **DEFENSE EXPLANATION:**  
+  > *"In a manual logbook, computing Gross Margin, Cost of Goods Sold, and Net Operating Surplus across multiple ledgers frequently produces transposition errors. MEALS performs these calculations automatically in real time using verified accounting logic."*
 
 ---
 
-## 16. Actual User Management
+## 13. Walkthrough Phase 9: DepEd Prescribed Statutory Fund Allocations
 
-### Step 16.1: Creating and Managing Accounts
-* **ACTION:** Navigate to **User Management** (`/accounts`). Click **+ Add User**.
-* **EXPLANATION:** Show account creation: enter username `cashier2`, full name `Maria Santos`, select role `Cashier`, enter initial password, and click **Create Account**.
-* **EXPECTED RESULT:** The new account appears in the accounts list with a blue "Cashier" badge and active status.
-* **ACTION:** Point to the **Password Reset Requests** and **Recovery Requests** tabs.
-* **EXPLANATION:** Explain that if staff forget credentials, requests appear here for administrative approval or decline, preventing unauthorized account overrides.
-* **DEFENSE LINE:**  
-  > *"User management is fully centralized. Administrators can create accounts, assign roles, de-escalate privileges, and review password reset requests securely."*
+### Step 13.1: 6-Fund Allocation & Forward-Balance Carryover
+* **NAVIGATE TO:** `/financial-management` (Select Tab: **Fund Allocation**)
+* **DEMONSTRATE:**
+  1. Show the 6 statutory funds mandated by DepEd Order No. 8, s. 2007:
+     * **Supplementary Feeding:** $35.0\%$ of Net Profit
+     * **School Operating Fund:** $25.0\%$ of Net Profit
+     * **Faculty/Student Development:** $15.0\%$ of Net Profit
+     * **H.E. Instructional Fund:** $10.0\%$ of Net Profit
+     * **Revolving Capital Fund:** $10.0\%$ of Net Profit
+     * **School Clinic:** $5.0\%$ of Net Profit
+     * **Total Allocation Check:** Exactly $100.0\%$.
+  2. Point out the **Balance in Previous Month** column:
+     * For the initial month of the school year (June), administrators can set the opening fund balances.
+     * For all subsequent months (July through May), the **field is locked with a padlock icon**, automatically pulling the ending Current Balance of the preceding month.
+  3. Show the dynamic monthly columns: *Balance in previous month + Net Income Share + Interest - Expenses - Others = Current Balance*.
+  4. Toggle between **Table View** and **Grid Card View**.
+* **DEFENSE EXPLANATION:**  
+  > *"DepEd policy requires canteen profits to be strictly earmarked for student nutrition and school improvement. MEALS automatically calculates the exact peso share for feeding programs and clinic supplies, and enforces an automatic forward-balance carryover rule so funds cannot be lost or misallocated between months."*
 
 ---
 
-## 17. Complete End-to-End Demonstration Scenario
+## 14. Walkthrough Phase 10: Official Reports & Multi-Format Exports
 
-*(Follow this seamless live sequence during the defense to show real canteen operations)*
+### Step 14.1: Generating and Exporting Official DepEd Statements
+* **NAVIGATE TO:** `/reports`
+* **DEMONSTRATE THE 8 REPORT TYPES:**
+  1. **Monthly Report:** Detailed statement of sales, COGS, categorized expenses, and net profit.
+  2. **Quarterly Report:** 3-month consolidated financial audit statement.
+  3. **Annual Report:** Full calendar year fiscal summary.
+  4. **School Year Report:** 12-month June-to-May comprehensive balance sheet.
+  5. **Sales Report:** Itemized monthly revenue summary.
+  6. **Expense Report:** Categorized ledger across all 7 operational expense lines.
+  7. **Cash Flow Report:** Liquidity tracking (Beginning Cash, Inflows, Outflows, Ending Cash).
+  8. **Profit Report:** Operating margins, expense ratios, and net surplus tracking.
+* **STEP-BY-STEP EXPORT ACTIONS:**
+  1. Select **Monthly Report** for the active School Year.
+  2. Click **Export Excel (`.xlsx`)**: Browser immediately downloads an `.xlsx` workbook formatted with standard DepEd headers, formulas, and cells.
+  3. Click **Export PDF / Print Report**: Opens the official printable layout complete with Bay Central Elementary School signature blocks:
+     * **Prepared by:** *Myrna A. De Mesa (Canteen Manager)*
+     * **Checked by:** *Maricar A. Afuang (School Head)*
+     * **Audited by:** *Kathleen B. Hernandez (School Canteen Auditor)*
+* **DEFENSE EXPLANATION:**  
+  > *"At the end of every month, the canteen manager does not need to re-encode figures into Microsoft Excel. With one click, MEALS exports verified, print-ready DepEd financial statements containing the required signatures for immediate submission to the Division Office."*
+
+---
+
+## 15. Complete End-to-End Operational Defense Scenario
+
+During the defense, execute this chronological storyline representing a real day at Bay Central Elementary School:
 
 ```text
-  [6:30 AM: Admin/Staff Login & Dashboard Check]
-                    │
-                    ▼
-  [7:00 AM: Check Inventory & Cook Morning Batch]
-                    │
-                    ▼
-  [7:30 AM - 1:00 PM: POS Counter Sales & Recess Checkout]
-                    │
-                    ▼
-  [2:30 PM: Check Remaining Unsold Perishable Food]
-                    │
-                    ▼
-  [3:00 PM: Closing Reconciliation & Food Waste Reset]
-                    │
-                    ▼
-  [3:30 PM: Record Daily Operating Expenses & Fuel]
-                    │
-                    ▼
-  [4:00 PM: Review Financial Overview & Export Reports]
-                    │
-                    ▼
-  [4:30 PM: Check XGBoost Demand Forecast for Tomorrow]
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                      6:30 AM: KITCHEN PREPARATION                      │
+ │ • Admin/Staff log in; inspect Alerts tab for low ingredients.          │
+ │ • Cook 30 portions of Arroz Caldo.                                     │
+ │ • Log +30.00 batch under Inventory Replenishment. Stock becomes 30.00. │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                  10:30 AM: REAL-TIME STOCK MONITORING                  │
+ │ • Review Alerts tab for items reaching safety threshold (min_stock).   │
+ │ • Log manual adjustment if minor kitchen spill occurs.                 │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                    1:30 PM: OPERATIONAL EXPENSE RECORD                 │
+ │ • Canteen buys LPG gas refill (PHP 1,100.00) from Bay Central Gas.     │
+ │ • Record under Expenses tab: Category 'Gas', attach receipt image.     │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │              3:30 PM: CLOSING PERISHABLE FOOD WASTE RESET              │
+ │ • 4 portions of Arroz Caldo remain unsold at dismissal.                │
+ │ • Open 'End-of-Day Perishable Food Reset' modal.                       │
+ │ • Mark 4 portions as 'waste_spoiled'. Stock resets cleanly to 0.00.    │
+ │ • Food waste quantity and cost archived into audit ledger.             │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                 4:00 PM: FINANCIAL STATEMENT & ALLOCATION              │
+ │ • Open Overview tab: Current Sales, COGS, Expenses, Net Profit verified│
+ │ • Fund Allocation tab updates Supplementary Feeding (35%) & funds.     │
+ │ • Ending balance rolls forward to next month's opening balance.        │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                  4:30 PM: OFFICIAL REPORTS & AUDIT EXPORT              │
+ │ • Open Reports view (/reports).                                        │
+ │ • Export official Excel workbook (.xlsx) and signed DepEd PDF.         │
+ └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Scripted Sequence:
-1. **6:30 AM (Start of Day):** Log in as Admin. Review the Operational Dashboard for out-of-stock notices.
-2. **7:00 AM (Morning Kitchen Batch):** Navigate to **Inventory**. Record 30 bowls of prepared Arroz Caldo under Stock Replenishment. Stock becomes 30.
-3. **9:30 AM (Morning Recess Sales):** Log in as Cashier (or switch to `/pos`). Process 2 student transactions totaling 5 bowls of Arroz Caldo. Cash is tendered, change computed, and receipts printed.
-4. **2:30 PM (Afternoon Closing):** Return to **Inventory**. 4 bowls remain unsold at the end of the school day.
-5. **3:00 PM (Closing Reconciliation):** Open **🍲 End-of-Day Perishable Food Reset**. Mark the 4 remaining bowls as `"waste_spoiled"` with remarks *"Unsold after lunch"*. Stock resets to 0, and waste is logged.
-6. **3:30 PM (Daily Expense):** In **Financial Management**, record an expense of PHP 200.00 for cooking ingredients under Supplies with a receipt attached.
-7. **4:00 PM (Financial Summary):** View the **Financial Overview** tab. Verify that sales and expenses automatically updated the day's net profit.
-8. **4:30 PM (AI Tomorrow Prep):** Open **Demand Forecast** (`/predictions`). View the XGBoost recommended prep count for tomorrow so the kitchen knows exactly how many bowls to cook.
-
 ---
 
-## 18. System Testing Plan
+## 16. System Testing Plan (Inventory & Finance)
 
-| Category | Modules Tested | Objective | Test Technique |
+| Test Category | Target Modules | Verification Objective | Testing Technique |
 | :--- | :--- | :--- | :--- |
-| **A. Authentication** | `/login`, `/admin/setup-2fa` | Verify session creation, bcrypt hashing, TOTP validation, and lockout. | Black-box & Boundary Testing |
-| **B. RBAC & Security** | Routes, API Endpoints | Ensure users cannot access views or API endpoints outside their role. | Negative Route Traversal Testing |
-| **C. Product & Inventory**| `/inventory` | Verify product creation, unit types, replenish, adjust, and stock limits. | Equivalence Partitioning |
-| **D. Perishable Food** | `/inventory`, Reset Modal | Verify end-of-day zeroing, waste logging, and cost attribution. | Operational Lifecycle Testing |
-| **E. POS & Transactions** | `/pos`, `/transactions` | Verify cart math, discount handling, cash change, and receipt data. | Calculation & Transaction Testing |
-| **F. Financial Records** | `/financial-management` | Validate accounting formulas: Gross, Expenses, Net, and Carry-forward. | Mathematical Verification |
-| **G. AI Prediction** | `/predictions`, `ml_predictor.py` | Verify XGBoost inference, fallback heuristic, and weather/event multipliers. | Model Robustness & Fallback Testing |
-| **H. Reporting & Exports**| `/reports` | Verify data consistency across screen, Excel workbook, and printed PDF. | Output Fidelity Testing |
+| **A. Product & Material Catalog** | `/inventory` (Tab: Products) | Verify item creation, Unit Types (`PCS` vs Bulk), cost/selling prices, and `min_stock` limits. | Boundary & Input Validation |
+| **B. Stock Replenishment** | `/inventory` (Replenish Modal) | Verify inward batch cooking updates stock on hand and writes an immutable audit record. | Data Persistence & State Verification |
+| **C. Stock Adjustment** | `/inventory` (Adjust Modal) | Verify stock corrections with designated audit justifications (*Damage, Spill, Spoilage, Recount*). | Audit Log Verification |
+| **D. Perishable Food Waste** | `/inventory` (Reset Modal) | Verify closing stock zeroing, waste disposition tracking, and financial waste cost attribution. | State Lifecycle Testing |
+| **E. Stock Alerts** | `/inventory` (Tab: Alerts) | Verify triggered alerts when inventory drops below `min_stock` or reaches zero. | Threshold Boundary Testing |
+| **F. Operating Expenses** | `/financial-management` (Expenses)| Verify 7-category classification, total expense calculation, and receipt image upload/preview. | File Validation & Aggregation |
+| **G. Financial Accounting Math** | `/financial-management` (Overview)| Verify formula accuracy: Gross Income, Cost of Sales, Net Profit, and Ending Cash. | Mathematical Precision Testing |
+| **H. DepEd Fund Allocations** | `/financial-management` (Funds) | Verify 6-fund percentage splits (35%, 25%, 15%, 10%, 10%, 5%) and locked forward-balance carryover. | Relational State Continuity |
+| **I. Report Generation & Export** | `/reports` | Verify data fidelity between screen preview, exported Excel (`.xlsx`), and signed PDF. | Output Consistency Verification |
 
 ---
 
-## 19. Detailed Test Cases
+## 17. Detailed Test Cases
 
 ### Positive Test Cases
 
-#### Test Case TC-AUTH-01: Valid Administrator Login with TOTP 2FA
-* **Feature:** Authentication
-* **Purpose:** Verify successful login for administrative accounts using password and 6-digit TOTP code.
-* **Precondition:** Admin account exists with 2FA enabled.
+#### Test Case TC-INV-01: Morning Batch Replenishment
+* **Feature:** Inventory Stock Inward Movement
+* **Objective:** Verify morning cooked batch increases available stock and creates an immutable audit record.
+* **Precondition:** Product *Arroz Caldo with Egg* has `0.00` current stock.
 * **Steps:**
-  1. Open `/login`.
-  2. Input valid admin username and password. Click **Sign In**.
-  3. Enter the current 6-digit code from Google Authenticator. Click **Verify Code**.
-* **Expected Result:** Token is generated, user session is initialized, and browser redirects to `/admin/dashboard`.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Proves multi-factor security protecting administrative privileges.
+  1. Open `/inventory`.
+  2. Click **Replenish Stock**.
+  3. Select *Arroz Caldo with Egg*, enter Quantity = `30`, Remarks = *"Morning Batch"*.
+  4. Click **Confirm Replenishment**.
+* **Expected Result:** Stock updates to `30.00`. Status badge changes to green "In Stock". Log entry appears in Stock History.
+* **Actual Result:** **PASS**.
 
-#### Test Case TC-INV-01: Perishable Batch Replenishment
-* **Feature:** Inventory Replenishment
-* **Purpose:** Verify morning stock setup increases available inventory and records an audit log.
-* **Precondition:** Perishable product exists with current stock of 0.
+#### Test Case TC-PERISH-01: End-of-Day Perishable Food Waste Reset
+* **Feature:** Food Waste & Perishable Lifecycle Control
+* **Objective:** Verify unsold cooked meals reset to zero and waste reasons are cataloged for audit.
+* **Precondition:** Perishable item has 4 unsold portions at afternoon dismissal.
 * **Steps:**
-  1. Open `/inventory`. Click **Replenish Stock**.
-  2. Select *Arroz Caldo with Egg*.
-  3. Input Quantity = `30`, Remarks = *"Morning Batch"*. Click **Confirm**.
-* **Expected Result:** Product stock updates to `30.0`. Stock status changes to "In Stock". Log entry created in `inventory_logs`.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Demonstrates that kitchen batch cooking is immediately tracked in the system.
+  1. Open `/inventory`.
+  2. Click **🍲 End-of-Day Perishable Food Reset**.
+  3. Locate item with 4 unsold units.
+  4. Select Disposition: `"waste_spoiled"`, enter Remarks: *"Dismissal remaining"*.
+  5. Click **Confirm Reset**.
+* **Expected Result:** Stock resets to `0.00`. An adjustment record of `-4.00` is recorded in `inventory_logs` with reason `"Daily Food Waste: Spoiled / Food Waste"`.
+* **Actual Result:** **PASS**.
 
-#### Test Case TC-POS-01: POS Cash Transaction and Change Computation
-* **Feature:** Point of Sale
-* **Purpose:** Verify cart item addition, subtotal calculation, and exact change calculation.
-* **Precondition:** Products are in stock.
+#### Test Case TC-FIN-01: DepEd 7-Category Operating Expense with Receipt Upload
+* **Feature:** Operating Expense Accounting & Digital Voucher Audit
+* **Objective:** Verify recording an expense under DepEd categories with an attached receipt image.
+* **Precondition:** Admin is logged in; active school year selected.
 * **Steps:**
-  1. Open `/pos`. Add 2 units of item priced at PHP 25.00 to cart.
-  2. Verify subtotal equals PHP 50.00.
-  3. Enter Amount Received = `100.00`.
-  4. Click **Complete Cash Sale**.
-* **Expected Result:** Change is computed as `PHP 50.00`. Sale is persisted, receipt modal appears, and transaction is logged.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Proves accuracy in counter transactions with automatic mathematical calculations.
+  1. Open `/financial-management` -> Tab **Expenses**.
+  2. Select Category: `Gas`, Amount: `1100.00`, Supplier: `Bay Central Gas`, Description: `LPG refill`.
+  3. Attach valid image `sample_receipt.png`.
+  4. Click **Add Daily Expense**.
+* **Expected Result:** Expense appears in the ledger; thumbnail allows opening the Receipt Preview Modal; Monthly Operating Expenses increases by PHP 1,100.00.
+* **Actual Result:** **PASS**.
 
-#### Test Case TC-PERISH-01: End-of-Day Perishable Food Reset
-* **Feature:** Food Waste Management
-* **Purpose:** Verify unsold perishable stock is zeroed out and food waste reasons are logged.
-* **Precondition:** Perishable item has 4 unsold units remaining at closing.
+#### Test Case TC-FIN-02: Automated Monthly Financial Statement Math
+* **Feature:** Financial Overview Computation
+* **Objective:** Verify system computes Gross Income, Net Profit, and Ending Cash according to DepEd accounting formulas.
+* **Precondition:** Month has Sales = `PHP 39,840.00`, Cost of Sales = `PHP 31,872.00`, Expenses = `PHP 2,450.00`, Beginning Cash = `PHP 11,834.59`.
 * **Steps:**
-  1. Open `/inventory`. Click **🍲 End-of-Day Perishable Food Reset**.
-  2. Locate item with 4 unsold units. Select disposition `"Spoiled / Food Waste"`.
-  3. Click **Confirm Reset**.
-* **Expected Result:** Stock updates to `0.0`. An adjustment record with quantity `-4.0` is saved with reason `"Daily Food Waste: Spoiled / Food Waste"`.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Shows how the system prevents stale stock from carrying over to the next day while tracking waste cost.
+  1. Open `/financial-management` -> Tab **Overview**.
+  2. Inspect calculated metrics.
+* **Expected Result:**
+  * Gross Income = $39,840.00 - 31,872.00 = \mathbf{PHP\ 7,968.00}$.
+  * Net Profit = $7,968.00 - 2,450.00 = \mathbf{PHP\ 5,518.00}$.
+  * Ending Balance = $11,834.59 + 5,518.00 = \mathbf{PHP\ 17,352.59}$.
+* **Actual Result:** **PASS**.
 
-#### Test Case TC-REP-01: Monthly DepEd Report Excel Export
-* **Feature:** Reports & Exports
-* **Purpose:** Verify that recorded sales and expenses export directly into an Excel `.xlsx` file.
-* **Precondition:** Financial data exists for the selected month.
+#### Test Case TC-FIN-03: Statutory Fund Allocation & Locked Carry-Forward Rule
+* **Feature:** DepEd Fund Allocation & Balance Continuity
+* **Objective:** Verify statutory percentage allocations and enforce locked carryover for non-initial months.
+* **Precondition:** Net Profit is `PHP 5,518.00`.
 * **Steps:**
-  1. Open `/reports`. Select **Monthly Report** for the active School Year.
-  2. Click **Export to Excel (`.xlsx`)**.
-* **Expected Result:** Browser triggers immediate download of `.xlsx` spreadsheet matching DepEd table columns.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Shows elimination of manual re-typing of financial reports.
+  1. Open `/financial-management` -> Tab **Fund Allocation**.
+  2. Inspect Supplementary Feeding share ($35\%$): $5,518.00 \times 0.35 = \mathbf{PHP\ 1,931.30}$.
+  3. Inspect School Operating Fund share ($25\%$): $5,518.00 \times 0.25 = \mathbf{PHP\ 1,379.50}$.
+  4. Inspect month 2 (July): Verify that the "Balance in previous month" input is **locked (read-only with padlock icon)**, exactly matching June's ending Current Balance.
+* **Expected Result:** Percentages match statutory splits; carry-forward balance is locked to prevent tampering.
+* **Actual Result:** **PASS**.
 
 ---
 
 ### Negative Test Cases
 
-#### Test Case TC-NEG-01: Unauthorized Route Access (RBAC Enforcement)
-* **Feature:** Role-Based Access Control
-* **Purpose:** Verify a Cashier cannot access Financial Management or User Accounts.
-* **Precondition:** Logged in as a user with the `cashier` role.
-* **Steps:**
-  1. Attempt to navigate directly in the browser address bar to `http://localhost:5173/financial-management` or `/accounts`.
-* **Expected Result:** Route guard intercepts navigation and redirects cashier back to `/pos` or `/dashboard`.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Proves strict security boundaries preventing unauthorized viewing of school finances.
+#### Test Case TC-NEG-01: Future School Year Financial Entry Lock
+* **Feature:** School Year Financial Integrity
+* **Objective:** Verify the system blocks creating or editing financial reports for unreached academic years.
+* **Steps:** Attempt to add a financial report for a future school year.
+* **Expected Result:** Operation blocked with message: `"You cannot add a financial report for a future school year."`
+* **Actual Result:** **PASS**.
 
-#### Test Case TC-NEG-02: POS Checkout with Insufficient Cash
-* **Feature:** Point of Sale Validation
-* **Purpose:** Verify cashier cannot submit a sale when cash tendered is less than total amount due.
-* **Precondition:** POS cart total is PHP 100.00.
-* **Steps:**
-  1. Open `/pos`. Cart total = PHP 100.00.
-  2. Input Amount Received = `50.00`.
-* **Expected Result:** System disables the "Complete Cash Sale" button and displays a warning indicating insufficient cash.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Prevents cash shortages and negative transaction records.
+#### Test Case TC-NEG-02: Negative Financial & Inventory Value Rejection
+* **Feature:** Data Validation
+* **Objective:** Verify the system rejects negative prices, negative stock, and negative expense entries.
+* **Steps:** Enter `-500.00` in the Expense Amount field or Product Stock field.
+* **Expected Result:** Form validation blocks submission with alert: `"Must be greater than or equal to 0"`.
+* **Actual Result:** **PASS**.
 
-#### Test Case TC-NEG-03: Submitting Negative Product Stock
-* **Feature:** Product Management
-* **Purpose:** Verify system rejects negative inventory values.
-* **Precondition:** Add/Edit product modal open.
-* **Steps:**
-  1. Input Stock = `-10` or Selling Price = `-5`.
-  2. Attempt to click **Add Product**.
-* **Expected Result:** HTML5 and schema validations block submission, displaying `"Must be greater than or equal to 0"`.
-* **Actual Result:** PASS.
-* **Defense Explanation:** Ensures inventory integrity by preventing corrupted negative quantities.
+#### Test Case TC-NEG-03: Role-Based Route Protection (RBAC)
+* **Feature:** Security Access Control
+* **Objective:** Verify non-administrative users cannot access financial statements or user accounts.
+* **Steps:** Log in as `staff` and attempt to navigate directly to `http://localhost:5173/financial-management` or `/accounts`.
+* **Expected Result:** Route guard intercepts request and redirects user back to `/inventory`.
+* **Actual Result:** **PASS**.
 
 ---
 
-## 20. Live Testing Script for Defense
+## 18. Live 3-Minute Defense Demonstration Script
 
-*(Use this concise script when the panel asks for immediate proof of system functionality)*
+*(Use this streamlined script when the panel requests immediate live execution)*
 
 > **Presenter:**  
-> *"Honorable panel members, to prove the stability and integrity of MEALS, we will now execute three live representative test cases: an inventory stock replenishment, a point-of-sale cash transaction, and an end-of-day perishable food waste reset."*
+> *"Honorable panel members, to demonstrate the integrity of MEALS in real time, we will now execute three live representative tests: a kitchen batch replenishment, an operational expense with digital receipt verification, and our end-of-day perishable food waste reconciliation."*
 
-### Test 1: Morning Stock Replenishment
-* **ACTION:** Navigate to `/inventory`. Click `+ Replenish Stock`. Select *Pancit Canton*, enter `20` pieces, and click **Confirm**.
-* **EXPECTED RESULT:** The stock count updates instantly to 20, and the status changes to green "In Stock".
-* **WHAT TO SAY:**  
-  > *"As seen on screen, the morning replenishment of 20 pieces was successfully committed to the database and reflected on the inventory dashboard."*
+### Test 1: Kitchen Batch Replenishment
+* **ACTION:** Go to `/inventory`. Click `+ Replenish Stock`. Select *Pancit Canton*, enter `20` portions, remarks: *"Recess batch prep"*. Click **Confirm**.
+* **RESULT:** Stock increases to 20; status updates to green "In Stock"; audit log created.
+* **SAY TO PANEL:**  
+  > *"As shown on screen, the morning replenishment was committed to the database and immediately reflected on the operational dashboard."*
 
-### Test 2: Counter Checkout & Change Calculation
-* **ACTION:** Open `/pos`. Add 2 portions of *Pancit Canton* (PHP 40.00). Enter `PHP 100.00` cash received. Click **Complete Cash Sale**.
-* **EXPECTED RESULT:** Change displays as `PHP 60.00`. The receipt modal appears.
-* **WHAT TO SAY:**  
-  > *"The counter checkout processed the order, computed the exact change of PHP 60.00, and logged the transaction into the sales audit register."*
+### Test 2: Operating Expense with Digital Receipt Attachment
+* **ACTION:** Go to `/financial-management` -> Tab **Expenses**. Add Daily Expense: Category `Gas`, Amount `PHP 1,100.00`, attach `sample_receipt.png`, click **Add Daily Expense**. Then click the eye icon to show the **Receipt Preview Modal**.
+* **RESULT:** Expense is saved; receipt image previews instantly; monthly operating expenses adjust automatically.
+* **SAY TO PANEL:**  
+  > *"Every disbursement is cataloged under DepEd categories with an auditable digital receipt attached for division inspection."*
 
-### Test 3: Closing Food Waste Reconciliation
-* **ACTION:** Return to `/inventory`. Click `🍲 End-of-Day Perishable Food Reset`. For remaining unsold items, select `"Spoiled / Food Waste"` and click **Confirm**.
-* **EXPECTED RESULT:** Stock resets to 0. A food waste record is appended to Stock History.
-* **WHAT TO SAY:**  
-  > *"In our closing test, the unsold perishable items are safely cleared to zero, and the waste is logged with full accountability for afternoon audit."*
-
----
-
-## 21. Possible Panel Questions and Answers
-
-#### Q1: "Why do you need a specialized canteen system when ordinary retail POS systems already exist?"
-> **Answer:**  
-> *"Ordinary retail POS systems are designed for non-perishable barcoded items like canned goods or soap that sit on shelves for months. School canteens prepare fresh cooked meals like arroz caldo or pancit that spoil if unsold by afternoon dismissal. MEALS is specifically customized for school canteen operations: it includes daily batch prep tracking, end-of-day perishable food waste reconciliation, and built-in DepEd monthly financial and fund allocation reporting."*
-
-#### Q2: "How exactly does your AI prediction work, and what happens if there is no historical data yet?"
-> **Answer:**  
-> *"Our AI uses an **XGBoost (Extreme Gradient Boosting)** regression model. It takes historical daily sales and analyzes weekday demand patterns, temperature, weather conditions, and school events like exam weeks or intramurals. If the system is newly installed and historical data is limited, MEALS automatically falls back to an intelligent heuristic baseline using moving averages and day-of-week multipliers until enough training data is accumulated."*
-
-#### Q3: "What prevents a cashier from manipulating or viewing sensitive school financial records?"
-> **Answer:**  
-> *"MEALS enforces strict Role-Based Access Control both on the React frontend and via FastAPI token dependencies in the backend. When a Cashier logs in, the navigation sidebar only displays the POS checkout and recent transaction history. If a cashier attempts to access `/financial-management` or `/accounts` directly via URL manipulation, the system immediately blocks access and redirects them to their designated workstation."*
-
-#### Q4: "How does the system ensure data security and accountability for financial adjustments?"
-> **Answer:**  
-> *"All administrative actions, login attempts, inventory stock adjustments, and expense entries are automatically captured in our immutable **Audit Log** (`/audit`). The audit record logs the exact user ID, role, action type, IP address, and timestamp. Furthermore, administrative accounts require Two-Factor Authentication (TOTP), preventing unauthorized access even if a password is compromised."*
-
-#### Q5: "What happens if the internet connection or school network goes down during recess?"
-> **Answer:**  
-> *"The POS module is equipped with an offline transaction cache (`offlineStore.js`). If the network disconnects, the cashier can continue ringing up cash sales without interruption. Transactions are stored locally in the browser and automatically synchronize with the server database as soon as the connection is restored."*
-
-#### Q6: "Why doesn't the POS automatically deduct cooked food portion stock in real time during the recess rush?"
-> **Answer:**  
-> *"In a fast-paced school canteen recess where hundreds of students order within 15 minutes, cooked food is served in varying ladle portion sizes, combo plates, and student meal packages. Requiring strict real-time itemized deductions often creates stock discrepancies. Instead, MEALS uses the standard canteen operating procedure: morning batch logging followed by an afternoon physical closing reconciliation where unsold portions are counted, cleared, and logged as food waste."*
+### Test 3: Closing Perishable Food Waste Reset & Financial Carry-Forward
+* **ACTION:** Go to `/inventory`. Click `🍲 End-of-Day Perishable Food Reset`. For remaining unsold items, select Disposition `"Spoiled / Food Waste"` and confirm. Then switch to `/financial-management` -> Tab **Fund Allocation**.
+* **RESULT:** Stock zeroes out cleanly; waste costs are archived; Fund Allocation table reflects Net Surplus with locked balance carryovers.
+* **SAY TO PANEL:**  
+  > *"Unsold perishable food is cleared to prevent spoilage carryover, and the resulting financial surplus is automatically allocated into DepEd statutory funds."*
 
 ---
 
-## 22. Actual Limitations
+## 19. Defense Panel Questions and Expert Answers
 
-To ensure honesty and academic defensibility, the following current system boundaries are acknowledged:
+#### Q1: "Why did you prioritize Inventory and Financial Management instead of standard commercial features?"
+> **Answer:**  
+> *"Elementary school canteens have unique operational priorities governed by DepEd Order No. 8, s. 2007. Generic store software cannot handle daily perishable meal waste reconciliation, cannot track raw ingredient bulk units versus cooked portions, and completely lacks the 12-month June-to-May DepEd financial structure with statutory 6-fund allocations. Our research directly solves the school's actual administrative pain points: food waste in the kitchen and arithmetic errors in DepEd financial reports."*
 
-1. **Cash-Centric Counter Transactions:** The system currently processes physical cash payments with change computation. It does not integrate online digital payment gateways (such as GCash or Maya) due to elementary student cash-handling realities.
-2. **Barcode Scanner Decoupling:** While barcode fields exist in the database for packaged retail snacks, daily cooked foods (viands, soups) rely on quick-tap touchscreen buttons rather than barcode stickers.
-3. **Local Network / Self-Hosted Deployment:** The system is currently designed for on-premise local area network (LAN) canteen operation or standard web hosting, rather than a multi-tenant cloud SaaS spanning multiple school districts.
-4. **Offline Mode Scope:** The offline transaction queue supports POS cash sales; administrative operations (financial report generation and user account creation) require an active database connection.
+#### Q2: "How does your system handle the difference between raw ingredients and cooked meal portions?"
+> **Answer:**  
+> *"In MEALS, the product catalog supports distinct Unit Types: Bulk units (`kg`, `g`, `L`, `mL`) for kitchen raw supplies like rice, cooking oil, and sugar, and Piece units (`PCS`) for prepared meals like bowls of arroz caldo or sandwiches. Furthermore, cooked items are flagged with the `is_perishable` attribute, ensuring they undergo our end-of-day waste reconciliation protocol at school dismissal."*
+
+#### Q3: "How does MEALS ensure that DepEd fund allocations remain mathematically accurate from month to month?"
+> **Answer:**  
+> *"MEALS enforces an automated forward-balance carryover rule. For the initial month of a school year, the administrator enters verified opening balances. For every subsequent month (July through May), the system automatically locks the 'Balance in previous month' field and calculates it directly from the preceding month's ending Current Balance: Opening Balance + Net Income Share + Interest - Expenses = Ending Balance. This eliminates manual calculation errors and prevents unauthorized balance manipulation."*
+
+#### Q4: "How does recorded perishable food waste impact the monthly financial statement and Cost of Sales?"
+> **Answer:**  
+> *"When perishable food spoils or remains unsold at closing, the system logs the exact unit cost in `inventory_logs`. In the DepEd accounting statement, this waste forms part of the Cost of Sales ($Beginning\ Inventory + Purchases - Ending\ Inventory$). By capturing the exact financial waste loss rather than ignoring it, MEALS provides the Canteen Manager and School Head with full visibility into how much revenue was lost to over-preparation, allowing them to adjust ingredient procurement for subsequent months."*
+
+#### Q5: "What happens if a canteen staff member makes a mistake during stock replenishment or adjustment?"
+> **Answer:**  
+> *"All inventory actions write immutable records to `inventory_logs`. Staff cannot quietly overwrite stock counts. Any correction requires creating a dedicated 'Adjustment' entry with a mandatory reason (*Damaged, Spoilage, Shrinkage, Audit Recount, Kitchen Prep Spill*) and explanatory remarks. The complete history is displayed in the Stock History tab, ensuring full audit accountability."*
+
+#### Q6: "How do you guarantee that exported reports comply with DepEd Division Office standards?"
+> **Answer:**  
+> *"MEALS exports reports directly into standard `.xlsx` Excel spreadsheets and official printable PDFs that mirror DepEd reporting formats. Furthermore, each report includes the required institutional signature blocks: Prepared by the Canteen Manager (Myrna A. De Mesa), Checked by the School Head (Maricar A. Afuang), and Audited by the School Canteen Auditor (Kathleen B. Hernandez)."*
 
 ---
 
-## 23. Future Enhancements
+## 20. System Boundaries & Academic Limitations
 
-The following proposed extensions represent planned future developments:
+To maintain academic honesty and defensibility, the following system boundaries are acknowledged:
 
-1. **Automated DepEd Form 8 Prescribed Template Sync:** Integrating direct export into the exact DepEd Form 8 Excel layout with pre-filled district header metadata.
-2. **RFID / Student Meal Card Tap Integration:** Introducing student NFC/RFID canteen cards linked to parental daily allowances to speed up recess queues.
-3. **Kitchen Ingredient Recipe Breakdown (BOM):** Automatically calculating ingredient deduction (e.g., kilograms of rice and chicken) based on cooked meal batch quantities.
-4. **Automated Weather API Synchronization:** Expanding the Open-Meteo integration to fetch real-time local weather forecasts automatically every morning at 5:00 AM without manual selection.
+1. **Standalone Canteen Deployment:** MEALS is engineered specifically for single-institution elementary school canteen operations (Bay Central Elementary School), rather than a multi-tenant cloud platform managing an entire school division.
+2. **Kitchen Recipe Breakdown (Bill of Materials):** Current batch replenishment tracks the number of cooked meal portions prepared (e.g., 30 bowls of arroz caldo). Direct automated deduction of raw ingredients (e.g., deducting 2 kg of raw chicken and 3 kg of rice per batch) is planned as a future recipe management module.
+3. **Cash-Based Canteen Accounting:** In accordance with public elementary school realities, transactions and revenue entries are recorded in Philippine Pesos (cash accounting) rather than through student digital credit cards or bank integrations.
 
 ---
 
-## 24. Final Defense Closing
+## 21. Future Enhancements
 
-*(To be delivered by the capstone team at the conclusion of the presentation)*
+1. **Recipe Bill of Materials (BOM) Kitchen Engine:** Automatically deduct raw bulk inventory (`kg` of rice, meat, condiments) whenever a morning cooked batch is logged.
+2. **Automated Barcode & QR Code Scanning for Packaged Pantry Ingredients:** Enabling barcode scanner integration for commercial raw ingredients (canned milk, cooking oil, flour) while maintaining touchscreen batch entry for daily cooked perishables.
+3. **DepEd Form 8 Official Template Auto-Fill:** Direct mapping of monthly financial outputs into the exact digital DepEd Form 8 macro-enabled workbook.
 
-> *"Honorable members of the panel, MEALS was built to address the real, day-to-day realities of Bay Central Elementary School's canteen.  
+---
+
+## 22. Final Defense Closing Statement
+
+*(To be delivered with confidence by the group leader)*
+
+> *"Honorable members of the panel, our research adviser, and guests:  
 > 
-> By bridging the gap between morning food preparation, fast counter sales, and afternoon perishable food waste reconciliation, the system provides school canteen personnel with tools tailored to their unique operational needs. At the same time, it automates tedious monthly DepEd financial statements, protects administrative security through two-factor authentication, and leverages machine learning to make morning food preparation smarter and less wasteful.  
+> MEALS was designed, engineered, and tested to address the real-world operational challenges of Bay Central Elementary School.  
 > 
-> The system you witnessed today is fully operational, thoroughly tested, and ready to serve the school community.  
+> By bridging the gap between morning kitchen batch preparation, afternoon perishable food waste reconciliation, and automated DepEd monthly financial accounting, MEALS transforms a tedious, error-prone manual process into a transparent, auditable, and data-driven management system.  
 > 
-> Thank you very much, and we are now ready for your questions and critiques."*
+> Our system provides school canteen personnel with tools specifically built for their environment: eliminating food waste through daily closing reconciliation protocols, categorizing operational disbursements with digital receipt verification, and guaranteeing that every peso allocated for student nutrition is accurately tracked and protected.  
+> 
+> The system you witnessed today is fully implemented, rigorously tested, and ready to serve the school community.  
+> 
+> Thank you very much, and we welcome your questions and critiques."*

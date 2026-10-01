@@ -198,10 +198,12 @@ class Transaction(Base):
     discount: Mapped[float] = mapped_column(Float, default=0.0)
     payment_type: Mapped[str] = mapped_column(String, default="cash")   # cash
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    school_year_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("school_years.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     synced: Mapped[bool] = mapped_column(Boolean, default=True)   # False = came from offline queue
 
     user: Mapped[Optional["User"]] = relationship("User", back_populates="transactions")
+    school_year: Mapped[Optional["SchoolYear"]] = relationship("SchoolYear")
     items: Mapped[List["TransactionItem"]] = relationship("TransactionItem", back_populates="transaction",
                          cascade="all, delete-orphan")
 
