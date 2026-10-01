@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { API } from '../services/api';
 import { saveOfflineTransaction } from '../services/offlineStore';
 import { requestAlertRefresh } from '../services/realtimeAlerts';
+import ConfirmationModal from '../components/ConfirmationModal';
 import { BULK_UNIT_TYPE, formatProductQuantity, formatQuantity, formatUnit, getBulkSaleOptions, getProductBaseUnit, getProductUnitType, getUnitMultiplier } from '../utils/units';
 import {
   ArchiveBoxIcon,
@@ -193,6 +194,23 @@ export default function POS() {
   });
   const [newMenuItemError, setNewMenuItemError] = useState('');
   const [newMenuItemLoading, setNewMenuItemLoading] = useState(false);
+
+  // Global Confirmation Alert Modal State
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmLabel: 'Confirm',
+    tone: 'emerald',
+    isLoading: false,
+    loadingText: 'Processing...',
+    details: null,
+    onConfirm: null,
+  });
+
+  const closeConfirm = () => {
+    setConfirmDialog((prev) => ({ ...prev, isOpen: false, isLoading: false, onConfirm: null }));
+  };
 
   useEffect(() => {
     let isActive = true;
@@ -427,11 +445,26 @@ export default function POS() {
   const canIncreaseCartItem = () => true;
 
   const clearCart = () => {
-    if (window.confirm('Are you sure you want to clear the cart?')) {
-      setCart([]);
-      setAmountReceived('');
-      setShowOrderModal(false);
-    }
+    if (cart.length === 0) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Clear Cart',
+      message: 'Are you sure you want to remove all items from the current cart?',
+      confirmLabel: 'Yes, Clear Cart',
+      tone: 'rose',
+      isLoading: false,
+      loadingText: 'Clearing...',
+      details: [
+        { label: 'Total Items', value: `${cart.reduce((sum, item) => sum + item.qty, 0)} item(s)` },
+        { label: 'Current Total', value: formatCurrency(cartTotal) },
+      ],
+      onConfirm: () => {
+        setCart([]);
+        setAmountReceived('');
+        setShowOrderModal(false);
+        closeConfirm();
+      },
+    });
   };
 
   // --- Calculations ---
@@ -693,20 +726,38 @@ export default function POS() {
     }
   };
 
-  const handleDeleteMenuItem = async (id, name) => {
-    if (!window.confirm(`Remove "${name}" from POS menu?`)) return;
-    try {
-      try {
-        await API.deletePOSMenuItem(id);
-      } catch {
-        await API.deleteProduct(id);
-      }
-      setProducts((prev) => prev.filter((p) => p.id !== id));
-      setQuickSaleProducts((prev) => prev.filter((p) => p.id !== id));
-      setCart((prev) => prev.filter((item) => item.id !== id));
-    } catch (err) {
-      alert(err.message || 'Failed to remove menu item.');
-    }
+  const handleDeleteMenuItem = (id, name) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Remove Menu Item',
+      message: `Are you sure you want to remove "${name}" from the POS menu?`,
+      confirmLabel: 'Yes, Remove Item',
+      tone: 'rose',
+      isLoading: false,
+      loadingText: 'Removing...',
+      details: [
+        { label: 'Item Name', value: name },
+        { label: 'Action', value: 'Remove from active POS quick-sale menu' },
+      ],
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          try {
+            await API.deletePOSMenuItem(id);
+          } catch {
+            await API.deleteProduct(id);
+          }
+          setProducts((prev) => prev.filter((p) => p.id !== id));
+          setQuickSaleProducts((prev) => prev.filter((p) => p.id !== id));
+          setCart((prev) => prev.filter((item) => item.id !== id));
+          closeConfirm();
+          window.showToast?.(`"${name}" removed from POS menu.`, 'success');
+        } catch (err) {
+          closeConfirm();
+          window.showToast?.(err.message || 'Failed to remove menu item.', 'error');
+        }
+      },
+    });
   };
 
   const categoryIcon = (cat) => {
@@ -2268,6 +2319,20 @@ export default function POS() {
           </div>
         </div>
       )}
+
+      {/* Confirmation Alert Modal */}
+      <ConfirmationModal
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        tone={confirmDialog.tone}
+        isLoading={confirmDialog.isLoading}
+        loadingText={confirmDialog.loadingText}
+        details={confirmDialog.details}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={closeConfirm}
+      />
     </div>
   );
 }

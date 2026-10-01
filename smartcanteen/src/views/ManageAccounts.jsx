@@ -614,18 +614,8 @@ export default function ManageAccounts() {
     });
   };
 
-  const toggleAccountStatus = async (user) => {
-    const nextActive = !user.is_active;
+  const executeToggleAccountStatus = async (user, nextActive) => {
     const action = nextActive ? 'activate' : 'deactivate';
-    if (!nextActive) {
-      const confirmed = window.confirm(
-        `Deactivate ${user.username}? They will no longer be able to sign in.`
-      );
-      if (!confirmed) {
-        return;
-      }
-    }
-
     setBusyUserId(user.id);
     setError('');
     try {
@@ -660,67 +650,117 @@ export default function ManageAccounts() {
     }
   };
 
-  const disableAccount = async (user) => {
-    const confirmed = window.confirm(
-      `Disable ${user.username}? This deactivates the account and preserves activity history.`
-    );
-    if (!confirmed) {
+  const toggleAccountStatus = (user) => {
+    const nextActive = !user.is_active;
+    if (!nextActive) {
+      setSaveConfirmDialog({
+        isOpen: true,
+        title: 'Deactivate Account',
+        message: `Deactivate ${user.username}? They will no longer be able to sign in to MEALS.`,
+        confirmLabel: 'Yes, Deactivate',
+        tone: 'amber',
+        isLoading: false,
+        loadingText: 'Deactivating...',
+        details: [
+          { label: 'Username', value: user.username },
+          { label: 'Role', value: formatRole(user.role) },
+          { label: 'Status', value: 'Account will be deactivated' },
+        ],
+        onConfirm: async () => {
+          closeSaveConfirm();
+          await executeToggleAccountStatus(user, false);
+        },
+      });
       return;
     }
 
-    setBusyUserId(user.id);
-    setError('');
-    try {
-      await API.deleteAdminUser(user.id);
-      window.showToast?.(`Account disabled for ${user.username}.`, 'success');
-
-      const isSelf =
-        user.id === currentUser?.id ||
-        (currentUser?.username && user.username === currentUser.username);
-      if (isSelf && refreshUser) {
-        await refreshUser();
-      }
-
-      window.dispatchEvent(
-        new CustomEvent('meals-user-updated', {
-          detail: { ...user, is_active: false },
-        })
-      );
-
-      setUsers((prev) =>
-        prev.map((item) =>
-          item.id === user.id ? { ...item, is_active: false } : item
-        )
-      );
-      await loadUsers();
-    } catch (err) {
-      setError(err.message || 'Account could not be disabled.');
-    } finally {
-      setBusyUserId(null);
-    }
+    executeToggleAccountStatus(user, true);
   };
 
-  const resetAuthenticator = async (user) => {
+  const disableAccount = (user) => {
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Disable Account',
+      message: `Disable ${user.username}? This deactivates the account and preserves activity history.`,
+      confirmLabel: 'Yes, Disable Account',
+      tone: 'rose',
+      isLoading: false,
+      loadingText: 'Disabling...',
+      details: [
+        { label: 'Username', value: user.username },
+        { label: 'Role', value: formatRole(user.role) },
+        { label: 'History', value: 'Activity and audit history will be preserved' },
+      ],
+      onConfirm: async () => {
+        closeSaveConfirm();
+        setBusyUserId(user.id);
+        setError('');
+        try {
+          await API.deleteAdminUser(user.id);
+          window.showToast?.(`Account disabled for ${user.username}.`, 'success');
+
+          const isSelf =
+            user.id === currentUser?.id ||
+            (currentUser?.username && user.username === currentUser.username);
+          if (isSelf && refreshUser) {
+            await refreshUser();
+          }
+
+          window.dispatchEvent(
+            new CustomEvent('meals-user-updated', {
+              detail: { ...user, is_active: false },
+            })
+          );
+
+          setUsers((prev) =>
+            prev.map((item) =>
+              item.id === user.id ? { ...item, is_active: false } : item
+            )
+          );
+          await loadUsers();
+        } catch (err) {
+          setError(err.message || 'Account could not be disabled.');
+        } finally {
+          setBusyUserId(null);
+        }
+      },
+    });
+  };
+
+  const resetAuthenticator = (user) => {
     const isUserAdmin = user.role === 'admin';
     const message = isUserAdmin
       ? `Reset authenticator for ${user.username}? They will be required to set up MFA again at next login.`
       : `Reset authenticator for ${user.username}? MFA is optional for staff, so they will log in directly.`;
-    const confirmed = window.confirm(message);
-    if (!confirmed) {
-      return;
-    }
 
-    setBusyUserId(user.id);
-    setError('');
-    try {
-      await API.resetUserAuthenticator(user.id, { revoke_remembered_devices: true });
-      window.showToast?.(`Authenticator reset for ${user.username}.`, 'success');
-      await loadUsers();
-    } catch (err) {
-      setError(err.message || 'Authenticator could not be reset.');
-    } finally {
-      setBusyUserId(null);
-    }
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Reset Authenticator (MFA)',
+      message,
+      confirmLabel: 'Yes, Reset MFA',
+      tone: 'amber',
+      isLoading: false,
+      loadingText: 'Resetting...',
+      details: [
+        { label: 'Username', value: user.username },
+        { label: 'Role', value: formatRole(user.role) },
+        { label: 'Effect', value: 'Revokes registered authenticator device credentials' },
+      ],
+      onConfirm: async () => {
+        closeSaveConfirm();
+        setBusyUserId(user.id);
+        setError('');
+        try {
+          await API.resetUserAuthenticator(user.id, { revoke_remembered_devices: true });
+          window.showToast?.(`Authenticator reset for ${user.username}.`, 'success');
+          await loadUsers();
+        } catch (err) {
+          setError(err.message || 'Authenticator could not be reset.');
+        } finally {
+          setBusyUserId(null);
+        }
+      },
+    });
   };
 
   const openDeclineDialog = (request, type = 'reset', action = 'deny') => {
@@ -790,7 +830,7 @@ export default function ManageAccounts() {
     }
   };
 
-  const reviewPasswordResetRequest = async (request, action) => {
+  const reviewPasswordResetRequest = (request, action) => {
     const username = request.username || request.identifier;
     const approved = action === 'approve' || action === 'approve_appeal';
     const appealAction = action === 'approve_appeal' || action === 'deny_appeal';
@@ -800,32 +840,41 @@ export default function ManageAccounts() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Approve ${appealAction ? 'password reset appeal' : 'password reset'} for ${username}?`
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    setBusyResetRequestId(request.id);
-    setResetRequestError('');
-    try {
-      if (action === 'approve') {
-        await API.approvePasswordResetRequest(request.id);
-        window.showToast?.(`Password reset approved for ${username}.`, 'success');
-      } else {
-        await API.approvePasswordResetAppeal(request.id);
-        window.showToast?.(`Password reset appeal approved for ${username}.`, 'success');
-      }
-      await loadPasswordResetRequests();
-    } catch (err) {
-      setResetRequestError(err.message || 'Password reset request could not be updated.');
-    } finally {
-      setBusyResetRequestId(null);
-    }
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: appealAction ? 'Approve Password Reset Appeal' : 'Approve Password Reset',
+      message: `Approve ${appealAction ? 'password reset appeal' : 'password reset'} for ${username}?`,
+      confirmLabel: 'Yes, Approve',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Approving...',
+      details: [
+        { label: 'Account', value: username },
+        { label: 'Request Type', value: appealAction ? 'Password Reset Appeal' : 'Password Reset' },
+      ],
+      onConfirm: async () => {
+        closeSaveConfirm();
+        setBusyResetRequestId(request.id);
+        setResetRequestError('');
+        try {
+          if (action === 'approve') {
+            await API.approvePasswordResetRequest(request.id);
+            window.showToast?.(`Password reset approved for ${username}.`, 'success');
+          } else {
+            await API.approvePasswordResetAppeal(request.id);
+            window.showToast?.(`Password reset appeal approved for ${username}.`, 'success');
+          }
+          await loadPasswordResetRequests();
+        } catch (err) {
+          setResetRequestError(err.message || 'Password reset request could not be updated.');
+        } finally {
+          setBusyResetRequestId(null);
+        }
+      },
+    });
   };
 
-  const reviewAuthenticatorRecoveryRequest = async (request, action) => {
+  const reviewAuthenticatorRecoveryRequest = (request, action) => {
     const username = request.username || request.identifier;
     const approved = action === 'approve' || action === 'approve_appeal';
     const appealAction = action === 'approve_appeal' || action === 'deny_appeal';
@@ -835,30 +884,39 @@ export default function ManageAccounts() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Approve ${appealAction ? 'authenticator recovery appeal' : 'authenticator recovery'} for ${username}?`
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    setBusyAuthRecoveryId(request.id);
-    setAuthRecoveryError('');
-    try {
-      if (action === 'approve') {
-        await API.approveAuthenticatorRecoveryRequest(request.id);
-        window.showToast?.(`Authenticator recovery approved for ${username}.`, 'success');
-      } else {
-        await API.approveAuthenticatorRecoveryAppeal(request.id);
-        window.showToast?.(`Authenticator recovery appeal approved for ${username}.`, 'success');
-      }
-      await loadAuthenticatorRecoveryRequests();
-      await loadUsers();
-    } catch (err) {
-      setAuthRecoveryError(err.message || 'Authenticator recovery request could not be updated.');
-    } finally {
-      setBusyAuthRecoveryId(null);
-    }
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: appealAction ? 'Approve Authenticator Recovery Appeal' : 'Approve Authenticator Recovery',
+      message: `Approve ${appealAction ? 'authenticator recovery appeal' : 'authenticator recovery'} for ${username}?`,
+      confirmLabel: 'Yes, Approve',
+      tone: 'emerald',
+      isLoading: false,
+      loadingText: 'Approving...',
+      details: [
+        { label: 'Account', value: username },
+        { label: 'Request Type', value: appealAction ? 'Authenticator Recovery Appeal' : 'Authenticator Recovery' },
+      ],
+      onConfirm: async () => {
+        closeSaveConfirm();
+        setBusyAuthRecoveryId(request.id);
+        setAuthRecoveryError('');
+        try {
+          if (action === 'approve') {
+            await API.approveAuthenticatorRecoveryRequest(request.id);
+            window.showToast?.(`Authenticator recovery approved for ${username}.`, 'success');
+          } else {
+            await API.approveAuthenticatorRecoveryAppeal(request.id);
+            window.showToast?.(`Authenticator recovery appeal approved for ${username}.`, 'success');
+          }
+          await loadAuthenticatorRecoveryRequests();
+          await loadUsers();
+        } catch (err) {
+          setAuthRecoveryError(err.message || 'Authenticator recovery request could not be updated.');
+        } finally {
+          setBusyAuthRecoveryId(null);
+        }
+      },
+    });
   };
 
   const isEditingSelf = editingUser?.id === currentUser.id;

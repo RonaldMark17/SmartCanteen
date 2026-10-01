@@ -12,7 +12,6 @@ import {
 } from '../services/receiptSanitizer';
 import { saveReceipt } from '../services/receiptStorage';
 import {
-  ArchiveBoxIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
   ArrowRightIcon,
@@ -78,7 +77,7 @@ const PAGE_COPY = {
   schoolYears: {
     eyebrow: 'School Years',
     title: 'Manage School Years',
-    subtitle: 'Create, activate, archive, and review beginning cash balances for each school year.',
+    subtitle: 'Create, activate, and review beginning cash balances for each school year.',
   },
 };
 
@@ -2304,23 +2303,36 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     }
 
     const schoolYear = schoolYears.find((item) => Number(item.id) === Number(schoolYearId));
-    const confirmed = window.confirm(
-      `Remove school year ${schoolYear?.name || 'this school year'}? This deletes its monthly reports, expenses, and allocations.`
-    );
-    if (!confirmed) {
-      return;
-    }
 
-    setDeletingSchoolYear(true);
-    try {
-      const response = await API.deleteFinancialSchoolYear(schoolYearId);
-      window.showToast?.(response?.message || 'School year removed.', 'success');
-      await loadSchoolYears(response?.active_school_year_id || null);
-    } catch (error) {
-      window.showToast?.(error.message || 'Unable to remove the school year.', 'error');
-    } finally {
-      setDeletingSchoolYear(false);
-    }
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Remove School Year',
+      message: `Remove school year ${schoolYear?.name || 'this school year'}? This permanently deletes its monthly reports, expenses, and allocations.`,
+      confirmLabel: 'Yes, Remove School Year',
+      tone: 'rose',
+      isLoading: false,
+      loadingText: 'Removing...',
+      details: [
+        { label: 'School Year', value: schoolYear?.name || 'Selected Year' },
+        { label: 'Warning', value: 'All associated monthly statements, sales entries, and expense records will be deleted.' },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        setDeletingSchoolYear(true);
+        try {
+          const response = await API.deleteFinancialSchoolYear(schoolYearId);
+          window.showToast?.(response?.message || 'School year removed.', 'success');
+          closeSaveConfirm();
+          await loadSchoolYears(response?.active_school_year_id || null);
+        } catch (error) {
+          closeSaveConfirm();
+          window.showToast?.(error.message || 'Unable to remove the school year.', 'error');
+        } finally {
+          setDeletingSchoolYear(false);
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   }
 
   async function handleUpdateSchoolYearStatus(schoolYearId, isActive) {
@@ -2338,27 +2350,43 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       window.showToast?.('Activate another school year before archiving the active one.', 'warning');
       return;
     }
-    if (!window.confirm(`${isActive ? 'Activate' : 'Archive'} school year ${schoolYear?.name || 'this school year'}?`)) {
-      return;
-    }
 
-    setUpdatingSchoolYear(true);
-    try {
-      const response = isActive
-        ? await API.activateFinancialSchoolYear(schoolYearId)
-        : await API.archiveFinancialSchoolYear(schoolYearId);
-      const nextSchoolYearId = response?.school_year?.id || schoolYearId;
-      window.showToast?.(
-        response?.message ||
-          `School year ${response?.school_year?.name || schoolYear?.name || ''} ${isActive ? 'activated' : 'archived'}.`,
-        'success'
-      );
-      await loadSchoolYears(nextSchoolYearId);
-    } catch (error) {
-      window.showToast?.(error.message || `Unable to ${actionLabel} the school year.`, 'error');
-    } finally {
-      setUpdatingSchoolYear(false);
-    }
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: isActive ? 'Activate School Year' : 'Archive School Year',
+      message: `Are you sure you want to ${isActive ? 'activate' : 'archive'} school year ${schoolYear?.name || 'this school year'}?`,
+      confirmLabel: isActive ? 'Yes, Activate' : 'Yes, Archive',
+      tone: isActive ? 'emerald' : 'amber',
+      isLoading: false,
+      loadingText: isActive ? 'Activating...' : 'Archiving...',
+      details: [
+        { label: 'School Year', value: schoolYear?.name || 'Selected Year' },
+        { label: 'Action', value: isActive ? 'Set as current active school year' : 'Close and archive this school year' },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        setUpdatingSchoolYear(true);
+        try {
+          const response = isActive
+            ? await API.activateFinancialSchoolYear(schoolYearId)
+            : await API.archiveFinancialSchoolYear(schoolYearId);
+          const nextSchoolYearId = response?.school_year?.id || schoolYearId;
+          window.showToast?.(
+            response?.message ||
+              `School year ${response?.school_year?.name || schoolYear?.name || ''} ${isActive ? 'activated' : 'archived'}.`,
+            'success'
+          );
+          closeSaveConfirm();
+          await loadSchoolYears(nextSchoolYearId);
+        } catch (error) {
+          closeSaveConfirm();
+          window.showToast?.(error.message || `Unable to ${actionLabel} the school year.`, 'error');
+        } finally {
+          setUpdatingSchoolYear(false);
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   }
 
   async function executeSaveSchoolYearForm(startYear, endYear, openingBeginningCash) {
@@ -5847,140 +5875,258 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
 
   function renderReportsPage() {
     return (
-      <div className="view-shell overflow-x-hidden pr-0 space-y-5">
-        <PageHeader
-          page={PAGE_COPY.reports}
-          actions={
-            <>
-              <button
-                type="button"
-                onClick={handleExportGeneratedExcel}
-                disabled={exportingWorkbook || !selectedSchoolYearId}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
-              >
-                <TableCellsIcon className="h-4 w-4 stroke-[2.5]" />
-                {exportingWorkbook ? 'Preparing...' : 'Export Excel'}
-              </button>
-              <button
-                type="button"
-                onClick={handleExportGeneratedPdf}
-                disabled={exportingPdf || !selectedSchoolYearId}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
-              >
-                <DocumentArrowDownIcon className="h-4 w-4 text-slate-500" />
-                {exportingPdf ? 'Preparing...' : 'Export PDF'}
-              </button>
-              <button
-                type="button"
-                onClick={handlePrintGeneratedReport}
-                disabled={printingPdf || !selectedSchoolYearId}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
-              >
-                <PrinterIcon className="h-4 w-4 text-slate-500" />
-                {printingPdf ? 'Preparing Print...' : 'Print'}
-              </button>
-            </>
-          }
-        />
-        {renderSelectors({ compact: true })}
+      <div className="view-shell overflow-x-hidden pr-0 space-y-4">
+        {/* ── CONSOLIDATED COMPACT WORKSPACE HEADER ── */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200/80 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-black uppercase tracking-wider text-emerald-800 dark:border-emerald-800/80 dark:bg-emerald-950/60 dark:text-emerald-300">
+                MEALS Operations Workspace
+              </span>
+              {!isAdmin && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  <EyeIcon className="h-3.5 w-3.5 text-slate-500" /> Read-Only
+                </span>
+              )}
+            </div>
+            <h1 className="mt-1 text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+              Generate Reports
+            </h1>
+          </div>
 
-        <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[320px_minmax(0,1fr)]">
-          <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-            <h2 className="text-base font-black text-slate-900 dark:text-white">Report Type</h2>
-            <div className="mt-4 space-y-2">
-              {REPORT_TYPES.map((item) => {
-                const Icon = item.icon;
-                const active = reportType === item.key;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => setReportType(item.key)}
-                    className={`w-full rounded-xl border p-3.5 text-left transition ${
-                      active
-                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 shadow-xs ring-1 ring-emerald-500/20 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
-                        active ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900 dark:text-emerald-300' : 'border-slate-200/60 bg-slate-100 text-slate-500 dark:border-slate-700 dark:bg-slate-700 dark:text-slate-300'
-                      }`}>
-                        <Icon className="h-5 w-5 stroke-[2]" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-black text-slate-900 dark:text-white">{item.label}</div>
-                        <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{item.description}</div>
+          {/* Action Toolbar */}
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportGeneratedExcel}
+              disabled={exportingWorkbook || !selectedSchoolYearId}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-black text-white shadow-2xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+              title="Export generated report to Excel"
+            >
+              <TableCellsIcon className="h-4 w-4 stroke-[2.5]" />
+              <span>{exportingWorkbook ? 'Preparing...' : 'Export Excel'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportGeneratedPdf}
+              disabled={exportingPdf || !selectedSchoolYearId}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
+              title="Export generated report as PDF"
+            >
+              <DocumentArrowDownIcon className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+              <span>{exportingPdf ? 'Preparing...' : 'Export PDF'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintGeneratedReport}
+              disabled={printingPdf || !selectedSchoolYearId}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50"
+              title="Print official report"
+            >
+              <PrinterIcon className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+              <span>{printingPdf ? 'Preparing Print...' : 'Print Report'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ── UNIFIED CONTROL STRIP: REPORT TYPE TABS + INLINE SY & MONTH SELECTORS ── */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-2 sm:p-2.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+          {/* Left: Report Type Tabs in a sleek pill container */}
+          <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 rounded-xl bg-slate-100/90 p-1 dark:bg-slate-800/80 overflow-x-auto custom-scrollbar">
+            {REPORT_TYPES.map((item) => {
+              const Icon = item.icon;
+              const active = reportType === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setReportType(item.key)}
+                  className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold transition-all whitespace-nowrap ${
+                    active
+                      ? 'bg-white text-emerald-800 shadow-xs dark:bg-slate-900 dark:text-emerald-300 font-black ring-1 ring-emerald-500/25'
+                      : 'text-slate-600 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white'
+                  }`}
+                  title={item.description}
+                >
+                  <Icon className={`h-4 w-4 shrink-0 transition-colors ${active ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Right: Inline Compact Selectors for School Year & Month */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 shrink-0 px-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 shrink-0">
+                SY:
+              </span>
+              <select
+                value={selectedSchoolYearId || ''}
+                onChange={(event) => handleSchoolYearChange(Number(event.target.value))}
+                className="h-9 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-bold text-slate-800 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                title="Select School Year"
+              >
+                {schoolYears.map((schoolYear) => (
+                  <option key={schoolYear.id} value={schoolYear.id}>
+                    {schoolYear.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 shrink-0">
+                Month:
+              </span>
+              <select
+                value={selectedReportId || ''}
+                onChange={(event) => handleMonthChange(Number(event.target.value))}
+                className="h-9 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-bold text-slate-800 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                title="Select Current Month Report"
+              >
+                {(detail?.reports || []).map((report) => (
+                  <option key={report.id} value={report.id}>
+                    {report.month_label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <ValidationNotice message={selectedSchoolYearValidationMessage} />
+
+        {/* ── REPORT PREVIEW PRESENTATION (Matches Financial Management Card Styling) ── */}
+        <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+          {/* Card Header */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white truncate">
+                  {generatedReportPayload.title}
+                </h2>
+                <span className="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-300/80 dark:border-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+                  DepEd Report Format
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  <EyeIcon className="h-3 w-3 text-slate-500" /> Preview Mode
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                {generatedReportPayload.subtitle} • Official school year canteen financial report
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+                Active Year:
+              </span>
+              <span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-800 border border-emerald-200/70 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800">
+                {generatedReportPayload.school_year_name}
+              </span>
+            </div>
+          </div>
+
+          {/* Key Metrics Strip / Stat Cards */}
+          {generatedReportPayload.metrics && generatedReportPayload.metrics.length > 0 && (
+            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+                {generatedReportPayload.metrics.map(([label, value]) => {
+                  return (
+                    <div
+                      key={label}
+                      className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-2xs dark:border-slate-800 dark:bg-slate-800/80 flex flex-col justify-between gap-2"
+                    >
+                      <span className="text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 truncate">
+                        {label}
+                      </span>
+                      <div className="font-mono text-base sm:text-lg font-black text-slate-900 dark:text-white text-right">
+                        {typeof value === 'number' ? formatCurrency(value) : value}
                       </div>
                     </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="min-w-0 w-full rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-slate-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                  <EyeIcon className="h-3.5 w-3.5" />
-                  Preview
-                </div>
-                <h2 className="mt-2 text-xl font-black text-slate-900 dark:text-white">{generatedReportPayload.title}</h2>
-                <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">{generatedReportPayload.subtitle}</p>
+                  );
+                })}
               </div>
-              <DocumentTextIcon className="h-8 w-8 text-slate-400" />
             </div>
+          )}
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {generatedReportPayload.metrics.map(([label, value], idx) => {
-                const tones = ['emerald', 'rose', 'sky', 'teal'];
-                return (
-                  <MetricTile key={label} label={label} value={typeof value === 'number' ? formatCurrency(value) : value} tone={tones[idx % tones.length]} />
-                );
-              })}
-            </div>
+          {/* Table Content */}
+          <div className="overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left text-xs sm:text-sm">
+              {generatedReportPayload.headers && generatedReportPayload.headers.length > 0 && (
+                <thead className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-800/70 dark:text-slate-400">
+                  <tr>
+                    {generatedReportPayload.headers.map((hdr, hIdx) => (
+                      <th
+                        key={hdr}
+                        className={`px-4 sm:px-6 py-3.5 ${
+                          hIdx === 0 ? 'text-left' : 'text-right'
+                        }`}
+                      >
+                        {hdr}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+              )}
+              <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
+                {generatedReportPayload.rows && generatedReportPayload.rows.length > 0 ? (
+                  generatedReportPayload.rows.map((row, rowIndex) => {
+                    const isTotalOrKeyRow =
+                      row[0] === 'Current Balance' ||
+                      row[0] === 'Over All Net Profit' ||
+                      row[0] === 'Total' ||
+                      row[0]?.includes?.('Total');
 
-            <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-              <div className="overflow-x-auto custom-scrollbar">
-                <table className="w-full min-w-[650px] text-left text-sm">
-                  {generatedReportPayload.headers && generatedReportPayload.headers.length > 0 && (
-                    <thead className="border-b border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-800/60">
-                      <tr>
-                        {generatedReportPayload.headers.map((hdr, hIdx) => (
-                          <th
-                            key={hdr}
-                            className={`px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300 ${
-                              hIdx === 0 ? 'text-left' : 'text-right'
-                            }`}
-                          >
-                            {hdr}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                  )}
-                  <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
-                    {generatedReportPayload.rows.map((row, rowIndex) => (
-                      <tr key={`${row[0]}-${rowIndex}`} className="transition hover:bg-slate-50/70 dark:hover:bg-slate-800/50">
+                    return (
+                      <tr
+                        key={`${row[0]}-${rowIndex}`}
+                        className={`transition-colors hover:bg-slate-50/70 dark:hover:bg-slate-800/50 ${
+                          isTotalOrKeyRow
+                            ? 'bg-emerald-50/40 dark:bg-emerald-950/20 font-black'
+                            : ''
+                        }`}
+                      >
                         {row.map((cell, cellIndex) => (
                           <td
                             key={`${cell}-${cellIndex}`}
-                            className={`px-5 py-3.5 text-sm ${
-                              cellIndex === 0 ? 'font-black text-slate-900 dark:text-white' : 'text-right font-mono font-bold text-slate-700 dark:text-slate-300'
+                            className={`px-4 sm:px-6 py-3 text-xs sm:text-sm ${
+                              cellIndex === 0
+                                ? isTotalOrKeyRow
+                                  ? 'font-black text-emerald-950 dark:text-emerald-100'
+                                  : 'font-bold text-slate-800 dark:text-slate-200'
+                                : isTotalOrKeyRow
+                                ? 'text-right font-mono font-black text-emerald-800 dark:text-emerald-300'
+                                : 'text-right font-mono font-bold text-slate-700 dark:text-slate-300'
                             }`}
                           >
                             {cell}
                           </td>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-        </div>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td
+                      colSpan={generatedReportPayload.headers?.length || 2}
+                      className="px-6 py-10 text-center text-xs font-medium text-slate-500 dark:text-slate-400"
+                    >
+                      No records found for this report configuration.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Footer note */}
+          <div className="border-t border-slate-100 px-5 py-3 text-[11px] font-semibold text-slate-400 dark:border-slate-800 dark:text-slate-500 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+            <span>Prepared according to DepEd Order No. 8, s. 2007 guidelines.</span>
+            <span>Use Export Excel or Export PDF to save official printable copies.</span>
+          </div>
+        </section>
       </div>
     );
   }
@@ -6136,18 +6282,6 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                                 <PencilSquareIcon className="h-3.5 w-3.5" />
                                 Edit
                               </button>
-                              {isAdmin && !isHistorical ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateSchoolYearStatus(schoolYear.id, !rowIsActive)}
-                                  disabled={updatingSchoolYear || rowIsActive}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                                  title={rowIsActive ? 'Activate another school year before archiving this one' : `Archive ${schoolYear.name}`}
-                                >
-                                  <ArchiveBoxIcon className="h-3.5 w-3.5" />
-                                  Archive
-                                </button>
-                              ) : null}
                               {isAdmin ? (
                                 <button
                                   type="button"

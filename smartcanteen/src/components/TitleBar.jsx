@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from './BrandLogo';
+import ConfirmationModal from './ConfirmationModal';
 import { API } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useModuleSettings } from '../contexts/useModuleSettings';
@@ -43,6 +44,7 @@ export default function TitleBar() {
   const [serverStatus, setServerStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [showClearCacheModal, setShowClearCacheModal] = useState(false);
   const [systemInfo, setSystemInfo] = useState(null);
 
   const menuContainerRef = useRef(null);
@@ -228,13 +230,16 @@ export default function TitleBar() {
 
   const handleClearCache = () => {
     setActiveMenu(null);
-    if (window.confirm('Clear local cache and refresh? This will reset cached views and re-sync from server.')) {
-      try {
-        localStorage.removeItem('sc_offline_cache');
-        sessionStorage.clear();
-      } catch {}
-      handleReload();
-    }
+    setShowClearCacheModal(true);
+  };
+
+  const handleConfirmClearCache = () => {
+    setShowClearCacheModal(false);
+    try {
+      localStorage.removeItem('sc_offline_cache');
+      sessionStorage.clear();
+    } catch {}
+    handleReload();
   };
 
   const getPageTitle = () => {
@@ -708,6 +713,17 @@ export default function TitleBar() {
           </div>
         </div>
       )}
+
+      {/* Clear Cache Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showClearCacheModal}
+        title="Clear Cache & Refresh"
+        message="Clear local cache and refresh? This will reset cached views and re-sync from the server."
+        confirmLabel="Yes, Clear & Refresh"
+        tone="amber"
+        onConfirm={handleConfirmClearCache}
+        onCancel={() => setShowClearCacheModal(false)}
+      />
     </>
   );
 }

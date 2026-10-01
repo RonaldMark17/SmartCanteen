@@ -952,16 +952,36 @@ export default function Inventory() {
   // ─────────────────────────────────────────────────────────────────────────
   // Deactivate & Restore Handlers (Admin Only)
   // ─────────────────────────────────────────────────────────────────────────
-  const handleDeactivate = async (product) => {
-    if (!window.confirm(`Are you sure you want to deactivate "${product.name}"? It will be moved to Archived.`)) return;
-    try {
-      await API.deleteProduct(product.id);
-      window.showToast?.(`"${product.name}" moved to Archived.`, 'success');
-      requestAlertRefresh({ source: 'inventory', reason: 'product-deactivated' });
-      fetchProducts();
-    } catch {
-      window.showToast?.('Failed to deactivate product.', 'error');
-    }
+  const handleDeactivate = (product) => {
+    setSaveConfirmDialog({
+      isOpen: true,
+      title: 'Archive Product',
+      message: `Are you sure you want to deactivate "${product.name}"? It will be hidden from the active catalog and moved to Archived.`,
+      confirmLabel: 'Yes, Archive Product',
+      tone: 'amber',
+      isLoading: false,
+      loadingText: 'Archiving...',
+      details: [
+        { label: 'Product Name', value: product.name },
+        { label: 'Category', value: product.category || 'General' },
+        { label: 'Action', value: 'Move to Archived Items' },
+      ],
+      onConfirm: async () => {
+        setSaveConfirmDialog((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await API.deleteProduct(product.id);
+          window.showToast?.(`"${product.name}" moved to Archived.`, 'success');
+          requestAlertRefresh({ source: 'inventory', reason: 'product-deactivated' });
+          closeSaveConfirm();
+          fetchProducts();
+        } catch {
+          closeSaveConfirm();
+          window.showToast?.('Failed to deactivate product.', 'error');
+        } finally {
+          setSaveConfirmDialog((prev) => ({ ...prev, isLoading: false }));
+        }
+      },
+    });
   };
 
   const handleRestore = async (product) => {
