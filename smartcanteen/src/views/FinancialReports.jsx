@@ -35,6 +35,7 @@ import {
   LockClosedIcon,
   MagnifyingGlassIcon,
   MinusCircleIcon,
+  PaperClipIcon,
   PencilSquareIcon,
   PhotoIcon,
   PlusIcon,
@@ -543,6 +544,49 @@ function parseExpenseNotes(report, reportOrder = 0) {
       };
     })
     .filter(Boolean);
+}
+
+function parseCostOfSalesNotes(report, reportOrder = 0) {
+  return String(report?.notes || '')
+    .split(/\r?\n/)
+    .map((line, index) => {
+      const match = line.match(
+        /^\[(?:Cost of Sales|Purchase Receipt|Purchase)\]\s*(\d{4}-\d{2}(?:-\d{2})?)\s*\|\s*(?:Supplier:\s*)?([^|]*)\|\s*PHP\s*([0-9,.]+)\s*\|\s*(?:Description:\s*)?([^|]*)\|\s*Receipt:\s*(.*)$/i
+      );
+      if (!match) return null;
+      const rawReceipt = cleanNoteValue(match[5]) || 'No receipt';
+      const receiptList =
+        rawReceipt && rawReceipt !== 'No receipt' && rawReceipt !== '-'
+          ? rawReceipt.split(',').map((s) => s.trim()).filter(Boolean)
+          : [];
+      return {
+        id: `cos-note-${report.id}-${index}`,
+        date: match[1],
+        supplier: cleanNoteValue(match[2]) || '-',
+        amount: toMoney(match[3]),
+        description: cleanNoteValue(match[4]) || '-',
+        receipt: rawReceipt,
+        receipts: receiptList,
+        monthLabel: report.month_label,
+        reportId: report.id,
+        rawLine: line,
+        noteIndex: index,
+        reportOrder,
+        entrySequence: reportOrder * 100000 + index,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildCostOfSalesReceiptRows(detail) {
+  const reports = detail?.reports || [];
+  return reports.flatMap((report, rIdx) => parseCostOfSalesNotes(report, rIdx)).sort((left, right) => {
+    const dateComp = String(right.date || '').localeCompare(String(left.date || ''));
+    if (dateComp !== 0) return dateComp;
+    const seqDiff = (right.entrySequence ?? 0) - (left.entrySequence ?? 0);
+    if (seqDiff !== 0) return seqDiff;
+    return (right.noteIndex ?? 0) - (left.noteIndex ?? 0);
+  });
 }
 
 function buildDailySaleRows(detail) {
@@ -1724,6 +1768,22 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
   const [deletingExpense, setDeletingExpense] = useState(null);
   const [savingDeleteExpense, setSavingDeleteExpense] = useState(false);
 
+  // Cost of Sales Receipts State
+  const [showCostOfSalesModal, setShowCostOfSalesModal] = useState(false);
+  const [savingCosEntry, setSavingCosEntry] = useState(false);
+  const [cosReceiptItems, setCosReceiptItems] = useState([]);
+  const [cosReceiptError, setCosReceiptError] = useState('');
+  const cosFileInputRef = useRef(null);
+  const [cosDraft, setCosDraft] = useState({
+    date: getTodayInputValue(),
+    supplier: '',
+    description: '',
+    amount: '',
+    receiptName: '',
+  });
+  const [deletingCosEntry, setDeletingCosEntry] = useState(null);
+  const [savingDeleteCos, setSavingDeleteCos] = useState(false);
+
   // Global Save / Edit Confirmation Dialog State
   const [saveConfirmDialog, setSaveConfirmDialog] = useState({
     isOpen: false,
@@ -1767,6 +1827,14 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     detail?.reports?.find((report) => Number(report.id) === Number(selectedReportId)) ||
     detail?.reports?.[0] ||
     null;
+  const currentCostOfSalesReceipts = useMemo(
+    () => parseCostOfSalesNotes(selectedReport),
+    [selectedReport]
+  );
+  const costOfSalesReceiptsTotal = useMemo(
+    () => currentCostOfSalesReceipts.reduce((sum, item) => sum + toMoney(item.amount), 0),
+    [currentCostOfSalesReceipts]
+  );
   const selectedSchoolYear =
     detail?.school_year ||
     schoolYears.find((schoolYear) => Number(schoolYear.id) === Number(selectedSchoolYearId)) ||
@@ -1806,60 +1874,6 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     reportDraft.current_sales,
     reportDraft.cost_of_sales
   );
-  const fundSummaryData = useMemo(() => {
-    const rawAllocations = selectedReport?.allocations || [];
-    const balance = toMoney(statement.currentBalance);
-    if (!rawAllocations.length) {
-      return {
-        items: [],
-        totalPercentage: 0,
-        totalAllocated: 0,
-        isReconciled: true,
-      };
-    }
-
-    const totalPercentage = rawAllocations.reduce(
-      (sum, a) => sum + toMoney(a.percentage),
-      0
-    );
-
-    // Compute distributed amount for each statutory fund based on configured percentage
-    const items = rawAllocations.map((alloc) => {
-      const pct = toMoney(alloc.percentage);
-      const allocatedAmount = Math.round((balance * (pct / 100)) * 100) / 100;
-      return {
-        ...alloc,
-        percentage: pct,
-        allocatedAmount,
-      };
-    });
-
-    // If total percentage equals 100%, eliminate any rounding drift on the last fund
-    // so sum of all allocated amounts EQUALS Current Balance exactly
-    if (Math.abs(totalPercentage - 100) < 0.01 && items.length > 0) {
-      const sumExceptLast = items
-        .slice(0, -1)
-        .reduce((sum, item) => sum + item.allocatedAmount, 0);
-      const lastIndex = items.length - 1;
-      items[lastIndex].allocatedAmount =
-        Math.round((balance - sumExceptLast) * 100) / 100;
-    }
-
-    // Explicitly SUM all allocated fund amounts
-    const totalAllocated = items.reduce(
-      (sum, item) => sum + item.allocatedAmount,
-      0
-    );
-
-    const isReconciled = Math.abs(totalAllocated - balance) < 0.01;
-
-    return {
-      items,
-      totalPercentage,
-      totalAllocated,
-      isReconciled,
-    };
-  }, [selectedReport?.allocations, statement.currentBalance]);
 
   const dailySalesRows = useMemo(() => buildDailySaleRows(detail), [detail]);
   const filteredDailySalesRows = useMemo(() => {
@@ -2003,6 +2017,46 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       }
     );
   }, [selectedReport?.allocations, fundMonitoringDraft, getFundPrevBalance]);
+
+  const fundSummaryData = useMemo(() => {
+    const rawAllocations = selectedReport?.allocations || [];
+    if (!rawAllocations.length) {
+      return {
+        items: [],
+        totalPercentage: 0,
+        totalAllocated: 0,
+      };
+    }
+
+    const items = rawAllocations.map((allocation) => {
+      const key = allocation.category_key;
+      const draft = fundMonitoringDraft[key] || {};
+      const prevBal = getFundPrevBalance(allocation);
+      const netInc = toMoney(allocation.amount);
+      const expensesVal = toMoney(draft.expenses);
+      const totalExpVal = expensesVal;
+      const currentBalVal = prevBal + netInc - totalExpVal;
+
+      return {
+        ...allocation,
+        percentage: toMoney(allocation.percentage),
+        prevBal,
+        netInc,
+        expensesVal,
+        totalExpVal,
+        currentBalVal,
+        allocatedAmount: currentBalVal,
+      };
+    });
+
+    return {
+      items,
+      totalPercentage: items.reduce((sum, item) => sum + item.percentage, 0),
+      totalAllocated: fundAllocationTotals.currentBal,
+    };
+  }, [selectedReport?.allocations, fundMonitoringDraft, getFundPrevBalance, fundAllocationTotals.currentBal]);
+
+  const currentBalanceFromFundAllocation = fundAllocationTotals.currentBal;
 
   useEffect(() => {
     selectedSchoolYearIdRef.current = selectedSchoolYearId;
@@ -3776,6 +3830,233 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     }
   }
 
+  // ── Cost of Sales Receipt Handlers ──
+  async function handleCosFileChange(event) {
+    const selectedFiles = Array.from(event.target.files || []);
+    if (selectedFiles.length === 0) return;
+
+    let hasError = '';
+    const newItems = [];
+
+    for (const file of selectedFiles) {
+      const validation = validateReceiptFile(file);
+      if (!validation.valid) {
+        hasError = validation.error || `File ${file.name} is invalid.`;
+        continue;
+      }
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        newItems.push({
+          id: `${Date.now()}-${Math.random()}`,
+          file,
+          dataUrl,
+          validation,
+          name: validation.sanitizedName,
+          sizeFormatted: validation.sizeFormatted,
+          isPdf: validation.isPdf,
+          mimeType: validation.mimeType,
+        });
+      } catch (err) {
+        hasError = `Failed to read file: ${file.name}`;
+      }
+    }
+
+    if (hasError) {
+      setCosReceiptError(hasError);
+    } else {
+      setCosReceiptError('');
+    }
+
+    if (newItems.length > 0) {
+      setCosReceiptItems((prev) => [...prev, ...newItems]);
+      setCosDraft((draft) => {
+        const currentNames = draft.receiptName ? draft.receiptName.split(',').map((s) => s.trim()).filter(Boolean) : [];
+        const addedNames = newItems.map((item) => item.name);
+        return {
+          ...draft,
+          receiptName: [...currentNames, ...addedNames].join(', '),
+        };
+      });
+    }
+
+    if (cosFileInputRef.current) {
+      cosFileInputRef.current.value = '';
+    }
+  }
+
+  function handleRemoveCosReceiptItem(indexToRemove) {
+    setCosReceiptItems((prev) => {
+      const updated = prev.filter((_, idx) => idx !== indexToRemove);
+      const updatedNames = updated.map((item) => item.name).join(', ');
+      setCosDraft((draft) => ({ ...draft, receiptName: updatedNames }));
+      return updated;
+    });
+    setCosReceiptError('');
+  }
+
+  function handleClearCosReceiptUpload() {
+    setCosReceiptItems([]);
+    setCosReceiptError('');
+    setCosDraft((draft) => ({ ...draft, receiptName: '' }));
+    if (cosFileInputRef.current) {
+      cosFileInputRef.current.value = '';
+    }
+  }
+
+  function handleQuickPreviewCosUploadedReceipt(initialIndex = 0) {
+    if (cosReceiptItems.length === 0) return;
+    setActivePreviewReceipt({
+      items: cosReceiptItems.map((item) => ({
+        filename: item.name,
+        name: item.name,
+        dataUrl: item.dataUrl,
+        isPdf: item.isPdf,
+        mimeType: item.mimeType,
+      })),
+      initialIndex,
+      category: 'Cost of Sales',
+      amount: parseCurrencyInput(cosDraft.amount) || 0,
+      date: cosDraft.date || getTodayInputValue(),
+      supplier: cosDraft.supplier,
+      description: cosDraft.description,
+      typeLabel: 'Cost of Sales / Purchase Receipt',
+    });
+  }
+
+  function handlePreviewCosReceipt(entry, initialIndex = 0) {
+    const list = (entry.receipts && entry.receipts.length > 0)
+      ? entry.receipts
+      : (entry.receipt && entry.receipt !== 'No receipt' ? [entry.receipt] : []);
+    if (list.length === 0) return;
+
+    setActivePreviewReceipt({
+      items: list.map((name) => ({ filename: name, name })),
+      receipts: list,
+      initialIndex,
+      category: 'Cost of Sales',
+      amount: entry.amount,
+      date: entry.date,
+      supplier: entry.supplier,
+      description: entry.description,
+      typeLabel: 'Cost of Sales / Purchase Receipt',
+      reportId: selectedReport?.id,
+    });
+  }
+
+  async function handleAddCostOfSalesEntry() {
+    const amount = parseCurrencyInput(cosDraft.amount);
+    if (!amount || amount <= 0) {
+      setCosReceiptError('Please enter a valid purchase amount greater than zero.');
+      return;
+    }
+    if (!selectedReport) {
+      window.showToast?.('Please select a report first.', 'error');
+      return;
+    }
+    if (!canSaveSelectedSchoolYear || !isAdmin) {
+      window.showToast?.('Editing is locked or you do not have permission.', 'warning');
+      return;
+    }
+
+    setSavingCosEntry(true);
+    try {
+      const receiptNames = cosReceiptItems.length > 0
+        ? cosReceiptItems.map((it) => it.name).filter(Boolean)
+        : cosDraft.receiptName
+        ? cosDraft.receiptName.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+      const receiptNoteValue = receiptNames.length > 0 ? receiptNames.join(', ') : 'No receipt';
+      const periodValue = cosDraft.date || getTodayInputValue();
+
+      const line = [
+        `[Cost of Sales] ${periodValue}`,
+        `Supplier: ${cleanNoteValue(cosDraft.supplier) || '-'}`,
+        formatCurrency(amount),
+        `Description: ${cleanNoteValue(cosDraft.description) || '-'}`,
+        `Receipt: ${cleanNoteValue(receiptNoteValue)}`,
+      ].join(' | ');
+
+      for (const item of cosReceiptItems) {
+        const itemReceiptName = item.name;
+        if (!itemReceiptName) continue;
+        const receiptEntry = {
+          key: itemReceiptName,
+          filename: itemReceiptName,
+          rawName: item.file?.name || itemReceiptName,
+          dataUrl: item.dataUrl,
+          mimeType: item.mimeType || 'image/png',
+          size: item.validation?.size || item.file?.size || 0,
+          sizeFormatted: item.sizeFormatted || '',
+          date: periodValue,
+          category: 'Cost of Sales',
+          amount,
+          supplier: cosDraft.supplier,
+          description: cosDraft.description,
+          reportId: selectedReport.id,
+          type: 'purchase',
+          typeLabel: 'Cost of Sales / Purchase Receipt',
+          isPdf: item.isPdf || false,
+        };
+        await saveReceipt(receiptEntry);
+      }
+
+      const updatedNotes = appendNoteLine(selectedReport.notes, line);
+
+      await API.updateFinancialReport(selectedReport.id, {
+        notes: updatedNotes,
+      });
+
+      setCosDraft({
+        date: getTodayInputValue(),
+        supplier: '',
+        description: '',
+        amount: '',
+        receiptName: '',
+      });
+      setCosReceiptItems([]);
+      setCosReceiptError('');
+
+      window.showToast?.('Purchase receipt attached successfully.', 'success');
+      await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
+    } catch (err) {
+      window.showToast?.(err.message || 'Failed to attach purchase receipt.', 'error');
+    } finally {
+      setSavingCosEntry(false);
+    }
+  }
+
+  async function handleConfirmDeleteCosEntry() {
+    if (!deletingCosEntry || savingDeleteCos || !canSaveSelectedSchoolYear) {
+      return;
+    }
+    setSavingDeleteCos(true);
+    try {
+      const lines = String(selectedReport.notes || '').split(/\r?\n/);
+      let removed = false;
+      const updatedNotes = lines
+        .filter((line, idx) => {
+          if (!removed && (line === deletingCosEntry.rawLine || idx === deletingCosEntry.noteIndex)) {
+            removed = true;
+            return false;
+          }
+          return true;
+        })
+        .join('\n');
+
+      await API.updateFinancialReport(selectedReport.id, {
+        notes: updatedNotes,
+      });
+
+      setDeletingCosEntry(null);
+      window.showToast?.('Purchase receipt entry removed.', 'success');
+      await loadSchoolYearDetail(selectedSchoolYearId, selectedReport.id);
+    } catch (err) {
+      window.showToast?.(err.message || 'Failed to remove receipt entry.', 'error');
+    } finally {
+      setSavingDeleteCos(false);
+    }
+  }
+
   async function handlePrintGeneratedReport() {
     if (!selectedSchoolYearId) {
       window.showToast?.('Please select a school year first.', 'warning');
@@ -4059,6 +4340,23 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                         Cost of Sales
                       </span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCostOfSalesModal(true)}
+                      title="View or attach purchase receipts for merchandise and raw ingredients"
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold transition-all ${
+                        currentCostOfSalesReceipts.length > 0
+                          ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-950/80 dark:text-emerald-300 dark:hover:bg-emerald-900 border border-emerald-300/80 dark:border-emerald-800'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700'
+                      }`}
+                    >
+                      <PaperClipIcon className="h-3 w-3" />
+                      <span>
+                        {currentCostOfSalesReceipts.length > 0
+                          ? `${currentCostOfSalesReceipts.length} Receipt${currentCostOfSalesReceipts.length > 1 ? 's' : ''}`
+                          : 'Attach Receipts'}
+                      </span>
+                    </button>
                   </div>
                   <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50/70 overflow-hidden focus-within:border-emerald-500 focus-within:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:focus-within:border-emerald-400 dark:focus-within:bg-slate-800">
                     <span className="inline-flex items-center px-2.5 py-2 text-xs font-mono font-black text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 select-none">
@@ -4078,9 +4376,16 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   </div>
                   <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500 font-medium">
                     <span>Merchandise & raw materials</span>
-                    <span className="font-mono text-slate-600 dark:text-slate-400 font-semibold text-right">
-                      {formatCurrency(reportDraft.cost_of_sales)}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {currentCostOfSalesReceipts.length > 0 && (
+                        <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                          (Receipts: {formatCurrency(costOfSalesReceiptsTotal)})
+                        </span>
+                      )}
+                      <span className="font-mono text-slate-600 dark:text-slate-400 font-semibold text-right">
+                        {formatCurrency(reportDraft.cost_of_sales)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4161,36 +4466,6 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   >
                     {formatCurrency(statement.netProfit)}
                   </span>
-                </div>
-
-                {/* Current Balance - Highly prominent highlighted section */}
-                <div className="bg-gradient-to-r from-emerald-50/90 via-emerald-50/50 to-emerald-100/40 p-4 sm:p-5 dark:from-emerald-950/40 dark:via-emerald-950/20 dark:to-emerald-900/30 border-t-2 border-emerald-500/30 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm sm:text-base font-black text-emerald-950 dark:text-emerald-100">
-                          Current Balance
-                        </span>
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800 border border-emerald-300/80 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-800 uppercase tracking-wider">
-                          Key Balance
-                        </span>
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-300/80 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-800">
-                          = Total Fund Allocation
-                        </span>
-                      </div>
-                      <div className="text-[11px] font-semibold text-emerald-800/90 dark:text-emerald-300">
-                        Formula: Beginning Cash ({formatCurrency(statement.beginningCash)}) + Net Profit ({formatCurrency(statement.netProfit)})
-                      </div>
-                    </div>
-                    <div className="text-left sm:text-right">
-                      <div className="font-mono text-xl sm:text-2xl font-black text-emerald-800 dark:text-emerald-300 text-right">
-                        {formatCurrency(statement.currentBalance)}
-                      </div>
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
-                        Ending Monthly Balance
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -4331,19 +4606,19 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                   Current Balance (Fund Allocation Pool)
                 </span>
                 <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-300/80 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">
-                  100% Allocated
+                  DepEd Form Ending Balance
                 </span>
               </div>
               <div className="text-xs font-semibold text-emerald-800/80 dark:text-emerald-300">
-                Total of all 6 statutory fund allocation amounts equals this Current Balance.
+                Formula: Summation of Current Balance in Fund Allocation Monitoring (DepEd Form)
               </div>
             </div>
             <div className="text-left sm:text-right">
               <div className="font-mono text-xl sm:text-2xl font-black text-emerald-800 dark:text-emerald-200 text-right">
-                {formatCurrency(statement.currentBalance)}
+                {formatCurrency(currentBalanceFromFundAllocation)}
               </div>
               <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                100.00% Net Available Funds
+                Ending Statutory Fund Balance
               </div>
             </div>
           </div>
@@ -7193,6 +7468,409 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
               >
                 <TrashIcon className="h-4 w-4 stroke-[2.5]" />
                 {savingDeleteSale ? 'Deleting...' : 'Delete Sale'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cost of Sales Receipts Modal */}
+      {showCostOfSalesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-3xl max-h-[92vh] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 p-4 sm:p-5 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-400">
+                  <PaperClipIcon className="h-5 w-5 stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                    Cost of Sales / Purchase Receipts
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Attach receipts & invoices for raw ingredients and merchandise ({selectedReport?.month_name || ''} {selectedReport?.calendar_year || ''})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCostOfSalesModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Top Summary Strip */}
+            <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3 sm:px-5 dark:border-slate-800 dark:bg-slate-850/40 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-4 text-xs">
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400 block font-medium">Receipts Attached:</span>
+                  <span className="font-mono font-black text-emerald-700 dark:text-emerald-400 text-sm">
+                    {formatCurrency(costOfSalesReceiptsTotal)}
+                  </span>
+                  <span className="text-[10px] text-slate-400 ml-1.5 font-bold">
+                    ({currentCostOfSalesReceipts.length} item{currentCostOfSalesReceipts.length === 1 ? '' : 's'})
+                  </span>
+                </div>
+                <div className="border-l border-slate-200 dark:border-slate-700 pl-4">
+                  <span className="text-slate-500 dark:text-slate-400 block font-medium">Statement Input:</span>
+                  <span className="font-mono font-black text-slate-800 dark:text-slate-200 text-sm">
+                    {formatCurrency(reportDraft.cost_of_sales)}
+                  </span>
+                </div>
+              </div>
+
+              {costOfSalesReceiptsTotal > 0 && Math.abs(costOfSalesReceiptsTotal - toMoney(reportDraft.cost_of_sales)) > 0.009 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateReportDraft('cost_of_sales', costOfSalesReceiptsTotal.toFixed(2));
+                    window.showToast?.(
+                      `Cost of Sales input updated to ${formatCurrency(costOfSalesReceiptsTotal)}. Click "Save Statement" to commit.`,
+                      'success'
+                    );
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition"
+                >
+                  <ArrowPathIcon className="h-3.5 w-3.5" />
+                  <span>Apply Sum to Cost of Sales</span>
+                </button>
+              )}
+            </div>
+
+            {/* Modal Body: Scrollable */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-6">
+              {/* Form: Add New Purchase Receipt */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-4">
+                <div className="flex items-center gap-2">
+                  <PlusIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                    Add Purchase Receipt / Delivery Slip
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Purchase Date
+                    </label>
+                    <input
+                      type="date"
+                      value={cosDraft.date}
+                      onChange={(e) => setCosDraft((d) => ({ ...d, date: e.target.value }))}
+                      disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Amount (PHP) *
+                    </label>
+                    <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 overflow-hidden focus-within:border-emerald-500 focus-within:bg-white dark:border-slate-700 dark:bg-slate-800">
+                      <span className="px-2.5 py-2 text-xs font-mono font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 select-none">
+                        PHP
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={cosDraft.amount}
+                        onChange={(e) => setCosDraft((d) => ({ ...d, amount: e.target.value }))}
+                        disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                        className="h-10 w-full px-3 text-right font-mono text-xs font-bold text-slate-900 dark:text-white bg-transparent outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Supplier / Vendor Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g., Local Meat Vendor, NVAT Trading"
+                      value={cosDraft.supplier}
+                      onChange={(e) => setCosDraft((d) => ({ ...d, supplier: e.target.value }))}
+                      disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Invoice # / Description
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g., OR #90214 - Poultry, eggs, cooking oil"
+                      value={cosDraft.description}
+                      onChange={(e) => setCosDraft((d) => ({ ...d, description: e.target.value }))}
+                      disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* File Upload Area */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Receipt Photo / Invoice PDF
+                  </label>
+                  <input
+                    ref={cosFileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,application/pdf"
+                    onChange={handleCosFileChange}
+                    className="hidden"
+                    disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => cosFileInputRef.current?.click()}
+                      disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                      className="inline-flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-3.5 py-2 text-xs font-bold text-slate-700 hover:border-emerald-500 hover:bg-emerald-50/40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-emerald-400 transition"
+                    >
+                      <PhotoIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                      <span>Choose File(s) (Images or PDF)</span>
+                    </button>
+
+                    {cosReceiptItems.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearCosReceiptUpload}
+                        className="text-xs text-slate-500 hover:text-rose-600 dark:text-slate-400"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+
+                  {cosReceiptError && (
+                    <p className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">
+                      {cosReceiptError}
+                    </p>
+                  )}
+
+                  {/* Uploaded Items List */}
+                  {cosReceiptItems.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {cosReceiptItems.map((item, idx) => (
+                        <div
+                          key={item.id || idx}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300/80 bg-emerald-50/70 px-2.5 py-1 text-xs font-semibold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleQuickPreviewCosUploadedReceipt(idx)}
+                            className="hover:underline flex items-center gap-1"
+                            title="Click to preview file"
+                          >
+                            <EyeIcon className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                            <span className="truncate max-w-[140px]">{item.name}</span>
+                          </button>
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                            ({item.sizeFormatted})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCosReceiptItem(idx)}
+                            className="ml-1 text-emerald-700 hover:text-rose-600 dark:text-emerald-300 dark:hover:text-rose-400"
+                            title="Remove file"
+                          >
+                            <XMarkIcon className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleAddCostOfSalesEntry}
+                    disabled={savingCosEntry || !canSaveSelectedSchoolYear || !isAdmin}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-emerald-700 active:scale-95 disabled:opacity-50 transition"
+                  >
+                    <PlusIcon className="h-4 w-4 stroke-[2.5]" />
+                    <span>{savingCosEntry ? 'Attaching...' : 'Add Purchase Receipt'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Table / List of Attached Receipts */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                    Attached Purchase Receipts ({currentCostOfSalesReceipts.length})
+                  </h4>
+                </div>
+
+                {currentCostOfSalesReceipts.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center dark:border-slate-800">
+                    <PaperClipIcon className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600 mb-2" />
+                    <p className="text-xs font-bold text-slate-600 dark:text-slate-400">
+                      No purchase receipts attached for this month
+                    </p>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1 max-w-sm mx-auto">
+                      Official receipts, delivery receipts, and invoices for raw ingredients and merchandise can be added above to maintain an audit trail.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50/80 font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Supplier</th>
+                          <th className="py-2.5 px-3">Invoice / Description</th>
+                          <th className="py-2.5 px-3 text-right">Amount</th>
+                          <th className="py-2.5 px-3">Receipt Files</th>
+                          <th className="py-2.5 px-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {currentCostOfSalesReceipts.map((entry) => (
+                          <tr
+                            key={entry.id}
+                            className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors"
+                          >
+                            <td className="py-2.5 px-3 font-mono font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                              {entry.date}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                              {entry.supplier}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 max-w-[200px] truncate">
+                              {entry.description}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
+                              {formatCurrency(entry.amount)}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {entry.receipts && entry.receipts.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {entry.receipts.map((name, rIdx) => (
+                                    <button
+                                      key={rIdx}
+                                      type="button"
+                                      onClick={() => handlePreviewCosReceipt(entry, rIdx)}
+                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 transition"
+                                      title="Preview receipt"
+                                    >
+                                      <EyeIcon className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                      <span className="truncate max-w-[120px]">{name}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : entry.receipt && entry.receipt !== 'No receipt' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handlePreviewCosReceipt(entry, 0)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 transition"
+                                >
+                                  <EyeIcon className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                  <span className="truncate max-w-[120px]">{entry.receipt}</span>
+                                </button>
+                              ) : (
+                                <span className="text-slate-400 dark:text-slate-500 italic text-[11px]">
+                                  No file attached
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => setDeletingCosEntry(entry)}
+                                disabled={!canSaveSelectedSchoolYear || !isAdmin}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 transition disabled:opacity-30"
+                                title="Remove entry"
+                              >
+                                <TrashIcon className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-100 bg-slate-50/60 p-4 sm:px-5 flex items-center justify-end dark:border-slate-800 dark:bg-slate-850/40">
+              <button
+                type="button"
+                onClick={() => setShowCostOfSalesModal(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Cost of Sales Receipt Confirmation Modal */}
+      {deletingCosEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
+                <TrashIcon className="h-5 w-5 stroke-[2]" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Remove Purchase Receipt?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  This will remove the receipt record from this month's notes.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-800/60 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Supplier:</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">{deletingCosEntry.supplier}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Date:</span>
+                <span className="font-mono text-slate-800 dark:text-slate-200">{deletingCosEntry.date}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Amount:</span>
+                <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
+                  {formatCurrency(deletingCosEntry.amount)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingCosEntry(null)}
+                disabled={savingDeleteCos}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCosEntry}
+                disabled={savingDeleteCos}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition"
+              >
+                <TrashIcon className="h-4 w-4" />
+                <span>{savingDeleteCos ? 'Removing...' : 'Remove Entry'}</span>
               </button>
             </div>
           </div>

@@ -35,7 +35,7 @@ Based on direct inspection of the live source code (`smartcanteen/src/views/Inve
 
 | Module / Subsystem | Where It Is Located | What It Does in the System | User Who Can Access It | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **DepEd School Year Manager** | `/school-years` or `/financial-management` | Configures 12-month June-to-May academic periods, activates the active school year, archives past years as read-only, and sets opening cash-on-hand balances. | Administrator | **IMPLEMENTED** |
+| **DepEd School Year Manager** | `/school-years` or `/financial-management` | Configures 12-month June-to-May academic periods, activates the active school year, maintains past historical years as read-only, and sets opening cash-on-hand balances. | Administrator | **IMPLEMENTED** |
 | **Product & Material Catalog** | `/inventory` (Tab 1: Products & Stock) | Manages food items and raw materials. Configures Unit Types (`PCS` vs Bulk `kg`, `g`, `L`, `mL`), Cost Price, Selling Price, Low Stock Safety Threshold (`min_stock`), and Perishable classification. | Administrator, Canteen Staff | **IMPLEMENTED** |
 | **Kitchen Batch Replenishment** | `/inventory` (`+ Replenish Stock`) | Logs incoming supplier shipments and morning cooking batches. Increases stock on hand and writes an immutable audit record to `inventory_logs`. | Administrator, Canteen Staff | **IMPLEMENTED** |
 | **Stock Manual Adjustment** | `/inventory` (`Adjust Stock`) | Records stock corrections with specific audit justifications: *Damaged, Spoilage, Shrinkage, Audit Recount, Kitchen Prep Spill*. | Administrator, Canteen Staff | **IMPLEMENTED** |
@@ -46,7 +46,8 @@ Based on direct inspection of the live source code (`smartcanteen/src/views/Inve
 | **Receipt Upload & Sanitizer** | `/financial-management` (Expense Modal) | Uploads digital receipt images/PDFs. Validates MIME type, sanitizes filenames, stores in local storage/backend, and displays zoomable modal preview. | Administrator | **IMPLEMENTED** |
 | **Monthly Financial Statement** | `/financial-management` (Tab: Overview) | Computes complete monthly DepEd accounting statement: Beginning Cash, Gross Sales, Cost of Sales, Gross Income, Operating Expenses, Net Profit, and Current Balance. | Administrator | **IMPLEMENTED** |
 | **DepEd Statutory Fund Allocation**| `/financial-management` (Tab: Fund Allocation) | Distributes monthly net profit into DepEd statutory funds (Feeding 35%, Operating 25%, Dev 15%, HE 10%, Capital 10%, Clinic 5%) with automated month-to-month forward-balance rolling. | Administrator | **IMPLEMENTED** |
-| **DepEd Multi-Format Reporting** | `/reports` | Generates 8 distinct financial reports (Monthly, Quarterly, Annual, School Year, Sales, Expense, Cash Flow, Profit). Direct export to `.xlsx` Excel spreadsheets and signed official PDF format. | Administrator | **IMPLEMENTED** |
+| **DepEd Multi-Format Reporting** | `/reports` & `/financial-management` | Generates 8 distinct financial reports (Monthly, Quarterly, Annual, School Year, Sales, Expense, Cash Flow, Profit). Direct export to `.xlsx` Excel spreadsheets and signed official DepEd PDF format (pure Python ReportLab engine + browser print fallback). | Administrator | **IMPLEMENTED** |
+| **Interactive Modal Alert System** | Global System Shell | Polished in-app modal feedback dialogs replacing native browser popups for confirmations, errors, and validation alerts. | Administrator, Canteen Staff | **IMPLEMENTED** |
 | **Security & Two-Factor Auth** | `/login`, `/admin/setup-2fa`, `/audit` | Protects financial ledgers with bcrypt password hashing, mandatory TOTP 2FA for Admin, session timeout, and immutable security audit logs with IP addresses. | Administrator | **IMPLEMENTED** |
 
 ---
@@ -101,7 +102,7 @@ The system enforces strict role-based separation between financial governance an
 > 
 > *In our initial baseline study at Bay Central Elementary School, we discovered two major administrative bottlenecks:*  
 > 1. *First, **untracked daily food preparation and perishable spoilage**, where kitchen staff lacked a structured mechanism to record morning cooking batches, monitor remaining portions, and reconcile unsold food at dismissal, resulting in undocumented waste.*  
-> 2. *Second, **onerous, paper-based DepEd financial accounting**. Under DepEd Order No. 8, s. 2007, the canteen manager must manually calculate Cost of Sales, categorize operating expenses across seven line items, and distribute net income into six statutory school funds across a 12-month June-to-May school year. A single arithmetic error in September cascaded throughout the entire school year's balance sheet.*
+> 2. *Second, **onerous, paper-based DepEd financial accounting**. Under DepEd Order No. 8, s. 2007, the Administrative Officer II must manually calculate Cost of Sales, categorize operating expenses across seven line items, and distribute net income into six statutory school funds across a 12-month June-to-May school year. A single arithmetic error in September cascaded throughout the entire school year's balance sheet.*
 > 
 > **Co-Presenter:**  
 > *MEALS resolves both problems by integrating a responsive **Inventory Control System** with an automated **DepEd-Compliant Financial Management Platform**.*  
@@ -132,7 +133,7 @@ The system enforces strict role-based separation between financial governance an
   1. Show the configured active school year: **S.Y. 2024–2025 (June to May)**.
   2. Point out that the system automatically structures the academic year into 12 individual monthly financial periods starting in June and concluding in May.
   3. Show the **Opening Beginning Cash on Hand** configuration (e.g., `PHP 11,834.59`).
-  4. Point out the **Add Historical Year** button and the **Archive School Year** safeguard.
+  4. Point out the **Add Historical Year** button and the status toggle/read-only safeguards for historical school years.
 * **DEFENSE EXPLANATION:**  
   > *"Under DepEd canteen guidelines, financial accountability follows the June-to-May academic calendar rather than the January-to-December fiscal calendar. MEALS isolates records by school year so that past years remain locked and immutable for auditor inspection, while opening balances seamlessly carry over."*
 
@@ -316,12 +317,13 @@ $$\text{Current Balance} = \text{Beginning Cash on Hand} + \text{Net Profit}$$
 * **STEP-BY-STEP EXPORT ACTIONS:**
   1. Select **Monthly Report** for the active School Year.
   2. Click **Export Excel (`.xlsx`)**: Browser immediately downloads an `.xlsx` workbook formatted with standard DepEd headers, formulas, and cells.
-  3. Click **Export PDF / Print Report**: Opens the official printable layout complete with Bay Central Elementary School signature blocks:
-     * **Prepared by:** *John Dieric V. Isleta (Administrative Officer II)*
-     * **Checked by:** *Maricar A. Afuang (School Head)*
-     * **Audited by:** *Kathleen B. Hernandez (School Canteen Auditor)*
+  3. Click **Export PDF / Print Report**: Demonstrates MEALS's resilient dual-engine PDF export pipeline. The system invokes the high-fidelity server-side ReportLab PDF generator (with seamless client-side browser print view fallback) complete with Bay Central Elementary School official signature blocks:
+     * **Prepared by:** *JOHN DIERIC V. ISLETA (Administrative Officer II)*
+     * **Checked by:** *MARICAR A. AFUANG (School Head)*
+     * **Audited by:** *KATHLEEN B. HERNANDEZ (School Canteen Auditor)*
+  4. Note the unified, modern modal design aligned between `/reports` (Generate Reports) and `/financial-management` (Export Financial Report).
 * **DEFENSE EXPLANATION:**  
-  > *"At the end of every month, the canteen manager does not need to re-encode figures into Microsoft Excel. With one click, MEALS exports verified, print-ready DepEd financial statements containing the required signatures for immediate submission to the Division Office."*
+  > *"At the end of every month, the Administrative Officer II does not need to re-encode figures into Microsoft Excel. With one click, MEALS exports verified, print-ready DepEd financial statements containing the required signatures for immediate submission to the Division Office. Furthermore, the dual-engine export ensures guaranteed generation without external office suite dependencies."*
 
 ---
 
@@ -475,7 +477,7 @@ During the defense, execute this chronological storyline representing a real day
 * **Feature:** Data Validation
 * **Objective:** Verify the system rejects negative prices, negative stock, and negative expense entries.
 * **Steps:** Enter `-500.00` in the Expense Amount field or Product Stock field.
-* **Expected Result:** Form validation blocks submission with alert: `"Must be greater than or equal to 0"`.
+* **Expected Result:** Form validation blocks submission with custom in-app modal alert: `"Must be greater than or equal to 0"`.
 * **Actual Result:** **PASS**.
 
 #### Test Case TC-NEG-03: Role-Based Route Protection (RBAC)
@@ -530,7 +532,7 @@ During the defense, execute this chronological storyline representing a real day
 
 #### Q4: "How does recorded perishable food waste impact the monthly financial statement and Cost of Sales?"
 > **Answer:**  
-> *"When perishable food spoils or remains unsold at closing, the system logs the exact unit cost in `inventory_logs`. In the DepEd accounting statement, this waste forms part of the Cost of Sales ($Beginning\ Inventory + Purchases - Ending\ Inventory$). By capturing the exact financial waste loss rather than ignoring it, MEALS provides the Canteen Manager and School Head with full visibility into how much revenue was lost to over-preparation, allowing them to adjust ingredient procurement for subsequent months."*
+> *"When perishable food spoils or remains unsold at closing, the system logs the exact unit cost in `inventory_logs`. In the DepEd accounting statement, this waste forms part of the Cost of Sales ($Beginning\ Inventory + Purchases - Ending\ Inventory$). By capturing the exact financial waste loss rather than ignoring it, MEALS provides the Administrative Officer II and School Head with full visibility into how much revenue was lost to over-preparation, allowing them to adjust ingredient procurement for subsequent months."*
 
 #### Q5: "What happens if a canteen staff member makes a mistake during stock replenishment or adjustment?"
 > **Answer:**  
@@ -538,7 +540,7 @@ During the defense, execute this chronological storyline representing a real day
 
 #### Q6: "How do you guarantee that exported reports comply with DepEd Division Office standards?"
 > **Answer:**  
-> *"MEALS exports reports directly into standard `.xlsx` Excel spreadsheets and official printable PDFs that mirror DepEd reporting formats. Furthermore, each report includes the required institutional signature blocks: Prepared by the Administrative Officer II (John Dieric V. Isleta), Checked by the School Head (Maricar A. Afuang), and Audited by the School Canteen Auditor (Kathleen B. Hernandez)."*
+> *"MEALS exports reports directly into standard `.xlsx` Excel spreadsheets and official printable PDFs that mirror DepEd reporting formats. Furthermore, each report includes the required institutional signature blocks: Prepared by Administrative Officer II (JOHN DIERIC V. ISLETA), Checked by School Head (MARICAR A. AFUANG), and Audited by School Canteen Auditor (KATHLEEN B. HERNANDEZ). Our implementation incorporates a pure Python ReportLab PDF rendering engine with instant browser print fallback, ensuring robust export capability across all deployment platforms."*
 
 ---
 
