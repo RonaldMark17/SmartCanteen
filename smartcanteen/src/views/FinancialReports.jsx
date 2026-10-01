@@ -938,8 +938,8 @@ function buildPrintableHtml(schoolYearName, report, statement, allocations = [])
           <tr>
             <td style="width: 38%;">
               <div>Prepared by:</div>
-              <div class="sig-line">MYRNA A. DE MESA</div>
-              <div class="sig-role">Canteen Manager</div>
+              <div class="sig-line">JOHN DIERIC V. ISLETA</div>
+              <div class="sig-role">Administrative Officer II</div>
             </td>
             <td style="width: 34%; text-align: center;">
               <div>Checked by:</div>

@@ -1966,6 +1966,9 @@ def _build_school_year_workbook_export(
                     continue
                 cell.value = value
 
+            worksheet["A50"].value = "JOHN DIERIC V. ISLETA"
+            worksheet["A51"].value = "Administrative Officer II"
+
         for worksheet in workbook.worksheets:
             worksheet.sheet_view.tabSelected = worksheet.title == active_sheet_name
 

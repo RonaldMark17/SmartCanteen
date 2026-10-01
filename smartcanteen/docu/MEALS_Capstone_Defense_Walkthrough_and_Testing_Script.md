@@ -317,7 +317,7 @@ $$\text{Current Balance} = \text{Beginning Cash on Hand} + \text{Net Profit}$$
   1. Select **Monthly Report** for the active School Year.
   2. Click **Export Excel (`.xlsx`)**: Browser immediately downloads an `.xlsx` workbook formatted with standard DepEd headers, formulas, and cells.
   3. Click **Export PDF / Print Report**: Opens the official printable layout complete with Bay Central Elementary School signature blocks:
-     * **Prepared by:** *Myrna A. De Mesa (Canteen Manager)*
+     * **Prepared by:** *John Dieric V. Isleta (Administrative Officer II)*
      * **Checked by:** *Maricar A. Afuang (School Head)*
      * **Audited by:** *Kathleen B. Hernandez (School Canteen Auditor)*
 * **DEFENSE EXPLANATION:**  
@@ -538,7 +538,7 @@ During the defense, execute this chronological storyline representing a real day
 
 #### Q6: "How do you guarantee that exported reports comply with DepEd Division Office standards?"
 > **Answer:**  
-> *"MEALS exports reports directly into standard `.xlsx` Excel spreadsheets and official printable PDFs that mirror DepEd reporting formats. Furthermore, each report includes the required institutional signature blocks: Prepared by the Canteen Manager (Myrna A. De Mesa), Checked by the School Head (Maricar A. Afuang), and Audited by the School Canteen Auditor (Kathleen B. Hernandez)."*
+> *"MEALS exports reports directly into standard `.xlsx` Excel spreadsheets and official printable PDFs that mirror DepEd reporting formats. Furthermore, each report includes the required institutional signature blocks: Prepared by the Administrative Officer II (John Dieric V. Isleta), Checked by the School Head (Maricar A. Afuang), and Audited by the School Canteen Auditor (Kathleen B. Hernandez)."*
 
 ---
 

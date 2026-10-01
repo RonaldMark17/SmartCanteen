@@ -460,8 +460,10 @@ def _convert_via_reportlab(xlsx_path: str, pdf_path: str, sheet_name: Optional[s
             story.append(Spacer(1, 8))
 
             # Signatures
-            prep_name = str(ws['A50'].value or 'MYRNA A. DE MESA')
-            prep_role = str(ws['A51'].value or 'Canteen Manager')
+            raw_prep_name = str(ws['A50'].value or '').strip()
+            prep_name = 'JOHN DIERIC V. ISLETA' if not raw_prep_name or raw_prep_name.upper() in {'MYRNA A. DE MESA', 'MYRNA DE MESA'} else raw_prep_name
+            raw_prep_role = str(ws['A51'].value or '').strip()
+            prep_role = 'Administrative Officer II' if not raw_prep_role or raw_prep_role.lower() in {'canteen manager', 'manager'} else raw_prep_role
             chk_name = str(ws['C56'].value or 'MARICAR A. AFUANG')
             chk_role = str(ws['C57'].value or 'School Head').strip()
             aud_name = str(ws['E50'].value or 'KATHLEEN B. HERNANDEZ')
@@ -767,8 +769,10 @@ def _convert_via_pure_python(xlsx_path: str, pdf_path: str, sheet_name: Optional
         pdf.text(285, sig_y, 'Checked by:', size=7.5)
         pdf.text(525, sig_y, 'Audited by:', size=7.5)
 
-        prep_name = str(ws['A50'].value or 'MYRNA A. DE MESA')
-        prep_role = str(ws['A51'].value or 'Canteen Manager')
+        raw_prep_name = str(ws['A50'].value or '').strip()
+        prep_name = 'JOHN DIERIC V. ISLETA' if not raw_prep_name or raw_prep_name.upper() in {'MYRNA A. DE MESA', 'MYRNA DE MESA'} else raw_prep_name
+        raw_prep_role = str(ws['A51'].value or '').strip()
+        prep_role = 'Administrative Officer II' if not raw_prep_role or raw_prep_role.lower() in {'canteen manager', 'manager'} else raw_prep_role
         chk_name = str(ws['C56'].value or 'MARICAR A. AFUANG')
         chk_role = str(ws['C57'].value or 'School Head').strip()
         aud_name = str(ws['E50'].value or 'KATHLEEN B. HERNANDEZ')
