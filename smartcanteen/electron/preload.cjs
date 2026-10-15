@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Synchronously request app config from main process during preload init
 let appConfig = {
-  apiBaseUrl: 'http://3.91.7.109/api',
+  apiBaseUrl: 'http://3.27.32.30/api',
   fallbackApiBaseUrls: [
     'http://localhost:8000/api',
     'https://cecile-unchipped-shea.ngrok-free.dev/api'

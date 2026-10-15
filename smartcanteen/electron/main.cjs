@@ -63,7 +63,7 @@ function loadAppConfig() {
                   'https://cecile-unchipped-shea.ngrok-free.dev/api'
                 ];
           return {
-            apiBaseUrl: parsed.apiBaseUrl ? String(parsed.apiBaseUrl).trim() : 'http://3.91.7.109/api',
+            apiBaseUrl: parsed.apiBaseUrl ? String(parsed.apiBaseUrl).trim() : 'http://3.27.32.30/api',
             fallbackApiBaseUrls: fallbacks,
             fallbackApiBaseUrl: fallbacks[0] || 'http://localhost:8000/api',
             ...parsed,
@@ -77,7 +77,7 @@ function loadAppConfig() {
 
   console.log('[Main] No external config.json found; using default server URL.');
   return {
-    apiBaseUrl: 'http://3.91.7.109/api',
+    apiBaseUrl: 'http://3.27.32.30/api',
     fallbackApiBaseUrls: [
       'http://localhost:8000/api',
       'https://cecile-unchipped-shea.ngrok-free.dev/api'
@@ -413,7 +413,7 @@ ipcMain.handle('get-system-info', () => {
     nodeVersion: process.versions.node,
     platform: process.platform,
     arch: process.arch,
-    apiBaseUrl: cachedConfig?.apiBaseUrl || 'http://3.91.7.109/api',
+    apiBaseUrl: cachedConfig?.apiBaseUrl || 'http://3.27.32.30/api',
     fallbackApiBaseUrls: cachedConfig?.fallbackApiBaseUrls || [
       'http://localhost:8000/api',
       'https://cecile-unchipped-shea.ngrok-free.dev/api'
