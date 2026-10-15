@@ -25,8 +25,9 @@ const REMEMBER_ME_STORAGE_KEY = 'sc_remember_me';
 const DEFAULT_REMOTE_API_ORIGIN = 'http://3.91.7.109';
 const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
-const NATIVE_API_BASE = DEFAULT_REMOTE_API_BASE;
 const DEFAULT_LOCAL_API_PORT = String(import.meta.env.VITE_API_PORT || '8000').trim();
+const DEFAULT_BACKUP_API_BASE = `http://localhost:${DEFAULT_LOCAL_API_PORT}${API_ROOT_PATH}`;
+const NATIVE_API_BASE = DEFAULT_REMOTE_API_BASE;
 const envApiTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || '');
 const API_REQUEST_TIMEOUT_MS =
   Number.isFinite(envApiTimeoutMs) && envApiTimeoutMs > 0 ? envApiTimeoutMs : 20000;
@@ -332,6 +333,20 @@ function resolveApiBase() {
 }
 
 function resolveFallbackApiBase(primaryBase) {
+  if (typeof window !== 'undefined' && window.MEALS_CONFIG?.fallbackApiBaseUrl) {
+    const configuredFallback = normalizeApiBase(window.MEALS_CONFIG.fallbackApiBaseUrl);
+    if (configuredFallback && configuredFallback !== primaryBase) {
+      return configuredFallback;
+    }
+  }
+
+  if (envApiFallbackBase) {
+    const configuredFallback = normalizeApiBase(envApiFallbackBase);
+    if (configuredFallback && configuredFallback !== primaryBase) {
+      return configuredFallback;
+    }
+  }
+
   if (isNativeRuntime()) {
     const nativeFallbackCandidates = [
       envApiFallbackBase,
@@ -346,31 +361,17 @@ function resolveFallbackApiBase(primaryBase) {
     return nativeFallbackCandidates[0] || null;
   }
 
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  if (window.location?.protocol === 'https:') {
-    return null;
-  }
-
-  // Never fall back to loopback 127.0.0.1 on deployed systems or non-local clients
-  if (!isLocalWebHost()) {
-    return null;
-  }
-
-  const fallbackBase = envApiFallbackBase || resolveLocalWebApiBase();
-  const normalizedFallbackBase = normalizeApiBase(fallbackBase);
-
-  return normalizedFallbackBase === primaryBase ? null : normalizedFallbackBase;
+  const defaultBackup = normalizeApiBase(DEFAULT_BACKUP_API_BASE);
+  return defaultBackup === primaryBase ? null : defaultBackup;
 }
 
 const API_BASE = resolveApiBase();
 const API_FALLBACK_BASE = resolveFallbackApiBase(API_BASE);
+let currentActiveBase = null;
 const pendingGetRequests = new Map();
 
 export function getCurrentApiBase() {
-  return API_BASE;
+  return currentActiveBase || API_BASE;
 }
 
 export function getRealtimeAlertsUrl() {
@@ -378,7 +379,7 @@ export function getRealtimeAlertsUrl() {
     return null;
   }
 
-  const realtimeBase = API_BASE || API_FALLBACK_BASE || API_ROOT_PATH;
+  const realtimeBase = getCurrentApiBase() || API_BASE || API_FALLBACK_BASE || API_ROOT_PATH;
   const apiBaseUrl = new URL(realtimeBase, window.location.origin);
   apiBaseUrl.protocol = apiBaseUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   apiBaseUrl.pathname = `${trimTrailingSlash(apiBaseUrl.pathname)}/realtime/alerts`;
@@ -706,15 +707,20 @@ function getAuthorizedRequestHeaders() {
   return headers;
 }
 
-async function fetchWithTimeout(requestUrl, options = {}) {
-  if (typeof AbortController === 'undefined' || API_REQUEST_TIMEOUT_MS <= 0) {
+async function fetchWithTimeout(requestUrl, options = {}, timeoutOverride = null) {
+  const timeoutMs =
+    Number.isFinite(timeoutOverride) && timeoutOverride > 0
+      ? timeoutOverride
+      : API_REQUEST_TIMEOUT_MS;
+
+  if (typeof AbortController === 'undefined' || timeoutMs <= 0) {
     return fetch(requestUrl, options);
   }
 
   const controller = new AbortController();
   const setTimer = typeof window !== 'undefined' ? window.setTimeout.bind(window) : setTimeout;
   const clearTimer = typeof window !== 'undefined' ? window.clearTimeout.bind(window) : clearTimeout;
-  const timeoutId = setTimer(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+  const timeoutId = setTimer(() => controller.abort(), timeoutMs);
 
   try {
     return await fetch(requestUrl, {
@@ -883,8 +889,10 @@ async function performRequest(method, path, body = null, options = {}) {
     Object.assign(baseHeaders, options.headers);
   }
 
-  const apiBases = [API_BASE, API_FALLBACK_BASE].filter(Boolean);
-  let lastConnectionBase = API_BASE;
+  const primary = currentActiveBase || API_BASE;
+  const secondary = primary === API_BASE ? API_FALLBACK_BASE : API_BASE;
+  const apiBases = [primary, secondary].filter(Boolean);
+  let lastConnectionBase = primary;
 
   for (let index = 0; index < apiBases.length; index += 1) {
     const apiBase = apiBases[index];
@@ -898,21 +906,27 @@ async function performRequest(method, path, body = null, options = {}) {
 
     let res;
     try {
-      res = await fetchWithTimeout(requestUrl, {
-        method,
-        credentials: 'include',
-        headers,
-        body: body
-          ? isFormData
-            ? body
-            : typeof body === 'string'
+      const attemptTimeout = hasFallback ? 5000 : API_REQUEST_TIMEOUT_MS;
+      res = await fetchWithTimeout(
+        requestUrl,
+        {
+          method,
+          credentials: 'include',
+          headers,
+          body: body
+            ? isFormData
               ? body
-              : JSON.stringify(body)
-          : undefined,
-      });
+              : typeof body === 'string'
+                ? body
+                : JSON.stringify(body)
+            : undefined,
+        },
+        attemptTimeout
+      );
     } catch (error) {
       lastConnectionBase = apiBase;
       if (hasFallback) {
+        console.warn(`[API] Connection to ${apiBase} failed. Falling back to backup server...`, error);
         continue;
       }
 
@@ -932,7 +946,13 @@ async function performRequest(method, path, body = null, options = {}) {
 
     if (hasFallback && (res.status === 502 || res.status === 503 || res.status === 504)) {
       lastConnectionBase = apiBase;
+      console.warn(`[API] Server ${apiBase} returned status ${res.status}. Falling back to backup server...`);
       continue;
+    }
+
+    if (res.ok && currentActiveBase !== apiBase) {
+      currentActiveBase = apiBase;
+      console.log(`[API] Connected successfully to ${apiBase}`);
     }
 
     if (res.status === 401 && !isLoginFlowPath(path)) {
