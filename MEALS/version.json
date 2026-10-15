@@ -1,5 +1,5 @@
 ﻿{
-    "updated_at":  "2026-09-19 15:11:57",
+    "updated_at":  "2026-10-15 21:50:37",
     "server":  {
                    "init_db":  true,
                    "service":  true,
@@ -13,8 +13,8 @@
                     "package":  "com.smartcanteen.app"
                 },
     "client":  {
-                   "portable":  119712307,
-                   "installer":  84363062,
+                   "portable":  119730041,
+                   "installer":  84374015,
                    "mobile_apk":  9440148
                }
 }
