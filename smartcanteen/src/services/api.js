@@ -27,6 +27,11 @@ const DEFAULT_REMOTE_API_BASE = `${DEFAULT_REMOTE_API_ORIGIN}${API_ROOT_PATH}`;
 const DEFAULT_LOCAL_API_HOST = '127.0.0.1';
 const DEFAULT_LOCAL_API_PORT = String(import.meta.env.VITE_API_PORT || '8000').trim();
 const DEFAULT_BACKUP_API_BASE = `http://localhost:${DEFAULT_LOCAL_API_PORT}${API_ROOT_PATH}`;
+const DEFAULT_NGROK_BACKUP_BASE = `https://cecile-unchipped-shea.ngrok-free.dev${API_ROOT_PATH}`;
+const DEFAULT_FALLBACK_API_BASES = [
+  DEFAULT_BACKUP_API_BASE,
+  DEFAULT_NGROK_BACKUP_BASE,
+];
 const NATIVE_API_BASE = DEFAULT_REMOTE_API_BASE;
 const envApiTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || '');
 const API_REQUEST_TIMEOUT_MS =
@@ -332,19 +337,20 @@ function resolveApiBase() {
   return normalizeApiBase(envApiBase || DEFAULT_REMOTE_API_BASE);
 }
 
-function resolveFallbackApiBase(primaryBase) {
-  if (typeof window !== 'undefined' && window.MEALS_CONFIG?.fallbackApiBaseUrl) {
-    const configuredFallback = normalizeApiBase(window.MEALS_CONFIG.fallbackApiBaseUrl);
-    if (configuredFallback && configuredFallback !== primaryBase) {
-      return configuredFallback;
+function resolveFallbackApiBases(primaryBase) {
+  const fallbacks = [];
+
+  if (typeof window !== 'undefined' && window.MEALS_CONFIG) {
+    const list = window.MEALS_CONFIG.fallbackApiBaseUrls || window.MEALS_CONFIG.fallbackApiBaseUrl;
+    if (Array.isArray(list)) {
+      fallbacks.push(...list);
+    } else if (typeof list === 'string' && list.trim()) {
+      fallbacks.push(list.trim());
     }
   }
 
   if (envApiFallbackBase) {
-    const configuredFallback = normalizeApiBase(envApiFallbackBase);
-    if (configuredFallback && configuredFallback !== primaryBase) {
-      return configuredFallback;
-    }
+    fallbacks.push(...envApiFallbackBase.split(',').map((s) => s.trim()));
   }
 
   if (isNativeRuntime()) {
@@ -358,15 +364,21 @@ function resolveFallbackApiBase(primaryBase) {
       .filter((base, index, bases) => bases.indexOf(base) === index)
       .filter((base) => base !== primaryBase && !isLoopbackApiBase(base));
 
-    return nativeFallbackCandidates[0] || null;
+    return nativeFallbackCandidates;
   }
 
-  const defaultBackup = normalizeApiBase(DEFAULT_BACKUP_API_BASE);
-  return defaultBackup === primaryBase ? null : defaultBackup;
+  fallbacks.push(...DEFAULT_FALLBACK_API_BASES);
+
+  return fallbacks
+    .filter(Boolean)
+    .map(normalizeApiBase)
+    .filter((base, index, bases) => bases.indexOf(base) === index)
+    .filter((base) => base !== primaryBase);
 }
 
 const API_BASE = resolveApiBase();
-const API_FALLBACK_BASE = resolveFallbackApiBase(API_BASE);
+const API_FALLBACK_BASES = resolveFallbackApiBases(API_BASE);
+const API_FALLBACK_BASE = API_FALLBACK_BASES[0] || null;
 let currentActiveBase = null;
 const pendingGetRequests = new Map();
 
@@ -889,14 +901,17 @@ async function performRequest(method, path, body = null, options = {}) {
     Object.assign(baseHeaders, options.headers);
   }
 
-  const primary = currentActiveBase || API_BASE;
-  const secondary = primary === API_BASE ? API_FALLBACK_BASE : API_BASE;
-  const apiBases = [primary, secondary].filter(Boolean);
-  let lastConnectionBase = primary;
+  const allBases = [API_BASE, ...API_FALLBACK_BASES].filter(Boolean);
+  const orderedBases = currentActiveBase
+    ? [currentActiveBase, ...allBases.filter((b) => b !== currentActiveBase)]
+    : allBases;
+  const apiBases = orderedBases;
+  let lastConnectionBase = apiBases[0] || API_BASE;
 
   for (let index = 0; index < apiBases.length; index += 1) {
     const apiBase = apiBases[index];
     const hasFallback = index < apiBases.length - 1;
+    const nextBase = hasFallback ? apiBases[index + 1] : null;
     const requestUrl = `${apiBase}${path}`;
     const headers = { ...baseHeaders };
 
@@ -926,7 +941,7 @@ async function performRequest(method, path, body = null, options = {}) {
     } catch (error) {
       lastConnectionBase = apiBase;
       if (hasFallback) {
-        console.warn(`[API] Connection to ${apiBase} failed. Falling back to backup server...`, error);
+        console.warn(`[API] Connection to ${apiBase} failed. Trying backup server at ${nextBase}...`, error);
         continue;
       }
 
@@ -946,7 +961,7 @@ async function performRequest(method, path, body = null, options = {}) {
 
     if (hasFallback && (res.status === 502 || res.status === 503 || res.status === 504)) {
       lastConnectionBase = apiBase;
-      console.warn(`[API] Server ${apiBase} returned status ${res.status}. Falling back to backup server...`);
+      console.warn(`[API] Server ${apiBase} returned status ${res.status}. Trying backup server at ${nextBase}...`);
       continue;
     }
 

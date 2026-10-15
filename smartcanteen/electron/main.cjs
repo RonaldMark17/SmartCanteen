@@ -52,11 +52,20 @@ function loadAppConfig() {
       if (fs.existsSync(configPath)) {
         const raw = fs.readFileSync(configPath, 'utf8');
         const parsed = JSON.parse(raw);
-        if (parsed && (parsed.apiBaseUrl || parsed.fallbackApiBaseUrl)) {
+        if (parsed && (parsed.apiBaseUrl || parsed.fallbackApiBaseUrls || parsed.fallbackApiBaseUrl)) {
           console.log(`[Main] Loaded config.json from: ${configPath}`);
+          const fallbacks = Array.isArray(parsed.fallbackApiBaseUrls)
+            ? parsed.fallbackApiBaseUrls
+            : parsed.fallbackApiBaseUrl
+              ? [parsed.fallbackApiBaseUrl]
+              : [
+                  'http://localhost:8000/api',
+                  'https://cecile-unchipped-shea.ngrok-free.dev/api'
+                ];
           return {
             apiBaseUrl: parsed.apiBaseUrl ? String(parsed.apiBaseUrl).trim() : 'http://3.91.7.109/api',
-            fallbackApiBaseUrl: parsed.fallbackApiBaseUrl ? String(parsed.fallbackApiBaseUrl).trim() : 'http://localhost:8000/api',
+            fallbackApiBaseUrls: fallbacks,
+            fallbackApiBaseUrl: fallbacks[0] || 'http://localhost:8000/api',
             ...parsed,
           };
         }
@@ -69,6 +78,10 @@ function loadAppConfig() {
   console.log('[Main] No external config.json found; using default server URL.');
   return {
     apiBaseUrl: 'http://3.91.7.109/api',
+    fallbackApiBaseUrls: [
+      'http://localhost:8000/api',
+      'https://cecile-unchipped-shea.ngrok-free.dev/api'
+    ],
     fallbackApiBaseUrl: 'http://localhost:8000/api',
   };
 }
@@ -401,6 +414,10 @@ ipcMain.handle('get-system-info', () => {
     platform: process.platform,
     arch: process.arch,
     apiBaseUrl: cachedConfig?.apiBaseUrl || 'http://3.91.7.109/api',
+    fallbackApiBaseUrls: cachedConfig?.fallbackApiBaseUrls || [
+      'http://localhost:8000/api',
+      'https://cecile-unchipped-shea.ngrok-free.dev/api'
+    ],
     fallbackApiBaseUrl: cachedConfig?.fallbackApiBaseUrl || 'http://localhost:8000/api',
   };
 });

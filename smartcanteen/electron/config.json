@@ -1,3 +1,7 @@
 {
-  "apiBaseUrl": "http://3.91.7.109/api"
+  "apiBaseUrl": "http://3.91.7.109/api",
+  "fallbackApiBaseUrls": [
+    "http://localhost:8000/api",
+    "https://cecile-unchipped-shea.ngrok-free.dev/api"
+  ]
 }

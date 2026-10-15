@@ -29,6 +29,12 @@
             Boolean(window.navigator?.userAgent?.includes('Electron'));
           window.MEALS_CONFIG = {
             apiBaseUrl: isElectronOrFile ? 'http://3.91.7.109/api' : '/api',
+            fallbackApiBaseUrls: isElectronOrFile
+              ? [
+                  'http://localhost:8000/api',
+                  'https://cecile-unchipped-shea.ngrok-free.dev/api'
+                ]
+              : undefined,
             fallbackApiBaseUrl: isElectronOrFile ? 'http://localhost:8000/api' : undefined
           };
         }
