@@ -23,9 +23,13 @@
           }
         } catch (e) {}
         if (!window.MEALS_CONFIG) {
+          const isElectronOrFile =
+            window.location.protocol === 'file:' ||
+            Boolean(window.electronAPI) ||
+            Boolean(window.navigator?.userAgent?.includes('Electron'));
           window.MEALS_CONFIG = {
-            apiBaseUrl: 'http://3.91.7.109/api',
-            fallbackApiBaseUrl: 'http://localhost:8000/api'
+            apiBaseUrl: isElectronOrFile ? 'http://3.91.7.109/api' : '/api',
+            fallbackApiBaseUrl: isElectronOrFile ? 'http://localhost:8000/api' : undefined
           };
         }
       })();
