@@ -1,0 +1,4 @@
+{
+  "apiBaseUrl": "http://3.91.7.109/api",
+  "fallbackApiBaseUrl": "http://localhost:8000/api"
+}
