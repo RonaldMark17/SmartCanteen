@@ -308,6 +308,24 @@ def _validate_school_year_write_allowed(school_year: models.SchoolYear) -> None:
         raise HTTPException(status_code=400, detail=FUTURE_FINANCIAL_REPORT_ERROR)
 
 
+def _is_future_month(calendar_year: int, month_number: int) -> bool:
+    """Return True if the given month/year is strictly after the current PH month."""
+    today = get_ph_today()
+    if calendar_year > today.year:
+        return True
+    if calendar_year == today.year and month_number > today.month:
+        return True
+    return False
+
+
+FUTURE_MONTH_REPORT_ERROR = "You cannot edit a financial report for a future month."
+
+
+def _validate_month_not_future(report: models.MonthlyReport) -> None:
+    if _is_future_month(report.calendar_year, report.month_number):
+        raise HTTPException(status_code=400, detail=FUTURE_MONTH_REPORT_ERROR)
+
+
 def _school_year_is_future(school_year: models.SchoolYear) -> bool:
     return _compare_school_year_to_current(school_year.start_year, school_year.end_year) > 0
 
@@ -740,6 +758,7 @@ def _serialize_report(
         "allocations": allocations_breakdown,
         "notes": report.notes or "",
         "updated_at": report.updated_at.isoformat() if report.updated_at else None,
+        "is_future_month": _is_future_month(report.calendar_year, report.month_number),
         "comparison": None,
     }
 
@@ -2312,6 +2331,7 @@ def update_report(
     if not report:
         raise HTTPException(status_code=404, detail="Monthly report not found")
     _validate_school_year_write_allowed(report.school_year)
+    _validate_month_not_future(report)
 
     updates = payload.model_dump(exclude_unset=True)
     beginning_cash_manual_override = updates.pop("beginning_cash_manual_override", None)
@@ -2381,6 +2401,7 @@ def replace_report_expenses(
     if not report:
         raise HTTPException(status_code=404, detail="Monthly report not found")
     _validate_school_year_write_allowed(report.school_year)
+    _validate_month_not_future(report)
 
     for expense in list(report.expenses):
         db.delete(expense)
@@ -2466,6 +2487,7 @@ def replace_report_fund_monitoring(
     if not report:
         raise HTTPException(status_code=404, detail="Monthly report not found")
     _validate_school_year_write_allowed(report.school_year)
+    _validate_month_not_future(report)
 
     for entry in list(report.fund_entries):
         db.delete(entry)

@@ -199,6 +199,7 @@ const REPORT_TYPES = [
 ];
 
 const FUTURE_FINANCIAL_REPORT_MESSAGE = 'You cannot add a financial report for a future school year.';
+const FUTURE_MONTH_REPORT_MESSAGE = 'You cannot edit a financial report for a future month.';
 
 const EXPENSES_PER_PAGE = 5;
 const MAX_PAGE_BUTTONS = 5;
@@ -1845,6 +1846,11 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     schoolYearSuggestion
   );
   const canSaveSelectedSchoolYear = !selectedSchoolYearValidationMessage;
+  const isFutureMonth = selectedReport?.is_future_month ?? false;
+  const canEditSelectedReport = canSaveSelectedSchoolYear && !isFutureMonth;
+  const editBlockedMessage = isFutureMonth
+    ? FUTURE_MONTH_REPORT_MESSAGE
+    : selectedSchoolYearValidationMessage;
   const currentSchoolYearLabel = schoolYearSuggestion.label;
   const currentSchoolYearExists = schoolYears.some((schoolYear) =>
     isCurrentSchoolYear(schoolYear, schoolYearSuggestion)
