@@ -1845,9 +1845,8 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
     selectedSchoolYear,
     schoolYearSuggestion
   );
-  const canSaveSelectedSchoolYear = !selectedSchoolYearValidationMessage;
   const isFutureMonth = selectedReport?.is_future_month ?? false;
-  const canEditSelectedReport = canSaveSelectedSchoolYear && !isFutureMonth;
+  const canSaveSelectedSchoolYear = !selectedSchoolYearValidationMessage && !isFutureMonth;
   const editBlockedMessage = isFutureMonth
     ? FUTURE_MONTH_REPORT_MESSAGE
     : selectedSchoolYearValidationMessage;
@@ -2743,7 +2742,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       return;
     }
     if (!canSaveSelectedSchoolYear) {
-      window.showToast?.(selectedSchoolYearValidationMessage, 'error');
+      window.showToast?.(editBlockedMessage, 'error');
       return;
     }
 
@@ -2825,7 +2824,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       return;
     }
     if (!canSaveSelectedSchoolYear) {
-      window.showToast?.(selectedSchoolYearValidationMessage, 'error');
+      window.showToast?.(editBlockedMessage, 'error');
       return;
     }
 
@@ -2868,6 +2867,10 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
           : 'The sales date is outside the selected school year.',
         'error'
       );
+      return;
+    }
+    if (targetReport.is_future_month) {
+      window.showToast?.(FUTURE_MONTH_REPORT_MESSAGE, 'error');
       return;
     }
 
@@ -3030,6 +3033,10 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       window.showToast?.('Original monthly report not found.', 'error');
       return;
     }
+    if (targetReport.is_future_month || originalReport.is_future_month) {
+      window.showToast?.(FUTURE_MONTH_REPORT_MESSAGE, 'error');
+      return;
+    }
 
     const periodValue = isMonthly ? effectiveMonth : editSaleDraft.date;
     const typeLabel = isMonthly ? 'Monthly Sale' : 'Daily Sale';
@@ -3078,6 +3085,9 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       const targetReport = detail?.reports?.find((r) => Number(r.id) === Number(deletingSale.reportId));
       if (!targetReport) {
         throw new Error('Monthly report for this sale could not be found.');
+      }
+      if (targetReport.is_future_month) {
+        throw new Error(FUTURE_MONTH_REPORT_MESSAGE);
       }
 
       let updatedNotes = targetReport.notes || '';
@@ -3343,6 +3353,10 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
           : 'The expense date is outside the selected school year.',
         'error'
       );
+      return;
+    }
+    if (targetReport.is_future_month) {
+      window.showToast?.(FUTURE_MONTH_REPORT_MESSAGE, 'error');
       return;
     }
 
@@ -3735,6 +3749,10 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       window.showToast?.('Original monthly report not found.', 'error');
       return;
     }
+    if (targetReport.is_future_month || originalReport.is_future_month) {
+      window.showToast?.(FUTURE_MONTH_REPORT_MESSAGE, 'error');
+      return;
+    }
 
     const periodValue = expenseType === 'monthly' ? getReportMonthValue(targetReport) : editExpenseDraft.date;
     const typeLabel = expenseType === 'monthly' ? 'Monthly Expense' : 'Daily Expense';
@@ -3784,6 +3802,9 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
       const targetReport = detail?.reports?.find((r) => Number(r.id) === Number(deletingExpense.reportId));
       if (!targetReport) {
         throw new Error('Monthly report for this expense could not be found.');
+      }
+      if (targetReport.is_future_month) {
+        throw new Error(FUTURE_MONTH_REPORT_MESSAGE);
       }
 
       // 1. Remove note line from notes
@@ -4193,6 +4214,7 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
             label={compact ? 'Month' : 'Current Month'}
           />
         ) : null}
+        {isFutureMonth ? <ValidationNotice message={editBlockedMessage} /> : null}
       </div>
     );
   }
@@ -4877,7 +4899,11 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                       className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                     >
                       {(detail?.reports || []).map((report) => (
-                        <option key={report.id} value={getReportMonthValue(report)}>
+                        <option
+                          key={report.id}
+                          value={getReportMonthValue(report)}
+                          disabled={report.is_future_month}
+                        >
                           {report.month_label}
                         </option>
                       ))}
@@ -5825,7 +5851,11 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                       className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                     >
                       {(detail?.reports || []).map((report) => (
-                        <option key={report.id} value={getReportMonthValue(report)}>
+                        <option
+                          key={report.id}
+                          value={getReportMonthValue(report)}
+                          disabled={report.is_future_month}
+                        >
                           {report.month_label}
                         </option>
                       ))}
@@ -6918,7 +6948,11 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                     className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                   >
                     {(detail?.reports || []).map((report) => (
-                      <option key={report.id} value={getReportMonthValue(report)}>
+                      <option
+                        key={report.id}
+                        value={getReportMonthValue(report)}
+                        disabled={report.is_future_month}
+                      >
                         {report.month_label}
                       </option>
                     ))}
@@ -7348,7 +7382,11 @@ export default function FinancialReports({ mode = 'financial', defaultTab }) {
                     className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-sm font-bold text-slate-700 shadow-2xs outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                   >
                     {(detail?.reports || []).map((report) => (
-                      <option key={report.id} value={getReportMonthValue(report)}>
+                      <option
+                        key={report.id}
+                        value={getReportMonthValue(report)}
+                        disabled={report.is_future_month}
+                      >
                         {report.month_label}
                       </option>
                     ))}
